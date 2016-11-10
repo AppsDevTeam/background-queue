@@ -1,0 +1,21 @@
+{
+	"name": "adt/background-queue",
+	"type": "library",
+	"description": "Background queue for Nette Framework",
+	"keywords": ["ADT", "nette", "RabbitMQ"],
+	"license": ["MIT"],
+	"authors": [
+		{
+			"name": "Apps Dev Team s.r.o.",
+			"homepage": "http://appsdevteam.com"
+		}
+	],
+	"require": {
+		"nette/nette": "~2.3.0",
+		"kdyby/rabbitmq": "^1.1",
+		"kdyby/doctrine-magic-accessors": "^0.2.0"
+	},
+	"autoload": {
+		"psr-4": { "ADT\\BackgroundQueue\\": "src/" }
+	}
+}

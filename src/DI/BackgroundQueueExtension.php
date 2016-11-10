@@ -23,7 +23,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 
 		// registrace commandu
 		$builder->addDefinition($this->prefix('command'))
-			->setClass(\ADT\BackgroundQueue\Console\RabbitMqCommand::class)
+			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueCommand::class)
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');
 	}

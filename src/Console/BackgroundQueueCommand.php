@@ -9,7 +9,7 @@ use Symfony\Component\Console\Input\InputArgument;
 
 /**
  */
-class RabbitMqCommand extends Command {
+class BackgroundQueueCommand extends Command {
 
 	/** @var \ADT\BackgroundQueue\Queue */
 	protected $queue;

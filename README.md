@@ -30,7 +30,7 @@ backgroundQueue:
 # app/config/config.neon
 doctrine:
     metadata:
-        ADT\BackgroundQueue\Entity: %vendorDir%/adt/background-queue/src/Entity/QueueEntity
+        ADT\BackgroundQueue\Entity: %vendorDir%/adt/background-queue/src/Entity
 ```
 
 ### 1.3.2 Použití vlastní entity

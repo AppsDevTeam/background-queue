@@ -67,6 +67,9 @@ class Queue extends \Nette\Object {
 
 		$output = NULL;
 
+		$entity->lastAttempt = new \DateTime;
+		$entity->numberOfAttempts++;
+
 		try {
 
 			if (!isset($this->config["callbacks"][$entity->getCallbackName()])) {
@@ -95,9 +98,9 @@ class Queue extends \Nette\Object {
 		} catch (\Exception $e) {
 
 			// kritická chyba
-			$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_FATAL);
+			$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_FATAL, $e->getMessage());
 
-			// odeslání emaily o chybě
+			// odeslání emailu o chybě
 			\Tracy\Debugger::log($e, \Tracy\ILogger::EXCEPTION);
 		}
 
@@ -141,10 +144,12 @@ class Queue extends \Nette\Object {
 	/**
 	 * @param \ADT\BackgroundQueue\Entity\QueueEntity $entity
 	 * @param integer $state
+	 * @param string|NULL $errorMessage
 	 */
-	protected function changeEntityState(Entity\QueueEntity $entity, $state) {
+	protected function changeEntityState(Entity\QueueEntity $entity, $state, $errorMessage = NULL) {
 			/** @var ADT\BackgroundQueue\Entity\QueueEntity */
 			$entity->state = $state;
+			$entity->errorMessage = $errorMessage;
 
 			$this->em->persist($entity);
 			$this->em->flush($entity);

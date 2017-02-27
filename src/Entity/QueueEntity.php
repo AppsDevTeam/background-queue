@@ -6,7 +6,7 @@ use Doctrine\ORM\Mapping as ORM;
 
 /**
  * QueueEntity
- * 
+ *
  * @ORM\Table(name="rabbit_queue")
  * @ORM\Entity
  *
@@ -14,11 +14,17 @@ use Doctrine\ORM\Mapping as ORM;
  * @method string getCallbackName()
  * @method array getParameters()
  * @method int getState()
+ * @method \DateTime getCreated()
+ * @method \DateTime getLastAttempt()
+ * @method int getNumberOfAttempts()
+ * @method string getErrorMessage()
  *
  * @method void setId(int $id)
  * @method void setParameters(array $parameters)
  * @method void setCallbackName($callbackName)
  * @method void setState(int $state)
+ * @method void setLastAttempt(\DateTime $lastAttempt)
+ * @method void setErrorMessage($errorMessage)
  */
 class QueueEntity {
 
@@ -55,5 +61,46 @@ class QueueEntity {
 	 * @ORM\Column(name="state", type="integer", length=1, nullable=false)
 	 */
 	protected $state = self::STATE_READY;
+
+	/**
+	 * Datum vytvoření
+	 *
+   * @var \DateTime
+   *
+   * @ORM\Column(name="created", type="datetime", nullable=false)
+   */
+	protected $created;
+
+	/**
+	 * Datum posledního pokusu o zpracování
+	 *
+   * @var \DateTime
+   *
+   * @ORM\Column(name="lastAttempt", type="datetime", nullable=true)
+   */
+	protected $lastAttempt;
+
+	/**
+	 * Počet opakování (včetně prvního zpracování)
+	 *
+	 * @var integer
+	 *
+	 * @ORM\Column(name="numberOfAttempts", type="integer", length=11, nullable=false, options={"default":0})
+	 */
+	protected $numberOfAttempts;
+
+	/**
+	 * Chybová zpráva při stavu STATE_ERROR_FATAL
+	 *
+	 * @var string
+	 *
+	 * @ORM\Column(name="errorMessage", type="text", nullable=true)
+	 */
+	protected $errorMessage;
+
+	public function __construct() {
+		$this->created = new \DateTime;
+		$this->numberOfAttempts = 0;
+	}
 
 }

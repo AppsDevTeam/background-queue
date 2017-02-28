@@ -70,7 +70,7 @@ backgroundQueue:
 
 Při použití výchozí i vlastní entity je potřeba vygenerovat migraci.
 
-### 1.2 Nastavení RabbitMq
+### 1.4 Nastavení RabbitMq
 
 ```
 # app/config/config.neon

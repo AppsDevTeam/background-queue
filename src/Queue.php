@@ -97,10 +97,17 @@ class Queue extends \Nette\Object {
 
 		} catch (\Exception $e) {
 
-			// kritická chyba
-			$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_FATAL, $e->getMessage());
+			try {
+				// kritická chyba
+				$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_FATAL, $e->getMessage());
+			} catch (\Exception $innerEx) {
+				// může nastat v případě, kdy v callbacku selhal např. INSERT a entity manager se uzavřel
 
-			// odeslání emailu o chybě
+				// odeslání emailu o nemožnosti uložit chybu do DB
+				\Tracy\Debugger::log($innerEx, \Tracy\ILogger::CRITICAL);
+			}
+
+			// odeslání emailu o chybě v callbacku
 			\Tracy\Debugger::log($e, \Tracy\ILogger::EXCEPTION);
 		}
 

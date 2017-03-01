@@ -10,7 +10,6 @@ use Doctrine\ORM\Mapping as ORM;
  * @ORM\Table(name="rabbit_queue")
  * @ORM\Entity
  *
- * @method int getId()
  * @method string getCallbackName()
  * @method array getParameters()
  * @method int getState()
@@ -19,7 +18,6 @@ use Doctrine\ORM\Mapping as ORM;
  * @method int getNumberOfAttempts()
  * @method string getErrorMessage()
  *
- * @method void setId(int $id)
  * @method void setParameters(array $parameters)
  * @method void setCallbackName($callbackName)
  * @method void setState(int $state)
@@ -29,13 +27,39 @@ use Doctrine\ORM\Mapping as ORM;
 class QueueEntity {
 
 	use \Kdyby\Doctrine\MagicAccessors\MagicAccessors;
-	use \Kdyby\Doctrine\Entities\Attributes\Identifier;
 
 	const STATE_READY = 1; // připraveno
 	const STATE_PROCESSING = 2; // zpracovává se
 	const STATE_DONE = 3; // dokončeno
 	const STATE_ERROR_REPEATABLE = 4; // opakovatelná chyba (např. nedostupné API)
 	const STATE_ERROR_FATAL = 5; // kritická chyba (např. chyba v implementaci)
+
+	/**
+	 * @ORM\Id
+	 * @ORM\Column(type="integer")
+	 * @ORM\GeneratedValue
+	 * @var integer
+	 * @internal
+	 */
+	protected $id;
+
+	/**
+	 * @return integer
+	 */
+	final public function getId() {
+		return $this->id;
+	}
+
+	/**
+	 * @throws \Nette\NotSupportedException
+	 */
+	final public function setId() {
+		throw new \Nette\NotSupportedException('Entity id is read-only.');
+	}
+
+	public function __clone() {
+		$this->id = NULL;
+	}
 
 	/**
 	 * Název callbacku, index z nastavení "callbacks" z neonu

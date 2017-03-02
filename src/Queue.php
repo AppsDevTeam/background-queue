@@ -97,10 +97,16 @@ class Queue extends \Nette\Object {
 
 		} catch (\Exception $e) {
 
-			// kritická chyba
-			$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_FATAL, $e->getMessage());
+			try {
+				// kritická chyba
+				$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_FATAL, $e->getMessage());
+			} catch (\Exception $innerEx) {
+				// může nastat v případě, kdy v callbacku selhal např. INSERT a entity manager se uzavřel
+				// po chvíli to zkusíme to znovu
+				$output = FALSE;
+			}
 
-			// odeslání emailu o chybě
+			// odeslání emailu o chybě v callbacku
 			\Tracy\Debugger::log($e, \Tracy\ILogger::EXCEPTION);
 		}
 
@@ -110,6 +116,12 @@ class Queue extends \Nette\Object {
 		if ($output === FALSE) {
 			$producer = $this->bunny->getProducer('generalQueueError');
 			$producer->publish($entity->id);
+		}
+
+		if (isset($innerEx)) {
+			// nemá smysl, aby tento proces pokračoval v práci, pokud EM nefunguje
+			// zalogovat chybu a ukončit
+			throw $innerEx;
 		}
 	}
 

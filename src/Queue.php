@@ -154,4 +154,14 @@ class Queue extends \Nette\Object {
 			$this->em->persist($entity);
 			$this->em->flush($entity);
 	}
+
+	/**
+	 * Vrátí TRUE, pokud je $errorCode 5XX
+	 *
+	 * @param string $errorCode
+	 * @return boolean
+	 */
+	public static function isServerError($errorCode) {
+		return substr($errorCode, 0, 1) === '5';
+	}
 }

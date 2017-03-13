@@ -19,7 +19,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 		// registrace service
 		$builder->addDefinition($this->prefix('service'))
 			->setClass(\ADT\BackgroundQueue\Service::class)
-			->addSetup('$service->setCallbacks(?)', [$config["callbacks"]]);
+			->addSetup('$service->setCallbackKeys(?)', [array_keys($config["callbacks"])]);
 
 		// registrace commandu
 		$builder->addDefinition($this->prefix('command'))

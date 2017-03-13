@@ -11,7 +11,7 @@ class Service extends \Nette\Object {
 	protected $em;
 
 	/** @var array */
-	protected $callbacks = [];
+	protected $callbackKeys = [];
 
 	/**
 	 * @param \Kdyby\Doctrine\EntityManager $em
@@ -23,10 +23,10 @@ class Service extends \Nette\Object {
 	}
 
 	/**
-	 * @param array $callbacks
+	 * @param array $callbackKeys
 	 */
-	public function setCallbacks(array $callbacks) {
-		$this->callbacks = $callbacks;
+	public function setCallbackKeys(array $callbackKeys) {
+		$this->callbackKeys = $callbackKeys;
 	}
 
 	/**
@@ -40,7 +40,7 @@ class Service extends \Nette\Object {
 			throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
 		}
 
-		if (!isset($this->callbacks[$entity->getCallbackName()])) {
+		if (!in_array($entity->getCallbackName(), $this->callbackKeys)) {
 			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 		}
 

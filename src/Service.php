@@ -13,13 +13,23 @@ class Service extends \Nette\Object {
 	/** @var array */
 	protected $callbackKeys = [];
 
+	/** @var array */
+	protected $callbacks = [];
+
 	/**
 	 * @param \Kdyby\Doctrine\EntityManager $em
 	 * @param \Kdyby\RabbitMq\Connection $bunny
+	 * @param \Nette\Application\Application $application
 	 */
-	public function __construct(\Kdyby\Doctrine\EntityManager $em, \Kdyby\RabbitMq\Connection $bunny) {
+	public function __construct(\Kdyby\Doctrine\EntityManager $em, \Kdyby\RabbitMq\Connection $bunny, \Nette\Application\Application $application) {
 		$this->em = $em;
 		$this->bunny = $bunny;
+
+		$application->onShutdown[] = function () {
+			foreach ($this->callbacks as $callback) {
+				$callback();
+			}
+		};
 	}
 
 	/**
@@ -32,7 +42,8 @@ class Service extends \Nette\Object {
 	/**
 	 * Publikuje novou zprávu do fronty
 	 *
-	 * @param \ADT\BackgroundQueue\Entity\QueueEntity $entity
+	 * @param Entity\QueueEntity $entity
+	 * @throws \Exception
 	 */
 	public function publish(Entity\QueueEntity $entity) {
 
@@ -44,13 +55,15 @@ class Service extends \Nette\Object {
 			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 		}
 
-		// uložení entity do DB
-		$this->em->persist($entity);
-		$this->em->flush($entity);
+		$this->callbacks[] = function () use ($entity) {
+			// uložení entity do DB
+			$this->em->persist($entity);
+			$this->em->flush($entity);
 
-		// odeslání do RabbitMQ
-		$producer = $this->bunny->getProducer('generalQueue');
-		$producer->publish($entity->getId());
+			// odeslání do RabbitMQ
+			$producer = $this->bunny->getProducer('generalQueue');
+			$producer->publish($entity->getId());
+		};
 	}
 
 }

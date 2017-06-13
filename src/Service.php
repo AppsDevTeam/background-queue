@@ -14,7 +14,7 @@ class Service extends \Nette\Object {
 	protected $callbackKeys = [];
 
 	/** @var array */
-	protected $onShutdown = [];
+	public $onShutdown = [];
 
 	/**
 	 * @param \Kdyby\Doctrine\EntityManager $em

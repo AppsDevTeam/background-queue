@@ -14,7 +14,7 @@ class Service extends \Nette\Object {
 	protected $callbackKeys = [];
 
 	/** @var array */
-	protected $callbacks = [];
+	protected $onShutdown = [];
 
 	/**
 	 * @param \Kdyby\Doctrine\EntityManager $em
@@ -26,9 +26,7 @@ class Service extends \Nette\Object {
 		$this->bunny = $bunny;
 
 		$application->onShutdown[] = function () {
-			foreach ($this->callbacks as $callback) {
-				$callback();
-			}
+			$this->onShutdown();
 		};
 	}
 
@@ -55,7 +53,7 @@ class Service extends \Nette\Object {
 			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 		}
 
-		$this->callbacks[] = function () use ($entity) {
+		$this->onShutdown[] = function () use ($entity) {
 			// uložení entity do DB
 			$this->em->persist($entity);
 			$this->em->flush($entity);

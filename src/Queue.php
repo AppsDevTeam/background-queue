@@ -81,6 +81,8 @@ class Queue extends \Nette\Object {
 			// změna stavu na zpracovává se
 			$this->changeEntityState($entity, Entity\QueueEntity::STATE_PROCESSING);
 
+			$this->em->clear();
+
 			// zpracování callbacku
 			$output = $callback($entity);
 

@@ -15,20 +15,24 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 			],
 		]);
 
+		if ($config['supervisor']['numprocs'] <= 0) {
+			throw new \Nette\Utils\AssertionException('Hodnota configu %supervisor.numprocs% musí být kladné číslo');
+		}
+
 		// registrace queue service
 		$builder->addDefinition($this->prefix('queue'))
 			->setClass(\ADT\BackgroundQueue\Queue::class)
 			->addSetup('$service->setConfig(?)', [$config]);
 
+		// Z `callbacks` nepředáváme celé servisy ale pouze klíče, protože nic víc nepotřebujeme a měli bychom zbytečnou závislost.
+		$serviceConfig = $config;
+		unset($serviceConfig['callbacks']);
+		$serviceConfig['callbackKeys'] = array_keys($config["callbacks"]);
+
 		// registrace service
 		$builder->addDefinition($this->prefix('service'))
 			->setClass(\ADT\BackgroundQueue\Service::class)
-			->addSetup('$service->setConfig(?)', [
-				[
-					'callbackKeys' => array_keys($config["callbacks"]),
-					'noopMessage' => $config['noopMessage'],
-				],
-			]);
+			->addSetup('$service->setConfig(?)', [$serviceConfig]);
 
 		// registrace commandů
 

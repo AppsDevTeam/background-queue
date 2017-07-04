@@ -11,7 +11,7 @@ class Service extends \Nette\Object {
 	protected $em;
 
 	/** @var array */
-	protected $callbackKeys = [];
+	protected $config;
 
 	/** @var array */
 	public $onShutdown = [];
@@ -31,10 +31,10 @@ class Service extends \Nette\Object {
 	}
 
 	/**
-	 * @param array $callbackKeys
+	 * @param array $config
 	 */
-	public function setCallbackKeys(array $callbackKeys) {
-		$this->callbackKeys = $callbackKeys;
+	public function setConfig(array $config) {
+		$this->config = $config;
 	}
 
 	/**
@@ -49,7 +49,7 @@ class Service extends \Nette\Object {
 			throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
 		}
 
-		if (!in_array($entity->getCallbackName(), $this->callbackKeys)) {
+		if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
 			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 		}
 
@@ -63,5 +63,16 @@ class Service extends \Nette\Object {
 			$producer->publish($entity->getId());
 		};
 	}
+
+	/**
+	 * Publikuje No-operation zprávu do fronty.
+	 */
+	public function publishNoop() {
+
+		// odeslání do RabbitMQ
+		$producer = $this->bunny->getProducer('generalQueue');
+		$producer->publish($this->config['noopMessage']);
+	}
+
 
 }

@@ -7,8 +7,12 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 	public function loadConfiguration() {
 		$builder = $this->getContainerBuilder();
 		$config = $this->validateConfig([
-			"callbacks" => [],
-			"queueEntityClass" => \ADT\BackgroundQueue\Entity\QueueEntity::class,
+			'callbacks' => [],
+			'queueEntityClass' => \ADT\BackgroundQueue\Entity\QueueEntity::class,
+			'noopMessage' => 'noop',
+			'supervisor' => [
+				'numprocs' => 1,
+			],
 		]);
 
 		// registrace queue service
@@ -19,13 +23,26 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 		// registrace service
 		$builder->addDefinition($this->prefix('service'))
 			->setClass(\ADT\BackgroundQueue\Service::class)
-			->addSetup('$service->setCallbackKeys(?)', [array_keys($config["callbacks"])]);
+			->addSetup('$service->setConfig(?)', [
+				[
+					'callbackKeys' => array_keys($config["callbacks"]),
+					'noopMessage' => $config['noopMessage'],
+				],
+			]);
 
-		// registrace commandu
+		// registrace commandů
+
 		$builder->addDefinition($this->prefix('command'))
 			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueCommand::class)
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');
+
+		$builder->addDefinition($this->prefix('consumerReloadCommand'))
+			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueConsumerReloadCommand::class)
+			->addSetup('$service->setConfig(?)', [$config])
+			->setInject(FALSE)
+			->addTag('kdyby.console.command');
+
 	}
 
 }

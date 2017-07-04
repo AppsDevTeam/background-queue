@@ -39,9 +39,7 @@ class BackgroundQueueConsumerReloadCommand extends Command {
 
 	protected function execute(InputInterface $input, OutputInterface $output) {
 
-		foreach (range(1, $this->config['supervisor']['numprocs']) as $i) {
-			$this->queueService->publishNoop();
-		}
+		$this->queueService->publishSupervisorNoop();
 
 		$output->writeln("SUCCESS");
 	}

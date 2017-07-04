@@ -74,5 +74,15 @@ class Service extends \Nette\Object {
 		$producer->publish($this->config['noopMessage']);
 	}
 
+	/**
+	 * Publikuje No-operation zprávu do fronty.
+	 */
+	public function publishSupervisorNoop() {
+
+		for ($i = 0; $i < $this->config['supervisor']['numprocs']; $i++) {
+			$this->publishNoop();
+		}
+	}
+
 
 }

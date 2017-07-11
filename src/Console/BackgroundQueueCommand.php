@@ -8,6 +8,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
 
 /**
+ * @see \ADT\BackgroundQueue\Queue::processRepeatableErrors
  */
 class BackgroundQueueCommand extends Command {
 
@@ -21,6 +22,7 @@ class BackgroundQueueCommand extends Command {
 				InputArgument::IS_ARRAY,
         'Názvy callbacků (oddělené mezerou)'
     );
+		$this->setDescription('Zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_FATAL.');
 	}
 
 	/**

@@ -36,10 +36,17 @@ class Queue extends \Nette\Object {
 	 */
 	public function process(\PhpAmqpLib\Message\AMQPMessage $message) {
 
-		$entityClass = "\\" . $this->config["queueEntityClass"];
+		/** @var string */
+		$messageBody = $message->getBody();
+
+		if (($specialMessageOutput = $this->processSpecialMessage($messageBody)) !== NULL) {
+			return $specialMessageOutput;
+		}
 
 		/** @var integer */
-		$id = (int) $message->getBody();
+		$id = (int) $messageBody;
+
+		$entityClass = "\\" . $this->config["queueEntityClass"];
 
 		/** @var ADT\BackgroundQueue\Entity\QueueEntity */
 		$entity = $this->em->getRepository($entityClass)->find($id);
@@ -55,6 +62,18 @@ class Queue extends \Nette\Object {
 
 		// vždy označit zprávu jako provedenou (smazat ji z rabbit DB)
 		return TRUE;
+	}
+
+	/**
+	 *
+	 * @param string $message
+	 * @return bool|NULL Null znamená, že se nejedná o speciální zprávu.
+	 */
+	protected function processSpecialMessage($message) {
+		if ($message === $this->config['noopMessage']) {
+			// Zpracuj Noop zprávu
+			return TRUE;
+		}
 	}
 
 	/**

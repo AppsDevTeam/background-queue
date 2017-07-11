@@ -60,7 +60,13 @@ class Service extends \Nette\Object {
 
 			// odeslání do RabbitMQ
 			$producer = $this->bunny->getProducer('generalQueue');
-			$producer->publish($entity->getId());
+			$producer->publish(
+				$entity->getId(),
+				'',
+				[
+					'timestamp' => (new \Nette\Utils\DateTime)->format('U'),
+				]
+			);
 		};
 	}
 

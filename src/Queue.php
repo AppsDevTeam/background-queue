@@ -10,8 +10,8 @@ class Queue extends \Nette\Object {
 	/** @var array */
 	protected $config;
 
-	/** @var \Kdyby\RabbitMq\Connection */
-	protected $bunny;
+	/** @var Service */
+	protected $service;
 
 	/**
 	 * @param array $config
@@ -22,11 +22,11 @@ class Queue extends \Nette\Object {
 
 	/**
 	 * @param \Kdyby\Doctrine\EntityManager $em
-	 * @param \Kdyby\RabbitMq\Connection $bunny
+	 * @param Service $service
 	 */
-	public function __construct(\Kdyby\Doctrine\EntityManager $em, \Kdyby\RabbitMq\Connection $bunny) {
+	public function __construct(\Kdyby\Doctrine\EntityManager $em, Service $service) {
 		$this->em = $em;
-		$this->bunny = $bunny;
+		$this->service = $service;
 	}
 
 	/**
@@ -133,8 +133,7 @@ class Queue extends \Nette\Object {
 		// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)
 		// a po 20 minutách se přesune zpět do fronty "generalQueue" a znovu se zpracuje
 		if ($output === FALSE) {
-			$producer = $this->bunny->getProducer('generalQueueError');
-			$producer->publish($entity->id);
+			$this->service->publish($entity, 'generalQueueError');
 		}
 
 		if (isset($innerEx)) {

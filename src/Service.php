@@ -43,7 +43,7 @@ class Service extends \Nette\Object {
 	 * @param Entity\QueueEntity $entity
 	 * @throws \Exception
 	 */
-	public function publish(Entity\QueueEntity $entity) {
+	public function publish(Entity\QueueEntity $entity, $producerName = 'generalQueue') {
 
 		if (!$entity->getCallbackName()) {
 			throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
@@ -53,13 +53,13 @@ class Service extends \Nette\Object {
 			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 		}
 
-		$this->onShutdown[] = function () use ($entity) {
+		$this->onShutdown[] = function () use ($entity, $producerName) {
 			// uložení entity do DB
 			$this->em->persist($entity);
 			$this->em->flush($entity);
 
 			// odeslání do RabbitMQ
-			$producer = $this->bunny->getProducer('generalQueue');
+			$producer = $this->bunny->getProducer($producerName);
 			$producer->publish(
 				$entity->getId(),
 				'',

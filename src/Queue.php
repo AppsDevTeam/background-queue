@@ -36,6 +36,9 @@ class Queue extends \Nette\Object {
 	 */
 	public function process(\PhpAmqpLib\Message\AMQPMessage $message) {
 
+		// Před zpracováním callbacku promazat EntityManager
+		$this->em->clear();
+
 		$entityClass = "\\" . $this->config["queueEntityClass"];
 
 		/** @var integer */
@@ -80,8 +83,6 @@ class Queue extends \Nette\Object {
 
 			// změna stavu na zpracovává se
 			$this->changeEntityState($entity, Entity\QueueEntity::STATE_PROCESSING);
-
-			$this->em->clear();
 
 			// zpracování callbacku
 			$output = $callback($entity);

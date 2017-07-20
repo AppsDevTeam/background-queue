@@ -36,6 +36,9 @@ class Queue extends \Nette\Object {
 	 */
 	public function process(\PhpAmqpLib\Message\AMQPMessage $message) {
 
+		// Před zpracováním callbacku promazat EntityManager
+		$this->em->clear();
+
 		/** @var string */
 		$messageBody = $message->getBody();
 

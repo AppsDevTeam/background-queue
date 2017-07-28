@@ -13,7 +13,7 @@
 	"require": {
 		"nette/nette": "~2.3.0",
 		"kdyby/rabbitmq": "^1.1",
-		"kdyby/doctrine-magic-accessors": "^0.2.0"
+		"kdyby/doctrine-magic-accessors": "^1.0"
 	},
 	"autoload": {
 		"psr-4": { "ADT\\BackgroundQueue\\": "src/" }

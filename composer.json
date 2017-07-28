@@ -11,7 +11,7 @@
 		}
 	],
 	"require": {
-		"nette/nette": "~2.3.0",
+		"nette/nette": "^2.3.0",
 		"kdyby/rabbitmq": "^1.1",
 		"kdyby/doctrine-magic-accessors": "^1.0"
 	},

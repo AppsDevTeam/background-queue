@@ -7,6 +7,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 	public function loadConfiguration() {
 		$builder = $this->getContainerBuilder();
 		$config = $this->validateConfig([
+			'lazy' => TRUE,
 			'callbacks' => [],
 			'queueEntityClass' => \ADT\BackgroundQueue\Entity\QueueEntity::class,
 			'noopMessage' => 'noop',
@@ -17,6 +18,25 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 
 		if ($config['supervisor']['numprocs'] <= 0) {
 			throw new \Nette\Utils\AssertionException('Hodnota configu %supervisor.numprocs% musí být kladné číslo');
+		}
+
+		if ($config['lazy']) {
+			foreach ($config['callbacks'] as $callbackSlug => $callback) {
+				if (
+					$config['lazy'] !== TRUE
+					&&
+					(
+						!isset($config['lazy'][$callbackSlug])
+						||
+						$config['lazy'][$callbackSlug] !== TRUE
+					)
+				) {
+					// Callback should not become lazy
+					continue;
+				}
+
+				$config['callbacks'][$callbackSlug] = new \Nette\DI\Statement('function(){ return call_user_func_array(?, func_get_args()); }', [ $callback ]);
+			}
 		}
 
 		// registrace queue service

@@ -30,10 +30,10 @@ Defaultně je lazy zapnuto. Hodí se, pokud nechcete služby předávané do cal
 ```
 # app/config/config.neon
 backgroundQueue:
-		lazy: on	# default: on
-    callbacks:
-        test: @App\Facades::process
-        ...
+	lazy: on	# default: on
+	callbacks:
+		test: @App\Facades::process
+		...
 ```
 
 Nebo jen pro některé callbacky:
@@ -41,12 +41,12 @@ Nebo jen pro některé callbacky:
 ```
 # app/config/config.neon
 backgroundQueue:
-		lazy:
-        test: on
-				...
-    callbacks:
-        test: @App\Facades::process
-        ...
+	lazy:
+		test: on
+		...
+	callbacks:
+		test: @App\Facades::process
+		...
 ```
 
 ### 1.4 Entita

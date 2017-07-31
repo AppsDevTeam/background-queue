@@ -23,9 +23,35 @@ backgroundQueue:
         ...
 ```
 
-### 1.3 Entita
+### 1.3 Nastavení callbacků lazy
 
-### 1.3.1 Použití výchozí entity
+Defaultně je lazy zapnuto. Hodí se, pokud nechcete služby předávané do callbacků inicializovat ihned při startu aplikace.
+
+```
+# app/config/config.neon
+backgroundQueue:
+		lazy: on	# default: on
+    callbacks:
+        test: @App\Facades::process
+        ...
+```
+
+Nebo jen pro některé callbacky:
+
+```
+# app/config/config.neon
+backgroundQueue:
+		lazy:
+        test: on
+				...
+    callbacks:
+        test: @App\Facades::process
+        ...
+```
+
+### 1.4 Entita
+
+### 1.4.1 Použití výchozí entity
 ```
 # app/config/config.neon
 doctrine:
@@ -33,7 +59,7 @@ doctrine:
         ADT\BackgroundQueue\Entity: %vendorDir%/adt/background-queue/src/Entity
 ```
 
-### 1.3.2 Použití vlastní entity
+### 1.4.2 Použití vlastní entity
 ```
 namespace App\Model\Entity;
 use Doctrine\ORM\Mapping as ORM;
@@ -70,7 +96,7 @@ backgroundQueue:
 
 Při použití výchozí i vlastní entity je potřeba vygenerovat migraci.
 
-### 1.4 Nastavení RabbitMq
+### 1.5 Nastavení RabbitMq
 
 ```
 # app/config/config.neon

@@ -36,6 +36,9 @@ class Queue extends \Nette\Object {
 	 */
 	public function process(\PhpAmqpLib\Message\AMQPMessage $message) {
 
+		// Před zpracování zprávy označit zprávu jako vyřízenou
+		$message->delivery_info['channel']->basic_ack($message->delivery_info['delivery_tag']);
+
 		// Před zpracováním callbacku promazat EntityManager
 		$this->em->clear();
 

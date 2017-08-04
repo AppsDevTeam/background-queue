@@ -2,6 +2,9 @@
 
 namespace ADT\BackgroundQueue\DI;
 
+use Nette\DI\Container;
+use Nette\PhpGenerator\ClassType;
+
 class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 
 	public function loadConfiguration() {
@@ -67,6 +70,30 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');
 
+	}
+
+	public function afterCompile(ClassType $class)
+	{
+		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('service')));
+
+		$serviceMethod->setBody('
+$service = (function () {
+	'. $serviceMethod->getBody() .'
+})();
+if (php_sapi_name() === "cli") {
+	$this->getByType(\Symfony\Component\EventDispatcher\EventDispatcherInterface::class)
+		->addListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, function () use ($service) {
+			$service->onShutdown();
+		});
+
+} else {
+	$this->getByType(\Nette\Application\Application::class)
+		->onShutdown[] = function () use ($service) {
+			$service->onShutdown();
+		};
+}
+return $service;
+		');
 	}
 
 }

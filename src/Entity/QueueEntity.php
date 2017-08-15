@@ -127,4 +127,12 @@ class QueueEntity {
 		$this->numberOfAttempts = 0;
 	}
 
+	/**
+	 * Vrátí TRUE, pokud je zpráva připravená pro zpracování
+	 *
+	 * @return bool
+	 */
+	public function isReadyForProcess() {
+		return $this->state === self::STATE_READY || $this->state === self::STATE_ERROR_REPEATABLE;
+	}
 }

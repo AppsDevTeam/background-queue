@@ -36,9 +36,6 @@ class Queue extends \Nette\Object {
 	 */
 	public function process(\PhpAmqpLib\Message\AMQPMessage $message) {
 
-		// Před zpracování zprávy označit zprávu jako vyřízenou
-		$message->delivery_info['channel']->basic_ack($message->delivery_info['delivery_tag']);
-
 		// Před zpracováním callbacku promazat EntityManager
 		$this->em->clear();
 
@@ -89,6 +86,15 @@ class Queue extends \Nette\Object {
 	 * @throws \Exception
 	 */
 	protected function processEntity(Entity\QueueEntity $entity) {
+
+		// Zpráva není ke zpracování v případě, že nemá stav READY nebo ERROR_REPEATABLE
+		// Pokud při zpracování zprávy nastane chyba, zpráva zůstane ve stavu PROCESSING a consumer se ukončí.
+		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
+		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
+		if (!$entity->isReadyForProcess()) {
+			\Tracy\Debugger::log("BackgroundQueue: Neočekávaný stav, ID " . $entity->getId(), \Tracy\ILogger::ERROR);
+			return;
+		}
 
 		$output = NULL;
 

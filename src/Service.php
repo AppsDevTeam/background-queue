@@ -19,15 +19,10 @@ class Service extends \Nette\Object {
 	/**
 	 * @param \Kdyby\Doctrine\EntityManager $em
 	 * @param \Kdyby\RabbitMq\Connection $bunny
-	 * @param \Nette\Application\Application $application
 	 */
-	public function __construct(\Kdyby\Doctrine\EntityManager $em, \Kdyby\RabbitMq\Connection $bunny, \Nette\Application\Application $application) {
+	public function __construct(\Kdyby\Doctrine\EntityManager $em, \Kdyby\RabbitMq\Connection $bunny) {
 		$this->em = $em;
 		$this->bunny = $bunny;
-
-		$application->onShutdown[] = function () {
-			$this->onShutdown();
-		};
 	}
 
 	/**

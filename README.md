@@ -10,17 +10,23 @@ composer require adt/background-queue
 ```
 # app/config/config.neon
 extensions:
-    rabbitmq: Kdyby\RabbitMq\DI\RabbitMqExtension
-    backgroundQueue: ADT\BackgroundQueue\DI\BackgroundQueueExtension
+	rabbitmq: Kdyby\RabbitMq\DI\RabbitMqExtension
+	backgroundQueue: ADT\BackgroundQueue\DI\BackgroundQueueExtension
 ```
 
-### 1.2 Registrace metod pro zpracování
+### 1.2 Registrace metod pro zpracování a ostatní nastavení
 ```
 # app/config/config.neon
 backgroundQueue:
-    callbacks:
-        test: @App\Facades::process
-        ...
+	queueEntityClass: \ADT\BackgroundQueue\Entity\QueueEntity::class # Výchozí entita
+	noopMessage: noop	# Název příkazu pro zaslání noop příkazu consumerovi (kombinuje se s `supervisor.numprocs` a [adt/after-deploy](https://github.com/AppsDevTeam/AfterDeploy/#installation--usage)
+	supervisor:
+		numprocs: 1	# Počet consumerů
+		startsecs: 1	# [sec] - Jedno zpracování je případně uměle protaženo sleepem, aby si *supervisord* nemyslel, že se proces ukončil moc rychle
+	lazy: TRUE	# Lazy callbacky (viz další kapitolu)
+	callbacks:
+		test: @App\Facades::process
+		...
 ```
 
 ### 1.3 Nastavení callbacků lazy

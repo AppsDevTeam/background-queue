@@ -13,6 +13,12 @@ class Queue extends \Nette\Object {
 	/** @var Service */
 	protected $service;
 
+	/** @var float */
+	protected $executionTime;
+
+	/** @var array */
+	public $onAfterProcess = [];
+
 	/**
 	 * @param array $config
 	 */
@@ -27,6 +33,10 @@ class Queue extends \Nette\Object {
 	public function __construct(\Kdyby\Doctrine\EntityManager $em, Service $service) {
 		$this->em = $em;
 		$this->service = $service;
+
+		$this->executionTime = -microtime(TRUE);
+
+		$this->onAfterProcess[] = [$this, 'checkExecutionTime'];
 	}
 
 	/**
@@ -39,43 +49,68 @@ class Queue extends \Nette\Object {
 		// Před zpracováním callbacku promazat EntityManager
 		$this->em->clear();
 
-		/** @var string */
-		$messageBody = $message->getBody();
-
-		if (($specialMessageOutput = $this->processSpecialMessage($messageBody)) !== NULL) {
+		if (($specialMessageOutput = $this->processSpecialMessage($message)) !== NULL) {
+			$this->onAfterProcess();
 			return $specialMessageOutput;
 		}
 
-		/** @var integer */
-		$id = (int) $messageBody;
+		// získání entity
+		$entity = $this->getEntity($message);
 
-		$entityClass = "\\" . $this->config["queueEntityClass"];
-
-		/** @var ADT\BackgroundQueue\Entity\QueueEntity */
-		$entity = $this->em->getRepository($entityClass)->find($id);
-
-		// zalogovat a smazat z RabbitMQ DB
-		if (!$entity) {
-			\Tracy\Debugger::log("Nenalezen záznam pro ID \"$id\"", \Tracy\ILogger::ERROR);
-			return TRUE;
+		if ($entity) {
+			// zpracování callbacku
+			$this->processEntity($entity);
 		}
 
-		// zpracování callbacku
-		$this->processEntity($entity);
+		$this->onAfterProcess();
 
 		// vždy označit zprávu jako provedenou (smazat ji z rabbit DB)
 		return TRUE;
 	}
 
 	/**
+	 * Jedno zpracování je případně uměle protaženo sleepem, aby si *supervisord*
+	 * nemyslel, že se proces ukončil moc rychle.
+	 */
+	public function checkExecutionTime() {
+		$this->executionTime += microtime(TRUE);
+		if ($this->executionTime < $this->config['supervisor']['startsecs']) {
+			// Pokud bychom zpracovali řádek z fronty moc rychle, udělej sleep
+			usleep(($this->config['supervisor']['startsecs'] - $this->executionTime) * 1000 * 1000);
+		}
+	}
+
+	/**
 	 *
-	 * @param string $message
+	 * @param \PhpAmqpLib\Message\AMQPMessage $message
 	 * @return bool|NULL Null znamená, že se nejedná o speciální zprávu.
 	 */
-	protected function processSpecialMessage($message) {
-		if ($message === $this->config['noopMessage']) {
+	protected function processSpecialMessage(\PhpAmqpLib\Message\AMQPMessage $message) {
+		if ($message->getBody() === $this->config['noopMessage']) {
 			// Zpracuj Noop zprávu
 			return TRUE;
+		}
+	}
+
+	/**
+	 *
+	 * @param \PhpAmqpLib\Message\AMQPMessage $message
+	 * @return \ADT\BackgroundQueue\Entity\QueueEntity|NULL
+	 */
+	protected function getEntity(\PhpAmqpLib\Message\AMQPMessage $message) {
+
+		/** @var integer */
+		$id = (int) $message->getBody();
+
+		$entityClass = "\\" . $this->config["queueEntityClass"];
+
+		/** @var ADT\BackgroundQueue\Entity\QueueEntity */
+		$entity = $this->em->getRepository($entityClass)->find($id);
+
+		// zalogovat (a smazat z RabbitMQ DB)
+		if (!$entity) {
+			\Tracy\Debugger::log("Nenalezen záznam pro ID \"$id\"", \Tracy\ILogger::ERROR);
+			return NULL;
 		}
 	}
 

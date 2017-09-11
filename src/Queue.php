@@ -112,6 +112,8 @@ class Queue extends \Nette\Object {
 			\Tracy\Debugger::log("Nenalezen záznam pro ID \"$id\"", \Tracy\ILogger::ERROR);
 			return NULL;
 		}
+		
+		return $entity;
 	}
 
 	/**

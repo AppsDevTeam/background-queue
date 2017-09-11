@@ -16,6 +16,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 			'noopMessage' => 'noop',
 			'supervisor' => [
 				'numprocs' => 1,
+				'startsecs' => 1, // [sec]
 			],
 		]);
 

@@ -216,6 +216,7 @@ class Queue extends \Nette\Object {
 		}
 
 		foreach ($entities = $qb->getQuery()->getResult() as $entity) {
+			$entity->state = Entity\QueueEntity::STATE_READY;
 			$this->processEntity($entity);
 		}
 	}

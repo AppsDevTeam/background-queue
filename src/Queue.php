@@ -244,4 +244,35 @@ class Queue extends \Nette\Object {
 	public static function isServerError($errorCode) {
 		return substr($errorCode, 0, 1) === '5';
 	}
+	
+	/**
+	 * Returns TRUE if it is repeatable error, FALSE otherwise
+	 *
+	 * \GuzzleHttp\Exception\GuzzleException $guzzleException
+	 * @return boolean
+	 */
+	public static function handleGuzzleError(\GuzzleHttp\Exception\GuzzleException $guzzleException) {
+
+		if ($guzleException instanceof \GuzzleHttp\Exception\ConnectException) {
+			// HTTP Code 0
+			// On Sparkpost or ADT MailApi the request was successfuly processed even if there is no response
+			// Let's believe it is common behaviour
+			return TRUE;
+		}
+
+		if ($guzleException instanceof \GuzzleHttp\Exception\TooManyRedirectsException) {
+			// HTTP Code 3xx
+			return FALSE;
+		}
+
+		if ($guzleException instanceof \GuzzleHttp\Exception\ClientException) {
+			// HTTP Code 4xx
+			return FALSE;
+		}
+
+		if ($guzleException instanceof \GuzzleHttp\Exception\ServerException) {
+			// HTTP Code 5xx	
+			return TRUE;
+		}	
+	}
 }

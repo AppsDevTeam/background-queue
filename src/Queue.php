@@ -246,33 +246,26 @@ class Queue extends \Nette\Object {
 	}
 	
 	/**
-	 * Returns TRUE if it is repeatable error, FALSE otherwise
+	 * Returns TRUE if everything is allright, FALSE if it's repetable error, otherwise throws exception
 	 *
 	 * \GuzzleHttp\Exception\GuzzleException $guzzleException
-	 * @return boolean
+	 * @return boolean|\GuzzleHttp\Exception\GuzzleException
 	 */
 	public static function handleGuzzleError(\GuzzleHttp\Exception\GuzzleException $guzzleException) {
 
-		if ($guzleException instanceof \GuzzleHttp\Exception\ConnectException) {
+		if ($guzzleException instanceof \GuzzleHttp\Exception\ConnectException) {
 			// HTTP Code 0
 			// On Sparkpost or ADT MailApi the request was successfuly processed even if there is no response
 			// Let's believe it is common behaviour
 			return TRUE;
 		}
 
-		if ($guzleException instanceof \GuzzleHttp\Exception\TooManyRedirectsException) {
-			// HTTP Code 3xx
-			return FALSE;
-		}
-
-		if ($guzleException instanceof \GuzzleHttp\Exception\ClientException) {
-			// HTTP Code 4xx
-			return FALSE;
-		}
-
-		if ($guzleException instanceof \GuzzleHttp\Exception\ServerException) {
+		if ($guzzleException instanceof \GuzzleHttp\Exception\ServerException) {
 			// HTTP Code 5xx	
-			return TRUE;
-		}	
+			return FALSE;
+		}
+		
+		// other exceptions like 3xx (TooManyRedirectsException) or 4xx (\GuzzleHttp\Exception\ClientException) are unrepeatable and we want to throw exception
+		throw $guzzleException;
 	}
 }

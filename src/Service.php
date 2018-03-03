@@ -2,8 +2,10 @@
 
 namespace ADT\BackgroundQueue;
 
-class Service extends \Nette\Object {
+class Service {
 
+	use \Nette\SmartObject;
+	
 	/** @var \Kdyby\RabbitMq\Connection */
 	protected $bunny;
 

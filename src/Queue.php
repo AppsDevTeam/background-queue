@@ -2,7 +2,9 @@
 
 namespace ADT\BackgroundQueue;
 
-class Queue extends \Nette\Object {
+class Queue {
+	
+	use \Nette\SmartObject;
 
 	/** @var \Kdyby\Doctrine\EntityManager */
 	protected $em;

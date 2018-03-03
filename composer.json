@@ -12,7 +12,7 @@
 	],
 	"require": {
 		"nette/nette": "^2.3.0",
-		"kdyby/rabbitmq": "^1.1",
+		"kdyby/rabbitmq": "dev#322f2d96085c0ccc148415542cba82541ac64798",
 		"kdyby/doctrine-magic-accessors": "^1.0"
 	},
 	"autoload": {

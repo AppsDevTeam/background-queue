@@ -89,19 +89,19 @@ class QueueEntity {
 	/**
 	 * Datum vytvoření
 	 *
-   * @var \DateTime
-   *
-   * @ORM\Column(name="created", type="datetime", nullable=false)
-   */
+	 * @var \DateTime
+	 *
+	 * @ORM\Column(name="created", type="datetime", nullable=false)
+	 */
 	protected $created;
 
 	/**
 	 * Datum posledního pokusu o zpracování
 	 *
-   * @var \DateTime
-   *
-   * @ORM\Column(name="lastAttempt", type="datetime", nullable=true)
-   */
+  	 * @var \DateTime
+   	 *
+  	 * @ORM\Column(name="lastAttempt", type="datetime", nullable=true)
+   	 */
 	protected $lastAttempt;
 
 	/**
@@ -121,6 +121,15 @@ class QueueEntity {
 	 * @ORM\Column(name="errorMessage", type="text", nullable=true)
 	 */
 	protected $errorMessage;
+	
+	/**
+	 * Optional description
+	 *
+	 * @var string
+	 *
+	 * @ORM\Column(name="desc", type="string", length=255, nullable=true)
+	 */
+	protected $desc;
 
 	public function __construct() {
 		$this->created = new \DateTime;

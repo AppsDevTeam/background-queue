@@ -127,9 +127,9 @@ class QueueEntity {
 	 *
 	 * @var string
 	 *
-	 * @ORM\Column(name="desc", type="string", length=255, nullable=true)
+	 * @ORM\Column(name="description", type="string", length=255, nullable=true)
 	 */
-	protected $desc;
+	protected $description;
 
 	public function __construct() {
 		$this->created = new \DateTime;

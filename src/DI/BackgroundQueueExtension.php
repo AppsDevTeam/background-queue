@@ -18,6 +18,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 				'numprocs' => 1,
 				'startsecs' => 1, // [sec]
 			],
+			'deleteTimeAgo' => '14 days', // čas jak staré záznamy ode dneška budou smazány
 		]);
 
 		if ($config['supervisor']['numprocs'] <= 0) {
@@ -67,6 +68,12 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 
 		$builder->addDefinition($this->prefix('consumerReloadCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueConsumerReloadCommand::class)
+			->addSetup('$service->setConfig(?)', [$config])
+			->setInject(FALSE)
+			->addTag('kdyby.console.command');
+
+		$builder->addDefinition($this->prefix('deleteCommand'))
+			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueDeleteCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');

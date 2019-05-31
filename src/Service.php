@@ -87,5 +87,31 @@ class Service {
 		}
 	}
 
+	/**
+	 * Metoda, která smaže všechny záznamy z DB s nastaveným stavem STATE_DONE.
+	 *
+	 * @param array $callbacksNames nepovinný parametr pro výběr konkrétních callbacků
+	 */
+	public function clearDoneRecords($callbacksNames = []) {
+
+		$ago = (new \Nette\Utils\DateTime('midnight'))->modify("-".$this->config["deleteTimeAgo"]);
+
+		$state = Entity\QueueEntity::STATE_DONE;
+		$sql = "DELETE FROM rabbit_queue WHERE created <= '$ago' AND state = '$state'";
+
+		if (!empty($callbacksNames)) {
+			$sql .= "AND callbackName IN (";
+			foreach ($iterator = new \Nette\Iterators\CachingIterator($callbacksNames) as $callbacksName) {
+				$sql .= " '$callbacksName'";
+				if (!$iterator->isLast()) {
+					$sql .= ",";
+				}
+			}
+			$sql .= ")";
+		}
+
+		$stmt = $this->em->getConnection()->prepare($sql);
+		$stmt->execute();
+	}
 
 }

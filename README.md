@@ -24,7 +24,7 @@ backgroundQueue:
 		numprocs: 1	# Počet consumerů
 		startsecs: 1	# [sec] - Jedno zpracování je případně uměle protaženo sleepem, aby si *supervisord* nemyslel, že se proces ukončil moc rychle
 	lazy: TRUE	# Lazy callbacky (viz další kapitolu)
-	deleteTimeAgo: '31 days' # kolik dní staré záznamy budou mazány
+	deleteOldBefore: '31 days' # kolik dní staré záznamy budou mazány
 	callbacks:
 		test: @App\Facades::process
 		...
@@ -203,3 +203,7 @@ process_name=%(process_num)02d
 numprocs=1
 ```
 
+### command pro smazání provedených front z db
+`php www/index.php adt:backgroundQueue:delete` 
+nebo jen pro vybrané callbacky
+`php www/index.php adt:backgroundQueue:delete backgroundMail sms` 

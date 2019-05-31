@@ -94,7 +94,7 @@ class Service {
 	 */
 	public function clearDoneRecords($callbacksNames = []) {
 
-		$ago = (new \Nette\Utils\DateTime('midnight'))->modify("-".$this->config["deleteTimeAgo"]);
+		$ago = (new \Nette\Utils\DateTime('midnight'))->modify("-".$this->config["deleteOldBefore"]);
 
 		$state = Entity\QueueEntity::STATE_DONE;
 		$sql = "DELETE FROM rabbit_queue WHERE created <= '$ago' AND state = '$state'";

@@ -24,6 +24,7 @@ backgroundQueue:
 		numprocs: 1	# Počet consumerů
 		startsecs: 1	# [sec] - Jedno zpracování je případně uměle protaženo sleepem, aby si *supervisord* nemyslel, že se proces ukončil moc rychle
 	lazy: TRUE	# Lazy callbacky (viz další kapitolu)
+	numberOfAttemptsForMail: 5 # počet pokusů zpracování fronty pro zaslání mailu
 	callbacks:
 		test: @App\Facades::process
 		...

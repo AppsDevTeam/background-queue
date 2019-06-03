@@ -184,6 +184,10 @@ class Queue {
 		// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)
 		// a po 20 minutách se přesune zpět do fronty "generalQueue" a znovu se zpracuje
 		if ($output === FALSE) {
+
+			if ($entity->numberOfAttempts == $this->config["notifyOnNumberOfAttempts"]) { // pri urcitem mnozstvi neuspesnych pokusu posilat email
+				\Tracy\Debugger::log("BackgroundQueue: Number of attempts reached " .$entity->numberOfAttempts.", ID " . $entity->getId(), \Tracy\ILogger::ERROR);
+			}
 			$this->service->publish($entity, 'generalQueueError');
 		}
 

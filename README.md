@@ -205,5 +205,5 @@ numprocs=1
 
 ### command pro smazání provedených front z db
 `php www/index.php backgroundQueue:clear` 
-nebo jen pro vybrané callbacky [-w  pro vypsani SUCCESS po skončení scriptu]
-`php www/index.php backgroundQueue:clear -w backgroundMail sms` 
+nebo jen pro vybrané callbacky [-v  pro vypsani SUCCESS po skončení scriptu]
+`php www/index.php backgroundQueue:clear -v backgroundMail sms` 

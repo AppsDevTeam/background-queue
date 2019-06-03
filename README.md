@@ -24,6 +24,7 @@ backgroundQueue:
 		numprocs: 1	# Počet consumerů
 		startsecs: 1	# [sec] - Jedno zpracování je případně uměle protaženo sleepem, aby si *supervisord* nemyslel, že se proces ukončil moc rychle
 	lazy: TRUE	# Lazy callbacky (viz další kapitolu)
+	clearOlderThan: '31 days' # kolik dní staré záznamy budou mazány
 	notifyOnNumberOfAttempts: 5 # počet pokusů zpracování fronty pro zaslání mailu
 	callbacks:
 		test: @App\Facades::process
@@ -203,3 +204,7 @@ process_name=%(process_num)02d
 numprocs=1
 ```
 
+### command pro smazání provedených front z db
+`php www/index.php backgroundQueue:clear` 
+nebo jen pro vybrané callbacky [-v  pro vypsani SUCCESS po skončení scriptu]
+`php www/index.php backgroundQueue:clear -v backgroundMail sms` 

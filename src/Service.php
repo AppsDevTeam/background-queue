@@ -87,5 +87,29 @@ class Service {
 		}
 	}
 
+	/**
+	 * Metoda, která smaže všechny záznamy z DB s nastaveným stavem STATE_DONE.
+	 *
+	 * @param array $callbacksNames nepovinný parametr pro výběr konkrétních callbacků
+	 */
+	public function clearDoneRecords($callbacksNames = []) {
+
+		$ago = (new \Nette\Utils\DateTime('midnight'))->modify("-".$this->config["clearOlderThan"]);
+		$state = Entity\QueueEntity::STATE_DONE;
+
+		$qb = $this->em->createQueryBuilder();
+		$qb->delete(Entity\QueueEntity::class ,'e')
+			->andWhere('e.created <= :ago')
+			->andWhere('e.state = :state')
+			->setParameter('ago', $ago)
+			->setParameter('state', $state);
+
+		if (!empty($callbacksNames)) {
+			$qb->andWhere("e.callbackName IN (:callbacksNames)")
+				->setParameter("callbacksNames", $callbacksNames);
+		}
+
+		$qb->getQuery()->execute();
+	}
 
 }

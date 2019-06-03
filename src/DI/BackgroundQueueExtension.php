@@ -19,6 +19,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 				'startsecs' => 1, // [sec]
 			],
 			'clearOlderThan' => '14 days', // čas jak staré záznamy ode dneška budou smazány
+			'notifyOnNumberOfAttempts' => 5, // počet pokusů zpracování fronty pro zaslání mailu
 		]);
 
 		if ($config['supervisor']['numprocs'] <= 0) {

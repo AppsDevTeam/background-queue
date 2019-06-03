@@ -18,7 +18,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 				'numprocs' => 1,
 				'startsecs' => 1, // [sec]
 			],
-			'numberOfAttemptsForMail' => 5, // počet pokusů zpracování fronty pro zaslání mailu
+			'notifyOnNumberOfAttempts' => 5, // počet pokusů zpracování fronty pro zaslání mailu
 		]);
 
 		if ($config['supervisor']['numprocs'] <= 0) {

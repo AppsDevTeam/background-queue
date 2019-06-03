@@ -185,8 +185,8 @@ class Queue {
 		// a po 20 minutách se přesune zpět do fronty "generalQueue" a znovu se zpracuje
 		if ($output === FALSE) {
 
-			if ($entity->numberOfAttempts == $this->config["numberOfAttemptsForMail"]) { // pri urcitem mnozstvi neuspesnych pokusu posilat email
-				\Tracy\Debugger::log("BackgroundQueue: Počet pokusů již dosáhl " .$entity->numberOfAttempts." pokusů, ID " . $entity->getId(),\Tracy\ILogger::ERROR);
+			if ($entity->numberOfAttempts == $this->config["notifyOnNumberOfAttempts"]) { // pri urcitem mnozstvi neuspesnych pokusu posilat email
+				\Tracy\Debugger::log("BackgroundQueue: Number of attempts reached " .$entity->numberOfAttempts.", ID " . $entity->getId(), \Tracy\ILogger::ERROR);
 			}
 			$this->service->publish($entity, 'generalQueueError');
 		}

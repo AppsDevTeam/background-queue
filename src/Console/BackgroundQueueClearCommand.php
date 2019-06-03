@@ -6,12 +6,13 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
+use Symfony\Component\Console\Input\InputOption;
 
 /**
  * Smaže všechny záznamy z DB s nastaveným stavem STATE_DONE
  *  php www/index.php adt:backgroundQueue:delete
  */
-class BackgroundQueueDeleteCommand extends Command {
+class BackgroundQueueClearCommand extends Command {
 
 	/**
 	 * @var array
@@ -26,7 +27,8 @@ class BackgroundQueueDeleteCommand extends Command {
 	}
 
 	protected function configure() {
-		$this->setName('adt:backgroundQueue:delete');
+		$this->setName('backgroundQueue:clear');
+		$this->addOption('writeln', 'w', InputOption::VALUE_NONE, 'vypíše SUCCESS po skončení');
 		$this->addArgument(
 			"callbacks",
 			InputArgument::IS_ARRAY,
@@ -48,7 +50,9 @@ class BackgroundQueueDeleteCommand extends Command {
 		$callbacks = $input->getArgument("callbacks");
 		$this->queueService->clearDoneRecords($callbacks);
 
-		$output->writeln("SUCCESS");
+		if ($input->getOption('writeln')) {
+			$output->writeln("SUCCESS");
+		}
 	}
 
 }

@@ -94,24 +94,22 @@ class Service {
 	 */
 	public function clearDoneRecords($callbacksNames = []) {
 
-		$ago = (new \Nette\Utils\DateTime('midnight'))->modify("-".$this->config["deleteOldBefore"]);
-
+		$ago = (new \Nette\Utils\DateTime('midnight'))->modify("-".$this->config["clearOlderThan"]);
 		$state = Entity\QueueEntity::STATE_DONE;
-		$sql = "DELETE FROM rabbit_queue WHERE created <= '$ago' AND state = '$state'";
+
+		$qb = $this->em->createQueryBuilder();
+		$qb->delete(Entity\QueueEntity::class ,'e')
+			->andWhere('e.created <= :ago')
+			->andWhere('e.state = :state')
+			->setParameter('ago', $ago)
+			->setParameter('state', $state);
 
 		if (!empty($callbacksNames)) {
-			$sql .= "AND callbackName IN (";
-			foreach ($iterator = new \Nette\Iterators\CachingIterator($callbacksNames) as $callbacksName) {
-				$sql .= " '$callbacksName'";
-				if (!$iterator->isLast()) {
-					$sql .= ",";
-				}
-			}
-			$sql .= ")";
+			$qb->andWhere("e.callbackName IN (:callbacksNames)")
+				->setParameter("callbacksNames", $callbacksNames);
 		}
 
-		$stmt = $this->em->getConnection()->prepare($sql);
-		$stmt->execute();
+		$qb->getQuery()->execute();
 	}
 
 }

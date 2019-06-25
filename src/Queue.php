@@ -233,12 +233,12 @@ class Queue {
 	 * @param string|NULL $errorMessage
 	 */
 	protected function changeEntityState(Entity\QueueEntity $entity, $state, $errorMessage = NULL) {
-			/** @var ADT\BackgroundQueue\Entity\QueueEntity */
-			$entity->state = $state;
-			$entity->errorMessage = $errorMessage;
+		/** @var ADT\BackgroundQueue\Entity\QueueEntity */
+		$entity->state = $state;
+		$entity->errorMessage = $errorMessage;
 
-			$this->em->persist($entity);
-			$this->em->flush($entity);
+		$this->em->persist($entity);
+		$this->em->flush($entity);
 	}
 
 	/**
@@ -259,15 +259,13 @@ class Queue {
 	 */
 	public static function handleGuzzleError(\GuzzleHttp\Exception\GuzzleException $guzzleException) {
 
-		if ($guzzleException instanceof \GuzzleHttp\Exception\ConnectException) {
+		if (
 			// HTTP Code 0
-			// On Sparkpost or ADT MailApi the request was successfuly processed even if there is no response
-			// Let's believe it is common behaviour
-			return TRUE;
-		}
-
-		if ($guzzleException instanceof \GuzzleHttp\Exception\ServerException) {
-			// HTTP Code 5xx	
+			$guzzleException instanceof \GuzzleHttp\Exception\ConnectException
+			||
+			// HTTP Code 5xx
+			$guzzleException instanceof \GuzzleHttp\Exception\ServerException
+		) {		
 			return FALSE;
 		}
 		

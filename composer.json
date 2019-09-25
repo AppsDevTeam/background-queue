@@ -12,10 +12,16 @@
 	],
 	"require": {
 		"nette/nette": "^2.3.0 || ~3.0",
-		"kdyby/rabbitmq": "^1.1",
+		"peldax/rabbitmq": "dev-master#0ba0a3abc16b43bd87fc93aee63a84beb8186bbe",
 		"kdyby/doctrine-magic-accessors": "^1.0"
 	},
 	"autoload": {
 		"psr-4": { "ADT\\BackgroundQueue\\": "src/" }
-	}
+	},
+  	"repositories": [
+		{
+			"type": "git",
+			"url": "https://github.com/peldax/RabbitMq"
+		}
+	]
 }

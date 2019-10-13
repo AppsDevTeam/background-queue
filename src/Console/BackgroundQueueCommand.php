@@ -8,7 +8,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
 
 /**
- * @see \ADT\BackgroundQueue\Queue::processRepeatableErrors
+ * @see \ADT\BackgroundQueue\Queue::processFixedPermanentErrors
  */
 class BackgroundQueueCommand extends Command {
 
@@ -17,12 +17,7 @@ class BackgroundQueueCommand extends Command {
 
 	protected function configure() {
 		$this->setName('adt:backgroundQueue');
-		$this->addArgument(
-        "callbacks",
-				InputArgument::IS_ARRAY,
-        'Názvy callbacků (oddělené mezerou)'
-    );
-		$this->setDescription('Zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_FATAL.');
+		$this->setDescription('Zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED.');
 	}
 
 	/**
@@ -35,7 +30,7 @@ class BackgroundQueueCommand extends Command {
 
 	protected function execute(InputInterface $input, OutputInterface $output) {
 		$callbacks = $input->getArgument("callbacks");
-		$this->queue->processRepeatableErrors($callbacks);
+		$this->queue->processFixedPermanentErrors($callbacks);
 
 		$output->writeln("SUCCESS");
 	}

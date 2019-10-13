@@ -29,8 +29,7 @@ class BackgroundQueueCommand extends Command {
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output) {
-		$callbacks = $input->getArgument("callbacks");
-		$this->queue->processFixedPermanentErrors($callbacks);
+		$this->queue->processFixedPermanentErrors();
 
 		$output->writeln("SUCCESS");
 	}

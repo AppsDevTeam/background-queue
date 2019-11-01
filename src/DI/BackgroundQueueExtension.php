@@ -103,8 +103,8 @@ $service = (function () {
 	'. $serviceMethod->getBody() .'
 })();
 if (php_sapi_name() === "cli") {
-	$this->getByType(\Symfony\Component\EventDispatcher\EventDispatcherInterface::class)
-		->addListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, function () use ($service) {
+	$this->getByType(\Kdyby\Events\EventManager::class)
+		->addEventListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, function () use ($service) {
 			$service->onShutdown();
 		});
 

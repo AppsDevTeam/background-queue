@@ -35,6 +35,14 @@ class Service {
 	}
 
 	/**
+	 * @return string
+	 */
+	public function getEntityClass() {
+		return $this->config['queueEntityClass'];
+	}
+
+
+	/**
 	 * Publikuje novou zprávu do fronty
 	 *
 	 * @param Entity\QueueEntity $entity

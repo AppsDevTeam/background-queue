@@ -122,9 +122,10 @@ class Queue {
 	 * Metoda, která zpracuje jednu entitu
 	 *
 	 * @param \ADT\BackgroundQueue\Entity\QueueEntity $entity
+	 * @param boolean $withRabbit
 	 * @throws \Exception
 	 */
-	protected function processEntity(Entity\QueueEntity $entity) {
+	protected function processEntity(Entity\QueueEntity $entity, $withRabbit = TRUE) {
 
 		// Zpráva není ke zpracování v případě, že nemá stav READY nebo ERROR_REPEATABLE
 		// Pokud při zpracování zprávy nastane chyba, zpráva zůstane ve stavu PROCESSING a consumer se ukončí.
@@ -188,7 +189,10 @@ class Queue {
 			if ($entity->numberOfAttempts == $this->config["notifyOnNumberOfAttempts"]) { // pri urcitem mnozstvi neuspesnych pokusu posilat email
 				\Tracy\Debugger::log("BackgroundQueue: Number of attempts reached " .$entity->numberOfAttempts.", ID " . $entity->getId(), \Tracy\ILogger::ERROR);
 			}
-			$this->service->publish($entity, 'generalQueueError');
+
+			if ($withRabbit) { // v rabbitovi - vracime zpet do fronty
+				$this->service->publish($entity, 'generalQueueError');
+			}
 		}
 
 		if (isset($innerEx)) {
@@ -262,5 +266,25 @@ class Queue {
 		
 		// other exceptions like 3xx (TooManyRedirectsException) or 4xx (\GuzzleHttp\Exception\ClientException) are unrepeatable and we want to throw exception
 		throw $guzzleException;
+	}
+
+	/**
+	 * Metoda zpracující callbacky nezpracovaných entit
+	 * bez rabbita a consumeru
+	 * @throws \Exception
+	 */
+	public function processUnprocessedEntities() {
+		// vybere nezpracovane zaznamy
+		$entities = $this->em->createQueryBuilder()
+			->select("e")
+			->from(Entity\QueueEntity::class, "e")
+			->andWhere("e.state IN (:state)")
+			->setParameter("state", [Entity\QueueEntity::STATE_READY, Entity\QueueEntity::STATE_ERROR_REPEATABLE])
+			->getQuery()
+			->getResult();
+
+		foreach ($entities as $entity) {
+			$this->processEntity($entity, FALSE);
+		}
 	}
 }

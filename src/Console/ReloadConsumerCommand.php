@@ -25,7 +25,7 @@ class ReloadConsumerCommand extends Command {
 	}
 
 	protected function configure() {
-		$this->setName('adt:backgroundQueue:reloadConsumer');
+		$this->setName('adt:backgroundQueue:consumerReload');
 		$this->setDescription('Vytvoří několik (dle konfigurace) noop operací, aby každý consumer zkontroloval, zda se nemá ukončit.');
 	}
 

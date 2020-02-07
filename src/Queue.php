@@ -158,7 +158,7 @@ class Queue {
 			if ($output === FALSE) {
 				// pokud mětoda vrátí FALSE, zpráva nebyla zpracována, entitě nastavit chybový stav
 				// zpráva se znovu zpracuje
-				$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_REPEATABLE);
+				$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_TEMPORARY);
 
 			} else {
 				// pokud metoda vrátí cokoliv jiného (nebo nevrátí nic),
@@ -205,7 +205,7 @@ class Queue {
 	/**
 	 * Metoda, která zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED.
 	 * Pokud callback vyhodí výjimku, vrátí se stav STATE_ERROR_FATAL,
-	 * pokud callback vrátí FALSE, nastaví stav STATE_ERROR_REPEATABLE a pošle zprávu do RabbitMQ, aby se za 20 minut znovu zpracovala
+	 * pokud callback vrátí FALSE, nastaví stav STATE_ERROR_TEMORARY a pošle zprávu do RabbitMQ, aby se za 20 minut znovu zpracovala
 	 * jinak se nastaví stav STATE_DONE
 	 */
 	public function processFixedPermanentErrors() {
@@ -279,12 +279,32 @@ class Queue {
 			->select("e")
 			->from(Entity\QueueEntity::class, "e")
 			->andWhere("e.state IN (:state)")
-			->setParameter("state", [Entity\QueueEntity::STATE_READY, Entity\QueueEntity::STATE_ERROR_REPEATABLE])
+			->setParameter("state", Entity\QueueEntity::STATE_READY)
 			->getQuery()
 			->getResult();
 
 		foreach ($entities as $entity) {
 			$this->processEntity($entity, FALSE);
+		}
+	}
+
+	/**
+	 * Metoda zpracující callbacky entit s nastavenym stavem STATE_ERROR_TEMPORARY
+	 *
+	 * @throws \Exception
+	 */
+	public function processTemporaryErrors() {
+
+		$entities = $this->em->createQueryBuilder()
+			->select("e")
+			->from(Entity\QueueEntity::class, "e")
+			->andWhere("e.state IN (:state)")
+			->setParameter("state", Entity\QueueEntity::STATE_ERROR_TEMPORARY)
+			->getQuery()
+			->getResult();
+
+		foreach ($entities as $entity) {
+			$this->processEntity($entity);
 		}
 	}
 }

@@ -8,10 +8,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
 
 /**
- * Smaže všechny záznamy z DB s nastaveným stavem STATE_DONE
- *  php www/index.php adt:backgroundQueue:delete
+ * Vytvoří několik (dle konfigurace) noop operací, aby každý consumer zkontroloval, zda se nemá ukončit.
  */
-class BackgroundQueueClearCommand extends Command {
+class ReloadConsumerCommand extends Command {
 
 	/**
 	 * @var array
@@ -26,13 +25,8 @@ class BackgroundQueueClearCommand extends Command {
 	}
 
 	protected function configure() {
-		$this->setName('backgroundQueue:clear');
-		$this->addArgument(
-			"callbacks",
-			InputArgument::IS_ARRAY,
-			'Názvy callbacků (oddělené mezerou)'
-		);
-		$this->setDescription('Smaže všechny záznamy z DB s nastaveným stavem STATE_DONE starší než je nastaveno v configu.');
+		$this->setName('adt:backgroundQueue:consumerReload');
+		$this->setDescription('Vytvoří několik (dle konfigurace) noop operací, aby každý consumer zkontroloval, zda se nemá ukončit.');
 	}
 
 	/**
@@ -44,13 +38,10 @@ class BackgroundQueueClearCommand extends Command {
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output) {
-		
-		$callbacks = $input->getArgument("callbacks");
-		$this->queueService->clearDoneRecords($callbacks);
 
-		if ($input->getOption('verbose')) {
-			$output->writeln("SUCCESS");
-		}
+		$this->queueService->publishSupervisorNoop();
+
+		$output->writeln("SUCCESS");
 	}
 
 }

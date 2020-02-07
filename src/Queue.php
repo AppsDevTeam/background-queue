@@ -205,7 +205,7 @@ class Queue {
 	/**
 	 * Metoda, která zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED.
 	 * Pokud callback vyhodí výjimku, vrátí se stav STATE_ERROR_FATAL,
-	 * pokud callback vrátí FALSE, nastaví stav STATE_ERROR_TEMORARY a pošle zprávu do RabbitMQ, aby se za 20 minut znovu zpracovala
+	 * pokud callback vrátí FALSE, nastaví stav STATE_ERROR_TEMPORARY a pošle zprávu do RabbitMQ, aby se za 20 minut znovu zpracovala
 	 * jinak se nastaví stav STATE_DONE
 	 */
 	public function processFixedPermanentErrors() {

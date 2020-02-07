@@ -77,8 +77,8 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');
 
-		$builder->addDefinition($this->prefix('consumerReloadCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ConsumerReloadCommand::class)
+		$builder->addDefinition($this->prefix('reloadConsumerCommand'))
+			->setClass(\ADT\BackgroundQueue\Console\ReloadConsumerCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');

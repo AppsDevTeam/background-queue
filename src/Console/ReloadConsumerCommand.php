@@ -10,7 +10,7 @@ use Symfony\Component\Console\Input\InputArgument;
 /**
  * Vytvoří několik (dle konfigurace) noop operací, aby každý consumer zkontroloval, zda se nemá ukončit.
  */
-class ConsumerReloadCommand extends Command {
+class ReloadConsumerCommand extends Command {
 
 	/**
 	 * @var array
@@ -25,7 +25,7 @@ class ConsumerReloadCommand extends Command {
 	}
 
 	protected function configure() {
-		$this->setName('adt:backgroundQueue:consumerReload');
+		$this->setName('adt:backgroundQueue:reloadConsumer');
 		$this->setDescription('Vytvoří několik (dle konfigurace) noop operací, aby každý consumer zkontroloval, zda se nemá ukončit.');
 	}
 

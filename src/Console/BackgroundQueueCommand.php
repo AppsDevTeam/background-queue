@@ -16,7 +16,7 @@ class BackgroundQueueCommand extends Command {
 	protected $queue;
 
 	protected function configure() {
-		$this->setName('adt:backgroundQueue');
+		$this->setName('adt:backgroundQueue:processFixedPermanentErrors');
 		$this->setDescription('Zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED.');
 	}
 

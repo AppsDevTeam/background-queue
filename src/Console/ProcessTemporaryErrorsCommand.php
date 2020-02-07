@@ -7,7 +7,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
 
-class BackgroundQueueProcessTemporaryErrorsCommand extends Command {
+class ProcessTemporaryErrorsCommand extends Command {
 
 	/** @var \ADT\BackgroundQueue\Queue */
 	protected $queue;

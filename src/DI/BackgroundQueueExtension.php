@@ -63,28 +63,28 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 		// registrace commandů
 
 		$builder->addDefinition($this->prefix('processFixedPermanentErrorsCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueProcessFixedPermanentErrorsCommand::class)
+			->setClass(\ADT\BackgroundQueue\Console\ProcessFixedPermanentErrorsCommand::class)
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('processCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueProcessCommand::class)
+			->setClass(\ADT\BackgroundQueue\Console\ProcessCommand::class)
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('processTemporaryErrorsCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueProcessTemporaryErrorsCommand::class)
+			->setClass(\ADT\BackgroundQueue\Console\ProcessTemporaryErrorsCommand::class)
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('consumerReloadCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueConsumerReloadCommand::class)
+			->setClass(\ADT\BackgroundQueue\Console\ConsumerReloadCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('clearCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\BackgroundQueueClearCommand::class)
+			->setClass(\ADT\BackgroundQueue\Console\ClearCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
 			->setInject(FALSE)
 			->addTag('kdyby.console.command');

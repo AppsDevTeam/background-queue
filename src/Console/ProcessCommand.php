@@ -7,17 +7,14 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
 
-/**
- * @see \ADT\BackgroundQueue\Queue::processFixedPermanentErrors
- */
-class BackgroundQueueProcessFixedPermanentErrorsCommand extends Command {
+class ProcessCommand extends Command {
 
 	/** @var \ADT\BackgroundQueue\Queue */
 	protected $queue;
 
 	protected function configure() {
-		$this->setName('adt:backgroundQueue:processFixedPermanentErrors');
-		$this->setDescription('Zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED.');
+		$this->setName('adt:backgroundQueue:process');
+		$this->setDescription('Zavolá callback pro všechny nezpracované záznamy z DB a zpracuje jak kdyby to zpracoval consumer.');
 	}
 
 	/**
@@ -29,7 +26,7 @@ class BackgroundQueueProcessFixedPermanentErrorsCommand extends Command {
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output) {
-		$this->queue->processFixedPermanentErrors();
+		$this->queue->processUnprocessedEntities();
 
 		$output->writeln("SUCCESS");
 	}

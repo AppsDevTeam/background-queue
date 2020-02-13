@@ -30,8 +30,6 @@ class ProcessFixedPermanentErrorsCommand extends Command {
 
 	protected function execute(InputInterface $input, OutputInterface $output) {
 		$this->queue->processFixedPermanentErrors();
-
-		$output->writeln("SUCCESS");
 	}
 
 }

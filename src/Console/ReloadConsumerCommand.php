@@ -40,8 +40,6 @@ class ReloadConsumerCommand extends Command {
 	protected function execute(InputInterface $input, OutputInterface $output) {
 
 		$this->queueService->publishSupervisorNoop();
-
-		$output->writeln("SUCCESS");
 	}
 
 }

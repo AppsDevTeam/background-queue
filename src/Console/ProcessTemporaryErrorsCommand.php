@@ -27,8 +27,6 @@ class ProcessTemporaryErrorsCommand extends Command {
 
 	protected function execute(InputInterface $input, OutputInterface $output) {
 		$this->queue->processTemporaryErrors();
-
-		$output->writeln("SUCCESS");
 	}
 
 }

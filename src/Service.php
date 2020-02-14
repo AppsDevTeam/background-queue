@@ -20,11 +20,9 @@ class Service {
 
 	/**
 	 * @param \Kdyby\Doctrine\EntityManager $em
-	 * @param \Kdyby\RabbitMq\Connection $bunny
 	 */
-	public function __construct(\Kdyby\Doctrine\EntityManager $em, \Kdyby\RabbitMq\Connection $bunny) {
+	public function __construct(\Kdyby\Doctrine\EntityManager $em) {
 		$this->em = $em;
-		$this->bunny = $bunny;
 	}
 
 	/**
@@ -32,6 +30,13 @@ class Service {
 	 */
 	public function setConfig(array $config) {
 		$this->config = $config;
+	}
+
+	/**
+	 * @param \Kdyby\RabbitMq\Connection|null $bunny
+	 */
+	public function setRabbitMq(\Kdyby\RabbitMq\Connection $bunny = null) {
+		$this->bunny = $bunny;
 	}
 
 	/**
@@ -63,15 +68,17 @@ class Service {
 			$this->em->persist($entity);
 			$this->em->flush($entity);
 
-			// odeslání do RabbitMQ
-			$producer = $this->bunny->getProducer($producerName);
-			$producer->publish(
-				$entity->getId(),
-				'',
-				[
-					'timestamp' => (new \Nette\Utils\DateTime)->format('U'),
-				]
-			);
+			if ($this->bunny) {
+				// odeslání do RabbitMQ
+				$producer = $this->bunny->getProducer($producerName);
+				$producer->publish(
+					$entity->getId(),
+					'',
+					[
+						'timestamp' => (new \Nette\Utils\DateTime)->format('U'),
+					]
+				);
+			}
 		};
 	}
 

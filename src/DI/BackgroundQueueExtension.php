@@ -20,6 +20,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 			],
 			'clearOlderThan' => '14 days', // čas jak staré záznamy ode dneška budou smazány
 			'notifyOnNumberOfAttempts' => 5, // počet pokusů zpracování fronty pro zaslání mailu
+			'useRabbitMq' => true,
 		]);
 
 		if ($config['supervisor']['numprocs'] <= 0) {
@@ -58,7 +59,8 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 		// registrace service
 		$builder->addDefinition($this->prefix('service'))
 			->setClass(\ADT\BackgroundQueue\Service::class)
-			->addSetup('$service->setConfig(?)', [$serviceConfig]);
+			->addSetup('$service->setConfig(?)', [$serviceConfig])
+			->addSetup('$service->setRabbitMq(?)', [$serviceConfig['useRabbitMq'] ? $this->getContainerBuilder()->getByType('\Kdyby\RabbitMq\Connection') : null]);
 
 		// registrace commandů
 

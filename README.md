@@ -142,6 +142,16 @@ rabbitmq:
 ### command pro “inicializaci” front do RabbitMQ
 `php www/index.php rabbitmq:setup-fabric`
 
+### 1.6 Deaktivace zpracovani přes RabbitMq
+Pokud je nainstalovaný balíček Kdyby/RabbitMq, záznam se automaticky vloží do RabbitMQ fronty.
+Toto chování je možné vypnout:
+
+```
+# app/config/config.neon
+backgroundQueue:
+	useRabbitMq: false
+```
+
 ## 2 Použití
 
 ```

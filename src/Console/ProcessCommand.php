@@ -27,8 +27,6 @@ class ProcessCommand extends Command {
 
 	protected function execute(InputInterface $input, OutputInterface $output) {
 		$this->queue->processUnprocessedEntities();
-
-		$output->writeln("SUCCESS");
 	}
 
 }

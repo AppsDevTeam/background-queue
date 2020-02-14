@@ -122,10 +122,9 @@ class Queue {
 	 * Metoda, která zpracuje jednu entitu
 	 *
 	 * @param \ADT\BackgroundQueue\Entity\QueueEntity $entity
-	 * @param boolean $withRabbit
 	 * @throws \Exception
 	 */
-	protected function processEntity(Entity\QueueEntity $entity, $withRabbit = TRUE) {
+	protected function processEntity(Entity\QueueEntity $entity) {
 
 		// Zpráva není ke zpracování v případě, že nemá stav READY nebo ERROR_REPEATABLE
 		// Pokud při zpracování zprávy nastane chyba, zpráva zůstane ve stavu PROCESSING a consumer se ukončí.
@@ -190,9 +189,7 @@ class Queue {
 				\Tracy\Debugger::log("BackgroundQueue: Number of attempts reached " .$entity->numberOfAttempts.", ID " . $entity->getId(), \Tracy\ILogger::ERROR);
 			}
 
-			if ($withRabbit) { // v rabbitovi - vracime zpet do fronty
-				$this->service->publish($entity, 'generalQueueError');
-			}
+			$this->service->publish($entity, 'generalQueueError');
 		}
 
 		if (isset($innerEx)) {
@@ -284,7 +281,7 @@ class Queue {
 			->getResult();
 
 		foreach ($entities as $entity) {
-			$this->processEntity($entity, FALSE);
+			$this->processEntity($entity);
 		}
 	}
 

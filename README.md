@@ -142,6 +142,15 @@ rabbitmq:
 ### command pro “inicializaci” front do RabbitMQ
 `php www/index.php rabbitmq:setup-fabric`
 
+### 1.6 Deaktivace zpracovani přes RabbitMq
+Vypnutí zpracování přes rabbit frontu a consumery (defaultně true):
+
+```
+# app/config/config.neon
+backgroundQueue:
+	useRabbitMq: false
+```
+
 ## 2 Použití
 
 ```

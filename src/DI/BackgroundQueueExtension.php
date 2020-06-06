@@ -60,7 +60,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 		$builder->addDefinition($this->prefix('service'))
 			->setClass(\ADT\BackgroundQueue\Service::class)
 			->addSetup('$service->setConfig(?)', [$serviceConfig])
-			->addSetup('$service->setRabbitMq(?)', [$serviceConfig['useRabbitMq'] ? $this->getContainerBuilder()->getByType('\Kdyby\RabbitMq\Connection') : null]);
+			->addSetup('$service->setRabbitMq(?)', [$serviceConfig['useRabbitMq'] ? $this->getContainerBuilder()->getDefinitionByType('\Kdyby\RabbitMq\Connection') : null]);
 
 		// registrace commandů
 

@@ -266,21 +266,35 @@ class Queue {
 	}
 
 	/**
-	 * Metoda zpracující callbacky nezpracovaných entit
+	 * Metoda zpracující callbacky nezpracovaných entit nebo jednu konkrétní entitu
 	 * bez rabbita a consumeru
+	 *
+	 * @param int|NULL $id ID konkrétního záznamu
 	 * @throws \Exception
 	 */
-	public function processUnprocessedEntities() {
-		// vybere nezpracovane zaznamy
-		$entities = $this->em->createQueryBuilder()
+	public function processUnprocessedEntities($id = NULL) {
+
+		$qb = $this->em->createQueryBuilder()
 			->select("e")
 			->from(Entity\QueueEntity::class, "e")
-			->andWhere("e.state IN (:state)")
-			->setParameter("state", Entity\QueueEntity::STATE_READY)
-			->getQuery()
-			->getResult();
+			->andWhere("e.state IN (:state)");
 
-		foreach ($entities as $entity) {
+		// vybere jeden konkrétní záznam
+		if ($id) {
+			$qb->andWhere("e.id = :id", $id);
+			$qb->setParameter("state", [
+				Entity\QueueEntity::STATE_READY,
+				Entity\QueueEntity::STATE_ERROR_TEMPORARY,
+				Entity\QueueEntity::STATE_ERROR_FATAL,
+				Entity\QueueEntity::STATE_ERROR_PERMANENT_FIXED,
+			]);
+
+			// vybere nezpracovane zaznamy
+		} else {
+			$qb->setParameter("state", Entity\QueueEntity::STATE_READY);
+		}
+
+		foreach ($qb->getQuery()->getResult() as $entity) {
 			$this->processEntity($entity);
 		}
 	}

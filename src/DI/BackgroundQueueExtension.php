@@ -102,17 +102,27 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 $service = (function () {
 	'. $serviceMethod->getBody() .'
 })();
+
+$shutdownCallback = function () use ($service) {
+	$service->onShutdown();
+};
+
 if (php_sapi_name() === "cli") {
-	$this->getByType(\Kdyby\Events\EventManager::class)
-		->addEventListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, function () use ($service) {
-			$service->onShutdown();
-		});
+	
+	if (get_class($this->getByType(\Symfony\Component\EventDispatcher\EventDispatcherInterface::class)) === \Kdyby\Events\SymfonyDispatcher::class) {
+		$this->getByType(\Kdyby\Events\EventManager::class)
+			->addEventListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, $shutdownCallback);
+	}
+	else {
+		$this->getByType(\Symfony\Component\EventDispatcher\EventDispatcherInterface::class)
+			->addListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, $shutdownCallback);
+	}
 
 } else {
+
 	$this->getByType(\Nette\Application\Application::class)
-		->onShutdown[] = function () use ($service) {
-			$service->onShutdown();
-		};
+		->onShutdown[] = $shutdownCallback;
+		
 }
 return $service;
 		');

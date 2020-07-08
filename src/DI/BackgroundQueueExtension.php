@@ -108,15 +108,9 @@ $shutdownCallback = function () use ($service) {
 };
 
 if (php_sapi_name() === "cli") {
-	
-	if (get_class($this->getByType(\Symfony\Component\EventDispatcher\EventDispatcherInterface::class)) === \Kdyby\Events\SymfonyDispatcher::class) {
-		$this->getByType(\Kdyby\Events\EventManager::class)
-			->addEventListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, $shutdownCallback);
-	}
-	else {
-		$this->getByType(\Symfony\Component\EventDispatcher\EventDispatcherInterface::class)
-			->addListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, $shutdownCallback);
-	}
+
+	$this->getByType(\Symfony\Component\EventDispatcher\EventDispatcherInterface::class)
+		->addListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, $shutdownCallback);
 
 } else {
 

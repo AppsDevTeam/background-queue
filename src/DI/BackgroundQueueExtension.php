@@ -3,6 +3,7 @@
 namespace ADT\BackgroundQueue\DI;
 
 use Nette\DI\Container;
+use Nette\DI\Extensions\InjectExtension;
 use Nette\PhpGenerator\ClassType;
 
 class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
@@ -66,29 +67,29 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 
 		$builder->addDefinition($this->prefix('processFixedPermanentErrorsCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ProcessFixedPermanentErrorsCommand::class)
-			->setInject(FALSE)
+			->addTag(InjectExtension::TAG_INJECT, FALSE)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('processCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ProcessCommand::class)
-			->setInject(FALSE)
+			->addTag(InjectExtension::TAG_INJECT, FALSE)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('processTemporaryErrorsCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ProcessTemporaryErrorsCommand::class)
-			->setInject(FALSE)
+			->addTag(InjectExtension::TAG_INJECT, FALSE)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('reloadConsumerCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ReloadConsumerCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
-			->setInject(FALSE)
+			->addTag(InjectExtension::TAG_INJECT, FALSE)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('clearCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ClearCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
-			->setInject(FALSE)
+			->addTag(InjectExtension::TAG_INJECT, FALSE)
 			->addTag('kdyby.console.command');
 
 	}
@@ -101,17 +102,21 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 $service = (function () {
 	'. $serviceMethod->getBody() .'
 })();
+
+$shutdownCallback = function () use ($service) {
+	$service->onShutdown();
+};
+
 if (php_sapi_name() === "cli") {
+
 	$this->getByType(\Symfony\Component\EventDispatcher\EventDispatcherInterface::class)
-		->addListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, function () use ($service) {
-			$service->onShutdown();
-		});
+		->addListener(\Symfony\Component\Console\ConsoleEvents::TERMINATE, $shutdownCallback);
 
 } else {
+
 	$this->getByType(\Nette\Application\Application::class)
-		->onShutdown[] = function () use ($service) {
-			$service->onShutdown();
-		};
+		->onShutdown[] = $shutdownCallback;
+		
 }
 return $service;
 		');

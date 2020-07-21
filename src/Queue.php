@@ -140,8 +140,8 @@ class Queue {
 		$entity->lastAttempt = new \DateTime;
 		$entity->numberOfAttempts++;
 
+		$errorMessage = null;
 		try {
-
 			if (!isset($this->config["callbacks"][$entity->getCallbackName()])) {
 				throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 			}
@@ -157,47 +157,64 @@ class Queue {
 			if ($output === FALSE) {
 				// pokud mětoda vrátí FALSE, zpráva nebyla zpracována, entitě nastavit chybový stav
 				// zpráva se znovu zpracuje
-				$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_TEMPORARY);
+				$state = Entity\QueueEntity::STATE_ERROR_TEMPORARY;
 
 			} else {
 				// pokud metoda vrátí cokoliv jiného (nebo nevrátí nic),
 				// proběhla v pořádku, nastavit stav dokončeno
-				$this->changeEntityState($entity, Entity\QueueEntity::STATE_DONE);
+				$state = Entity\QueueEntity::STATE_DONE;
 			}
-
-		} catch (\Exception $e) {
-
-			try {
-				// kritická chyba
-				$this->changeEntityState($entity, Entity\QueueEntity::STATE_ERROR_FATAL, $e->getMessage());
-			} catch (\Exception $innerEx) {
-				// může nastat v případě, kdy v callbacku selhal např. INSERT a entity manager se uzavřel
-				// po chvíli to zkusíme to znovu
-				$output = FALSE;
+		}
+		catch (\GuzzleHttp\Exception\GuzzleException $e) {
+			if (
+				// HTTP Code 0
+				$e instanceof \GuzzleHttp\Exception\ConnectException
+				||
+				// HTTP Code 5xx
+				$e instanceof \GuzzleHttp\Exception\ServerException
+			) {
+				$state = Entity\QueueEntity::STATE_ERROR_TEMPORARY;
 			}
-
-			// odeslání emailu o chybě v callbacku
-			\Tracy\Debugger::log($e, \Tracy\ILogger::EXCEPTION);
+			// HTTP Code 3xx, 4xx
+			else {
+				$state = Entity\QueueEntity::STATE_ERROR_FATAL;
+			}
+			$errorMessage = $e->getMessage();
+		}
+		catch (\Exception $e) {
+			$state = Entity\QueueEntity::STATE_ERROR_FATAL;
+			$errorMessage = $e->getMessage();
 		}
 
-		// pokud vrátí callback FALSE, jedná se o opakovatelnou chybu.
-		// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)
-		// a po 20 minutách se přesune zpět do fronty "generalQueue" a znovu se zpracuje
-		if ($output === FALSE) {
+		try {
+			$this->changeEntityState($entity, $state, $errorMessage);
 
-			if ($entity->numberOfAttempts == $this->config["notifyOnNumberOfAttempts"]) { // pri urcitem mnozstvi neuspesnych pokusu posilat email
-				\Tracy\Debugger::log("BackgroundQueue: Number of attempts reached " .$entity->numberOfAttempts.", ID " . $entity->getId(), \Tracy\ILogger::ERROR);
+			if ($state === Entity\QueueEntity::STATE_ERROR_FATAL) {
+				// odeslání emailu o chybě v callbacku
+				static::logException('Permanent error occured', $entity, $state, $errorMessage);
 			}
+			elseif ($state === Entity\QueueEntity::STATE_ERROR_TEMPORARY) {
+				// pri urcitem mnozstvi neuspesnych pokusu posilat email
+				if ($entity->getNumberOfAttempts() == $this->config["notifyOnNumberOfAttempts"]) {
+					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(),  $entity->getId(), $state, $errorMessage);
+				}
 
-			$this->service->publish($entity, 'generalQueueError');
+				// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)
+				// a po 20 minutách se přesune zpět do fronty "generalQueue" a znovu se zpracuje
+				$this->service->publish($entity, 'generalQueueError');
+			}
 		}
-
-		if (isset($innerEx)) {
-			// nemá smysl, aby tento proces pokračoval v práci, pokud EM nefunguje
-			// zalogovat chybu a ukončit
-			throw $innerEx;
+		catch (\Exception $innerEx) {
+			// může nastat v případě, kdy v callbacku selhal např. INSERT a entity manager se uzavřel
+			// entita zustane viset ve stavu "probiha"
+			static::logException($innerEx->getMessage(), $entity, $state, $errorMessage);
 		}
 	}
+
+	private static function logException($errorMessage, $entity, $state, $originalErrorMessage)
+	{
+		\Tracy\Debugger::log('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . '; ErrorMessage: ' . $originalErrorMessage, \Tracy\ILogger::ERROR);
+	} 
 
 	/**
 	 * Metoda, která zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED.

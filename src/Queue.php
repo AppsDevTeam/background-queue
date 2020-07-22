@@ -196,7 +196,7 @@ class Queue {
 			elseif ($state === Entity\QueueEntity::STATE_ERROR_TEMPORARY) {
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($entity->getNumberOfAttempts() == $this->config["notifyOnNumberOfAttempts"]) {
-					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(),  $entity->getId(), $state, $errorMessage);
+					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(),  $entity, $state, $errorMessage);
 				}
 
 				// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)

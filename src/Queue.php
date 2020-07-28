@@ -2,6 +2,9 @@
 
 namespace ADT\BackgroundQueue;
 
+use GuzzleHttp\Exception\TooManyRedirectsException;
+use Throwable;
+
 class Queue {
 	
 	use \Nette\SmartObject;
@@ -181,6 +184,15 @@ class Queue {
 			}
 			$errorMessage = $e->getMessage();
 		}
+		catch (RequestException $e) {
+			if ($code >= 300 && $code < 500) {
+				$state = Entity\QueueEntity::STATE_ERROR_FATAL;
+			}
+			else {
+				$state = Entity\QueueEntity::STATE_ERROR_TEMPORARY;
+			}
+			$errorMessage = $e->getMessage();
+		}
 		catch (\Exception $e) {
 			$state = Entity\QueueEntity::STATE_ERROR_FATAL;
 			$errorMessage = $e->getMessage();
@@ -334,5 +346,18 @@ class Queue {
 		foreach ($entities as $entity) {
 			$this->processEntity($entity);
 		}
+	}
+
+	public static function convertExtension()
+	{
+		throw new QueueException($e->getMessage(), $e->getCode());
+	}
+}
+
+class RequestException extends \Exception
+{
+	public function __construct($message, $httpStatusCode, Throwable $previous = null)
+	{
+		parent::__construct($message, $httpStatusCode, $previous);
 	}
 }

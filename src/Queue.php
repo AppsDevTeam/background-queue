@@ -2,9 +2,6 @@
 
 namespace ADT\BackgroundQueue;
 
-use GuzzleHttp\Exception\TooManyRedirectsException;
-use Throwable;
-
 class Queue {
 	
 	use \Nette\SmartObject;
@@ -290,7 +287,7 @@ class Queue {
 			return FALSE;
 		}
 		
-		// other exceptions like 3xx (TooManyRedirectsException) or 4xx (\GuzzleHttp\Exception\ClientException) are unrepeatable and we want to throw exception
+		// other exceptions like 3xx (\GuzzleHttp\Exception\TooManyRedirectsException) or 4xx (\GuzzleHttp\Exception\ClientException) are unrepeatable and we want to throw exception
 		throw $guzzleException;
 	}
 
@@ -346,11 +343,6 @@ class Queue {
 		foreach ($entities as $entity) {
 			$this->processEntity($entity);
 		}
-	}
-
-	public static function convertExtension()
-	{
-		throw new QueueException($e->getMessage(), $e->getCode());
 	}
 }
 

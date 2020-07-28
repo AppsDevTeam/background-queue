@@ -182,7 +182,7 @@ class Queue {
 			$errorMessage = $e->getMessage();
 		}
 		catch (RequestException $e) {
-			if ($code >= 300 && $code < 500) {
+			if ($e->getCode() >= 300 && $e->getCode() < 500) {
 				$state = Entity\QueueEntity::STATE_ERROR_FATAL;
 			}
 			else {

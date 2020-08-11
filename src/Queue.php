@@ -141,6 +141,7 @@ class Queue {
 		$entity->numberOfAttempts++;
 
 		$errorMessage = null;
+		$e = null;
 		try {
 			if (!isset($this->config["callbacks"][$entity->getCallbackName()])) {
 				throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
@@ -200,12 +201,12 @@ class Queue {
 
 			if ($state === Entity\QueueEntity::STATE_ERROR_FATAL) {
 				// odeslání emailu o chybě v callbacku
-				static::logException('Permanent error occured', $entity, $state, $errorMessage);
+				static::logException('Permanent error occured', $entity, $state, $errorMessage, $e);
 			}
 			elseif ($state === Entity\QueueEntity::STATE_ERROR_TEMPORARY) {
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($entity->getNumberOfAttempts() == $this->config["notifyOnNumberOfAttempts"]) {
-					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(),  $entity, $state, $errorMessage);
+					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(),  $entity, $state, $errorMessage, $e);
 				}
 
 				// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)
@@ -216,12 +217,15 @@ class Queue {
 		catch (\Exception $innerEx) {
 			// může nastat v případě, kdy v callbacku selhal např. INSERT a entity manager se uzavřel
 			// entita zustane viset ve stavu "probiha"
-			static::logException($innerEx->getMessage(), $entity, $state, $errorMessage);
+			static::logException($innerEx->getMessage(), $entity, $state, $errorMessage, $innerEx);
 		}
 	}
 
-	private static function logException($errorMessage, $entity, $state, $originalErrorMessage)
+	private static function logException($errorMessage, $entity, $state, $originalErrorMessage, \Exception $originalException = NULL)
 	{
+		if ($originalException) {
+			\Tracy\Debugger::log($originalException, \Tracy\ILogger::EXCEPTION);
+		}
 		\Tracy\Debugger::log('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . '; ErrorMessage: ' . $originalErrorMessage, \Tracy\ILogger::ERROR);
 	} 
 

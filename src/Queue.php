@@ -2,8 +2,6 @@
 
 namespace ADT\BackgroundQueue;
 
-use Tracy\ILogger;
-
 class Queue {
 	
 	use \Nette\SmartObject;

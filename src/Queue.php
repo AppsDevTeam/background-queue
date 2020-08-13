@@ -140,7 +140,7 @@ class Queue {
 		$entity->lastAttempt = new \DateTime;
 		$entity->numberOfAttempts++;
 
-		$errorMessage = null;
+		$e = null;
 		try {
 			if (!isset($this->config["callbacks"][$entity->getCallbackName()])) {
 				throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
@@ -179,7 +179,6 @@ class Queue {
 			else {
 				$state = Entity\QueueEntity::STATE_ERROR_FATAL;
 			}
-			$errorMessage = $e->getMessage();
 		}
 		catch (RequestException $e) {
 			if ($e->getCode() >= 300 && $e->getCode() < 500) {
@@ -188,24 +187,22 @@ class Queue {
 			else {
 				$state = Entity\QueueEntity::STATE_ERROR_TEMPORARY;
 			}
-			$errorMessage = $e->getMessage();
 		}
 		catch (\Exception $e) {
 			$state = Entity\QueueEntity::STATE_ERROR_FATAL;
-			$errorMessage = $e->getMessage();
 		}
 
 		try {
-			$this->changeEntityState($entity, $state, $errorMessage);
+			$this->changeEntityState($entity, $state, $e->getMessage());
 
 			if ($state === Entity\QueueEntity::STATE_ERROR_FATAL) {
 				// odeslání emailu o chybě v callbacku
-				static::logException('Permanent error occured', $entity, $state, $errorMessage);
+				static::logException('Permanent error occured', $entity, $state, $e);
 			}
 			elseif ($state === Entity\QueueEntity::STATE_ERROR_TEMPORARY) {
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($entity->getNumberOfAttempts() == $this->config["notifyOnNumberOfAttempts"]) {
-					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(),  $entity, $state, $errorMessage);
+					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(),  $entity, $state, $e);
 				}
 
 				// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)
@@ -216,13 +213,13 @@ class Queue {
 		catch (\Exception $innerEx) {
 			// může nastat v případě, kdy v callbacku selhal např. INSERT a entity manager se uzavřel
 			// entita zustane viset ve stavu "probiha"
-			static::logException($innerEx->getMessage(), $entity, $state, $errorMessage);
+			static::logException($innerEx->getMessage(), $entity, $state, $e);
 		}
 	}
 
-	private static function logException($errorMessage, $entity, $state, $originalErrorMessage)
+	private static function logException($errorMessage, $entity, $state, \Exception $e)
 	{
-		\Tracy\Debugger::log('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . '; ErrorMessage: ' . $originalErrorMessage, \Tracy\ILogger::ERROR);
+		\Tracy\Debugger::log(new \Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . '; ErrorMessage: ' . $e->getMessage(), 0, $e));
 	} 
 
 	/**

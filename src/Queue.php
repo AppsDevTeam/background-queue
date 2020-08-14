@@ -2,8 +2,8 @@
 
 namespace ADT\BackgroundQueue;
 
-class Queue {
-	
+class Queue 
+{	
 	use \Nette\SmartObject;
 
 	/** @var \Kdyby\Doctrine\EntityManager */
@@ -193,7 +193,7 @@ class Queue {
 		}
 
 		try {
-			$this->changeEntityState($entity, $state, $e->getMessage());
+			$this->changeEntityState($entity, $state, $e ? $e->getMessage() : null);
 
 			if ($state === Entity\QueueEntity::STATE_ERROR_FATAL) {
 				// odeslání emailu o chybě v callbacku
@@ -217,7 +217,7 @@ class Queue {
 		}
 	}
 
-	private static function logException($errorMessage, $entity, $state, \Exception $e)
+	private static function logException($errorMessage, $entity, $state, \Exception $e = null)
 	{
 		\Tracy\Debugger::log(new \Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . '; ErrorMessage: ' . $e->getMessage(), 0, $e));
 	} 

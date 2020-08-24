@@ -219,7 +219,7 @@ class Queue
 
 	private static function logException($errorMessage, $entity, $state, \Exception $e = null)
 	{
-		\Tracy\Debugger::log(new \Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . '; ErrorMessage: ' . $e->getMessage(), 0, $e));
+		\Tracy\Debugger::log(new \Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . ($e ? '; ErrorMessage: ' . $e->getMessage() : ''), 0, $e));
 	} 
 
 	/**

@@ -127,4 +127,28 @@ class Service {
 		$qb->getQuery()->execute();
 	}
 
+	/**
+	 * Zjisti jestli existuje nedokonceny task s $callbackName
+	 */
+	public function hasNonFinishedTask($callbackName)
+	{
+		$qb = $this->em->createQueryBuilder();
+
+		$qb->select('COUNT(e.id)')
+			->from(Entity\QueueEntity::class, 'e');
+
+		$qb->andWhere('e.state IN (:states)')
+			->setParameter('states', [
+				Entity\QueueEntity::STATE_READY,
+				Entity\QueueEntity::STATE_PROCESSING,
+				Entity\QueueEntity::STATE_ERROR_TEMPORARY,
+				Entity\QueueEntity::STATE_ERROR_PERMANENT_FIXED,
+			]);
+
+		$qb->andWhere('e.callbackName = :callbackName')
+			->setParameter('callbackName', $callbackName);
+
+		return (bool) $qb->getQuery()->getSingleScalarResult();
+	}
+
 }

@@ -17,7 +17,7 @@ class ProcessFixedPermanentErrorsCommand extends Command {
 
 	protected function configure() {
 		$this->setName('adt:backgroundQueue:processFixedPermanentErrors');
-		$this->setDescription('Zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED.');
+		$this->setDescription('Nastaví všem záznamům se stavem STATE_ERROR_PERMANENT_FIXED stav STATE_READY a vrátí je do fronty.');
 	}
 
 	/**

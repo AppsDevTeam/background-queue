@@ -220,14 +220,12 @@ class Queue
 	private static function logException($errorMessage, $entity, $state, \Exception $e = null)
 	{
 		\Tracy\Debugger::log(new \Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . ($e ? '; ErrorMessage: ' . $e->getMessage() : ''), 0, $e));
-	} 
+	}
 
-	/**
-	 * Metoda, která zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED.
-	 * Pokud callback vyhodí výjimku, vrátí se stav STATE_ERROR_FATAL,
-	 * pokud callback vrátí FALSE, nastaví stav STATE_ERROR_TEMPORARY a pošle zprávu do RabbitMQ, aby se za 20 minut znovu zpracovala
-	 * jinak se nastaví stav STATE_DONE
-	 */
+    /**
+     * Metoda, která pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED nastaví stav READY a dá je zpět do fronty
+     * @throws \Exception
+     */
 	public function processFixedPermanentErrors() {
 		// vybere z DB záznamy s kriticku chybou
 		$qb = $this->em->createQueryBuilder()
@@ -238,7 +236,7 @@ class Queue
 
 		foreach ($entities = $qb->getQuery()->getResult() as $entity) {
 			$entity->state = Entity\QueueEntity::STATE_READY;
-			$this->processEntity($entity);
+			$this->service->publish($entity);
 		}
 	}
 

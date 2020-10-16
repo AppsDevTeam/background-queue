@@ -219,7 +219,7 @@ numprocs=1
 nebo jen pro vybrané callbacky [-v  pro vypsani SUCCESS po skončení scriptu]
 `php www/index.php backgroundQueue:clear -v backgroundMail sms` 
 
-### command který zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED
+### command který zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_WAITING_FOR_MANUAL_QUEUING
 `php www/index.php adt:backgroundQueue:processFixedPermanentErrors` 
 
 ### command který zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_TEMPORARY

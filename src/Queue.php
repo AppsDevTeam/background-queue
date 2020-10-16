@@ -223,7 +223,7 @@ class Queue
 	}
 
     /**
-     * Metoda, která pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_PERMANENT_FIXED nastaví stav READY a dá je zpět do fronty
+     * Metoda, která pro všechny záznamy z DB s nastaveným stavem STATE_WAITING_FOR_MANUAL_QUEUING nastaví stav READY a dá je zpět do fronty
      * @throws \Exception
      */
 	public function processFixedPermanentErrors() {
@@ -232,7 +232,7 @@ class Queue
 			->select("e")
 			->from(Entity\QueueEntity::class, "e")
 			->andWhere("e.state = :state")
-			->setParameter("state", Entity\QueueEntity::STATE_ERROR_PERMANENT_FIXED);
+			->setParameter("state", Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING);
 
 		foreach ($entities = $qb->getQuery()->getResult() as $entity) {
 			$entity->state = Entity\QueueEntity::STATE_READY;
@@ -307,7 +307,7 @@ class Queue
 				Entity\QueueEntity::STATE_READY,
 				Entity\QueueEntity::STATE_ERROR_TEMPORARY,
 				Entity\QueueEntity::STATE_ERROR_FATAL,
-				Entity\QueueEntity::STATE_ERROR_PERMANENT_FIXED,
+				Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING,
 			]);
 
 			// vybere nezpracovane zaznamy

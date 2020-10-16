@@ -33,7 +33,7 @@ class QueueEntity {
 	const STATE_DONE = 3; // dokončeno
 	const STATE_ERROR_TEMPORARY = 4; // opakovatelná chyba (např. nedostupné API)
 	const STATE_ERROR_FATAL = 5; // kritická chyba (např. chyba v implementaci)
-	const STATE_ERROR_PERMANENT_FIXED = 6; // task s opravenou permanentní chybou, který chceme spustit znovu
+	const STATE_WAITING_FOR_MANUAL_QUEUING = 6; // task s opravenou permanentní chybou, který chceme spustit znovu
 
 	/**
 	 * @ORM\Id

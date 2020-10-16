@@ -70,20 +70,20 @@ class Service {
 
 			if ($this->bunny) {
 				// odeslání do RabbitMQ
-                try {
-                    $producer = $this->bunny->getProducer($producerName);
-                    $producer->publish(
-                        $entity->getId(),
-                        '',
-                        [
-                            'timestamp' => (new \Nette\Utils\DateTime)->format('U'),
-                        ]
-                    );
-                } catch (\Exception $e) {
-                    // kdyz se to snazi hodit do rabbita a ono se to nepodari, nastavit stav STATE_WAITING_FOR_MANUAL_QUEUING
-                    $entity->setState(Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING);
-                    $this->em->flush($entity);
-                }
+				try {
+					$producer = $this->bunny->getProducer($producerName);
+					$producer->publish(
+					    $entity->getId(),
+					    '',
+					    [
+					        'timestamp' => (new \Nette\Utils\DateTime)->format('U'),
+					    ]
+					);
+				} catch (\Exception $e) {
+					// kdyz se to snazi hodit do rabbita a ono se to nepodari, nastavit stav STATE_WAITING_FOR_MANUAL_QUEUING
+					$entity->setState(Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING);
+					$this->em->flush($entity);
+				}
 			}
 		};
 	}

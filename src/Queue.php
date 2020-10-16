@@ -226,7 +226,7 @@ class Queue
      * Metoda, která pro všechny záznamy z DB s nastaveným stavem STATE_WAITING_FOR_MANUAL_QUEUING nastaví stav READY a dá je zpět do fronty
      * @throws \Exception
      */
-	public function processFixedPermanentErrors() {
+	public function processWaitingForManualQueuing() {
 		// vybere z DB záznamy s kriticku chybou
 		$qb = $this->em->createQueryBuilder()
 			->select("e")

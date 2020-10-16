@@ -220,7 +220,7 @@ nebo jen pro vybrané callbacky [-v  pro vypsani SUCCESS po skončení scriptu]
 `php www/index.php backgroundQueue:clear -v backgroundMail sms` 
 
 ### command který zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_WAITING_FOR_MANUAL_QUEUING
-`php www/index.php adt:backgroundQueue:processFixedPermanentErrors` 
+`php www/index.php adt:backgroundQueue:processWaitingForManualQueuing` 
 
 ### command který zavolá callback pro všechny záznamy z DB s nastaveným stavem STATE_ERROR_TEMPORARY
 `php www/index.php adt:backgroundQueue:processTemporaryErrors` 

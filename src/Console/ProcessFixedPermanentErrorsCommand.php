@@ -8,15 +8,15 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
 
 /**
- * @see \ADT\BackgroundQueue\Queue::processFixedPermanentErrors
+ * @see \ADT\BackgroundQueue\Queue::processWaitingForManualQueuing
  */
-class ProcessFixedPermanentErrorsCommand extends Command {
+class ProcessWaitingForManualQueuingCommand extends Command {
 
 	/** @var \ADT\BackgroundQueue\Queue */
 	protected $queue;
 
 	protected function configure() {
-		$this->setName('adt:backgroundQueue:processFixedPermanentErrors');
+		$this->setName('adt:backgroundQueue:processWaitingForManualQueuing');
 		$this->setDescription('Nastaví všem záznamům se stavem STATE_WAITING_FOR_MANUAL_QUEUING stav STATE_READY a vrátí je do fronty.');
 	}
 
@@ -29,7 +29,7 @@ class ProcessFixedPermanentErrorsCommand extends Command {
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output) {
-		$this->queue->processFixedPermanentErrors();
+		$this->queue->processWaitingForManualQueuing();
 	}
 
 }

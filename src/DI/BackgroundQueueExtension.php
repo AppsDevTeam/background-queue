@@ -65,8 +65,8 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 
 		// registrace commandů
 
-		$builder->addDefinition($this->prefix('processFixedPermanentErrorsCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ProcessFixedPermanentErrorsCommand::class)
+		$builder->addDefinition($this->prefix('processWaitingForManualQueuingCommand'))
+			->setClass(\ADT\BackgroundQueue\Console\ProcessWaitingForManualQueuingCommand::class)
 			->addTag(InjectExtension::TAG_INJECT, FALSE)
 			->addTag('kdyby.console.command');
 

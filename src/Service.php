@@ -70,14 +70,20 @@ class Service {
 
 			if ($this->bunny) {
 				// odeslání do RabbitMQ
-				$producer = $this->bunny->getProducer($producerName);
-				$producer->publish(
-					$entity->getId(),
-					'',
-					[
-						'timestamp' => (new \Nette\Utils\DateTime)->format('U'),
-					]
-				);
+				try {
+					$producer = $this->bunny->getProducer($producerName);
+					$producer->publish(
+					    $entity->getId(),
+					    '',
+					    [
+					        'timestamp' => (new \Nette\Utils\DateTime)->format('U'),
+					    ]
+					);
+				} catch (\Exception $e) {
+					// kdyz se to snazi hodit do rabbita a ono se to nepodari, nastavit stav STATE_WAITING_FOR_MANUAL_QUEUING
+					$entity->setState(Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING);
+					$this->em->flush($entity);
+				}
 			}
 		};
 	}
@@ -142,7 +148,7 @@ class Service {
 				Entity\QueueEntity::STATE_READY,
 				Entity\QueueEntity::STATE_PROCESSING,
 				Entity\QueueEntity::STATE_ERROR_TEMPORARY,
-				Entity\QueueEntity::STATE_ERROR_PERMANENT_FIXED,
+				Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING,
 			]);
 
 		$qb->andWhere('e.callbackName = :callbackName')

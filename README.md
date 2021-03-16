@@ -189,9 +189,6 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter {
         $entity->setClosure(function (QueueEntity $entity) {
             ...
         });
-        $entity->setParameters([
-            'messageId' => 123,
-        ]);
 
         $this->queueService->publish($entity);
     }

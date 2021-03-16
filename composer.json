@@ -13,7 +13,6 @@
 	"require": {
 		"nette/utils": "^2.3 || ~3.0",
 		"nette/di": "^2.3 || ~3.0",
-		"nette/php-generator": "^2.3 || ~3.0",
 		"kdyby/doctrine": "^3.2",
 		"opis/closure": "^3.5"
 	},

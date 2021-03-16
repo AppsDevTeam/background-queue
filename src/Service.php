@@ -51,19 +51,25 @@ class Service {
 	 * Publikuje novou zprávu do fronty
 	 *
 	 * @param Entity\QueueEntity $entity
+	 * @param string|NULL $queueName
 	 * @throws \Exception
 	 */
-	public function publish(Entity\QueueEntity $entity, $producerName = 'generalQueue') {
+	public function publish(Entity\QueueEntity $entity, $queueName = NULL) {
 
-		if (!$entity->getCallbackName()) {
-			throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
+		if ($this->bunny) {
+			if (!$entity->getCallbackName()) {
+				throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
+			}
+
+			if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
+				throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
+			}
+
+		} elseif (!$entity->getClosure()) {
+			throw new \Exception("Entita nemá nastavený parametr \"closure\".");
 		}
 
-		if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
-			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
-		}
-
-		$this->onShutdown[] = function () use ($entity, $producerName) {
+		$this->onShutdown[] = function () use ($entity, $queueName) {
 			// uložení entity do DB
 			$this->em->persist($entity);
 			$this->em->flush($entity);
@@ -71,7 +77,7 @@ class Service {
 			if ($this->bunny) {
 				// odeslání do RabbitMQ
 				try {
-					$producer = $this->bunny->getProducer($producerName);
+					$producer = $this->bunny->getProducer($queueName);
 					$producer->publish(
 					    $entity->getId(),
 					    '',

@@ -43,7 +43,7 @@ class Service {
 	 * @return string
 	 */
 	public function getEntityClass() {
-		return $this->config['queueEntityClass'];
+		return '\\' . $this->config['queueEntityClass'];
 	}
 
 
@@ -119,7 +119,7 @@ class Service {
 		$state = Entity\QueueEntity::STATE_DONE;
 
 		$qb = $this->em->createQueryBuilder();
-		$qb->delete(Entity\QueueEntity::class ,'e')
+		$qb->delete($this->getEntityClass() ,'e')
 			->andWhere('e.created <= :ago')
 			->andWhere('e.state = :state')
 			->setParameter('ago', $ago)
@@ -141,7 +141,7 @@ class Service {
 		$qb = $this->em->createQueryBuilder();
 
 		$qb->select('COUNT(e.id)')
-			->from(Entity\QueueEntity::class, 'e');
+			->from($this->getEntityClass(), 'e');
 
 		$qb->andWhere('e.state IN (:states)')
 			->setParameter('states', [

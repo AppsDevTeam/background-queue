@@ -104,10 +104,8 @@ class Queue
 		/** @var integer */
 		$id = (int) $message->getBody();
 
-		$entityClass = "\\" . $this->config["queueEntityClass"];
-
 		/** @var ADT\BackgroundQueue\Entity\QueueEntity */
-		$entity = $this->em->getRepository($entityClass)->find($id);
+		$entity = $this->em->getRepository($this->service->getEntityClass())->find($id);
 
 		// zalogovat (a smazat z RabbitMQ DB)
 		if (!$entity) {
@@ -230,7 +228,7 @@ class Queue
 		// vybere z DB záznamy s kriticku chybou
 		$qb = $this->em->createQueryBuilder()
 			->select("e")
-			->from(Entity\QueueEntity::class, "e")
+			->from($this->service->getEntityClass(), "e")
 			->andWhere("e.state = :state")
 			->setParameter("state", Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING);
 
@@ -297,7 +295,7 @@ class Queue
 
 		$qb = $this->em->createQueryBuilder()
 			->select("e")
-			->from(Entity\QueueEntity::class, "e")
+			->from($this->service->getEntityClass(), "e")
 			->andWhere("e.state IN (:state)");
 
 		// vybere jeden konkrétní záznam
@@ -329,7 +327,7 @@ class Queue
 
 		$entities = $this->em->createQueryBuilder()
 			->select("e")
-			->from(Entity\QueueEntity::class, "e")
+			->from($this->service->getEntityClass(), "e")
 			->andWhere("e.state IN (:state)")
 			->setParameter("state", Entity\QueueEntity::STATE_ERROR_TEMPORARY)
 			->getQuery()

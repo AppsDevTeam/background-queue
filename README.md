@@ -18,7 +18,7 @@ extensions:
 ```
 # app/config/config.neon
 backgroundQueue:
-	queueEntityClass: \ADT\BackgroundQueue\Entity\QueueEntity::class # Výchozí entita
+	queueEntityClass: ADT\BackgroundQueue\Entity\QueueEntity # Výchozí entita
 	noopMessage: noop	# Název příkazu pro zaslání noop příkazu consumerovi (kombinuje se s `supervisor.numprocs` a [adt/after-deploy](https://github.com/AppsDevTeam/AfterDeploy/#installation--usage)
 	supervisor:
 		numprocs: 1	# Počet consumerů

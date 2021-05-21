@@ -229,4 +229,4 @@ nebo jen pro vybrané callbacky [-v  pro vypsani SUCCESS po skončení scriptu]
 `php www/index.php adt:backgroundQueue:process`
 
  Command příjmá jeden parametr - ID záznamu. 
- Spuštění je omezené na záznamy ve stavu 1, 4, 5 a 6 (READY, ERROR_TEMPORARY, ERROR_FATAL a ERROR_PERMANENT_FIXED)
+ Spuštění je omezené na záznamy ve stavu 1, 4, 5 a 6 (READY, ERROR_TEMPORARY, ERROR_FATAL a WAITING_FOR_MANUAL_QUEUING)

@@ -124,7 +124,7 @@ class Queue
 	 * @param string $callbackName pokud obsahuje znak '%', použije se při vyhledávání operátor LIKE, jinak =
 	 * @param string $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
 	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
-	 *                            $format ve funkci {@see date()}, např. '-2 hour'
+	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
 	 * @return Entity\QueueEntity|null
 	 */
 	public function getAnotherProcessingEntityByCallbackName($entity, $callbackName, $lastAttempt) {
@@ -142,7 +142,7 @@ class Queue
 	 * @param string|null $description
 	 * @param string $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
 	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
-	 *                            $format ve funkci {@see date()}, např. '-2 hour'
+	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
 	 * @return Entity\QueueEntity|null
 	 */
 	public function getAnotherProcessingEntityByCallbackNameAndDescription($entity, $callbackName, $description, $lastAttempt) {
@@ -165,18 +165,23 @@ class Queue
 	 * @return \Kdyby\Doctrine\QueryBuilder
 	 */
 	private function getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt) {
-		return $this->em->createQueryBuilder()
+		$qb = $this->em->createQueryBuilder()
 			->select('e')
 			->from('\\' . $this->service->getEntityClass(), 'e')
 			->andWhere('e != :entity')
 			->andWhere('e.callbackName ' . (strpos($callbackName, '%') !== FALSE ? 'LIKE' : '=') . ' :callbackName')
 			->andWhere('e.state IN (:state)')
-			->andWhere('(e.lastAttempt IS NULL OR e.lastAttempt > :lastAttempt)')
 			->setParameter('entity', $entity)
 			->setParameter('callbackName', $callbackName)
 			->setParameter('state', [Entity\QueueEntity::STATE_READY, Entity\QueueEntity::STATE_PROCESSING])
-			->setParameter('lastAttempt', new \DateTimeImmutable($lastAttempt))
 			->orderBy('e.created');
+
+		if ($lastAttempt !== '0') {
+			$qb->andWhere('(e.lastAttempt IS NULL OR e.lastAttempt > :lastAttempt)')
+				->setParameter('lastAttempt', new \DateTimeImmutable('-' . $lastAttempt));
+		}
+
+		return $qb;
 	}
 
 	/**

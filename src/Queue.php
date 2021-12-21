@@ -117,6 +117,69 @@ class Queue
 	}
 
 	/**
+	 * Vrací nejstarší nedokončený záznam dle $callbackName, jenž není $entity a poslední pokus o jeho provedení není
+	 * starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
+	 *
+	 * @param Entity\QueueEntity|null $entity záznam, který bude z vyhledávání vyloučen
+	 * @param string $callbackName pokud obsahuje znak '%', použije se při vyhledávání operátor LIKE, jinak =
+	 * @param string $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
+	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
+	 *                            $format ve funkci {@see date()}, např. '-2 hour'
+	 * @return Entity\QueueEntity|null
+	 */
+	public function getAnotherProcessingEntityByCallbackName($entity, $callbackName, $lastAttempt) {
+		$qb = $this->getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt);
+
+		return $qb->getQuery()->setMaxResults(1)->getOneOrNullResult();
+	}
+
+	/**
+	 * Vrací nejstarší nedokončený záznam dle $callbackName a $description, jenž není $entity a poslední pokus o jeho
+	 * provedení není starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
+	 *
+	 * @param Entity\QueueEntity|null $entity záznam, který bude z vyhledávání vyloučen
+	 * @param string $callbackName pokud obsahuje znak '%', použije se při vyhledávání operátor LIKE, jinak =
+	 * @param string|null $description
+	 * @param string $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
+	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
+	 *                            $format ve funkci {@see date()}, např. '-2 hour'
+	 * @return Entity\QueueEntity|null
+	 */
+	public function getAnotherProcessingEntityByCallbackNameAndDescription($entity, $callbackName, $description, $lastAttempt) {
+		$qb = $this->getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt);
+
+		if  ($description === NULL) {
+			$qb->andWhere('e.description IS NULL');
+		} else  {
+			$qb->andWhere('e.description = :description')
+				->setParameter('description', $description);
+		}
+
+		return $qb->getQuery()->setMaxResults(1)->getOneOrNullResult();
+	}
+
+	/**
+	 * @param Entity\QueueEntity|null
+	 * @param string $callbackName
+	 * @param string $lastAttempt
+	 * @return \Kdyby\Doctrine\QueryBuilder
+	 */
+	private function getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt) {
+		return $this->em->createQueryBuilder()
+			->select('e')
+			->from('\\' . $this->service->getEntityClass(), 'e')
+			->andWhere('e != :entity')
+			->andWhere('e.callbackName ' . (strpos($callbackName, '%') !== FALSE ? 'LIKE' : '=') . ' :callbackName')
+			->andWhere('e.state IN (:state)')
+			->andWhere('(e.lastAttempt IS NULL OR e.lastAttempt > :lastAttempt)')
+			->setParameter('entity', $entity)
+			->setParameter('callbackName', $callbackName)
+			->setParameter('state', [Entity\QueueEntity::STATE_READY, Entity\QueueEntity::STATE_PROCESSING])
+			->setParameter('lastAttempt', new \DateTimeImmutable($lastAttempt))
+			->orderBy('e.created');
+	}
+
+	/**
 	 * Metoda, která zpracuje jednu entitu
 	 *
 	 * @param \ADT\BackgroundQueue\Entity\QueueEntity $entity
@@ -150,10 +213,14 @@ class Queue
 			$this->changeEntityState($entity, Entity\QueueEntity::STATE_PROCESSING);
 
 			// zpracování callbacku
-			$output = $callback($entity);
+			try {
+				$output = $callback($entity);
+			} catch (WaitException $e) {
+				$output = $e;
+			}
 
-			if ($output === FALSE) {
-				// pokud mětoda vrátí FALSE, zpráva nebyla zpracována, entitě nastavit chybový stav
+			if ($output === FALSE || $output instanceof WaitException) {
+				// pokud mětoda vrátí FALSE, nebo WaitException, zpráva nebyla zpracována, entitě nastavit chybový stav
 				// zpráva se znovu zpracuje
 				$state = Entity\QueueEntity::STATE_ERROR_TEMPORARY;
 
@@ -206,6 +273,19 @@ class Queue
 				// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)
 				// a po 20 minutách se přesune zpět do fronty "generalQueue" a znovu se zpracuje
 				$this->service->publish($entity, 'generalQueueError');
+
+				if ($output instanceof WaitException) {
+					// callback vyvolal výjimku WaitException, tj. zprávu v současné chvíli nelze zpracovat kvůli
+					// nějakým dalším závislostem (např. se čeká na dokončení jiné zprávy); zprávu zařadíme do fronty
+					// "waitingQueue", kde zůstane několik vteřin a poté bude přesunuta zpět do fronty "generalQueue"
+					// k opakovanému zpracování
+					$this->service->publish($entity, 'waitingQueue');
+				} else {
+					// callback vrátil FALSE, tj. došlo k nějaké chybě a zpracování chceme zopakovat; zprávu zařadíme
+					// do fronty "generalQueueError", kde zůstane 20 minut (dle nastavení v rabbimq.neon) a poté bude
+					// přesunuta zpět do fronty "generalQueue" k opakovanému zpracování
+					$this->service->publish($entity, 'generalQueueError');
+				}
 			}
 		}
 		catch (\Exception $innerEx) {
@@ -346,3 +426,8 @@ class RequestException extends \Exception
 		parent::__construct($message, $httpStatusCode, $previous);
 	}
 }
+
+/**
+ * Zprávu chceme zpracovat v co nejbližší době, ale nyní to ještě není možné, např. protože čekáme na dokončení jiné zprávy.
+ */
+class WaitException extends \RuntimeException {}

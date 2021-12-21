@@ -132,6 +132,14 @@ rabbitmq:
             queue: {name: 'generalErrorQueue', arguments: {'x-dead-letter-exchange': ['S', 'generalExchange'], 'x-message-ttl': ['I', 1200000]}} # 20 minut v ms
             contentType: text/plain
 
+        # Fronta pro zprávy, které chceme zpracovat co nejdříve, ale nyní to ještě není možné, např. protože čekáme
+        # na dokončení jiné zprávy. Zprávy zařezené do této fronty po pár vteřinách (dle nastavení "x-message-ttl")
+        # přesuneme zpět do fronty "generalQueue" pro opětovné zpracování.
+        waitingQueue:
+            exchange: {name: 'waitingExchange', type: direct}
+            queue: {name: 'waitingQueue', arguments: {'x-dead-letter-exchange': ['S', 'generalExchange'], 'x-message-ttl': ['I', 3000]}} # 3 sekundy v ms
+            contentType: text/plain
+
     consumers:
         generalQueue:
             exchange: {name: 'generalExchange', type: direct}

@@ -198,7 +198,7 @@ class Rabbit extends Facade {
 }
 ```
 
-Callback (App\Facades\Rabbit::process) vrátí při úspěšném zpracování TRUE (nebo nevrátí nic). Pokud se jedná o opakovatelnou chybu (např. momentálně nedostupné API), musí vrátit FALSE (zpracuje se automaticky později).
+Callback (App\Facades\Rabbit::process) vrátí při úspěšném zpracování TRUE (nebo nevrátí nic). Pokud se jedná o opakovatelnou chybu (např. momentálně nedostupné API), musí vrátit FALSE (zpracuje se automaticky později). Pokud chceme úlohu zpracovat později, vyvoláme v callbacku výjimku typu `ADT\BackgroundQueue\WaitException`.
 
 
 ## 3 Instalace RabbitMq na server

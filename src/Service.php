@@ -46,6 +46,73 @@ class Service {
 		return $this->config['queueEntityClass'];
 	}
 
+	/**
+	 * Vrací nejstarší nedokončený záznam dle $callbackName, jenž není $entity a poslední pokus o jeho provedení není
+	 * starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
+	 *
+	 * @param Entity\QueueEntity|null $entity záznam, který bude z vyhledávání vyloučen
+	 * @param string $callbackName pokud obsahuje znak '%', použije se při vyhledávání operátor LIKE, jinak =
+	 * @param string $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
+	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
+	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
+	 * @return Entity\QueueEntity|null
+	 */
+	public function getAnotherProcessingEntityByCallbackName($entity, $callbackName, $lastAttempt) {
+		$qb = $this->getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt);
+
+		return $qb->getQuery()->setMaxResults(1)->getOneOrNullResult();
+	}
+
+	/**
+	 * Vrací nejstarší nedokončený záznam dle $callbackName a $description, jenž není $entity a poslední pokus o jeho
+	 * provedení není starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
+	 *
+	 * @param Entity\QueueEntity|null $entity záznam, který bude z vyhledávání vyloučen
+	 * @param string $callbackName pokud obsahuje znak '%', použije se při vyhledávání operátor LIKE, jinak =
+	 * @param string|null $description
+	 * @param string $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
+	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
+	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
+	 * @return Entity\QueueEntity|null
+	 */
+	public function getAnotherProcessingEntityByCallbackNameAndDescription($entity, $callbackName, $description, $lastAttempt) {
+		$qb = $this->getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt);
+
+		if  ($description === NULL) {
+			$qb->andWhere('e.description IS NULL');
+		} else  {
+			$qb->andWhere('e.description = :description')
+				->setParameter('description', $description);
+		}
+
+		return $qb->getQuery()->setMaxResults(1)->getOneOrNullResult();
+	}
+
+	/**
+	 * @param Entity\QueueEntity|null
+	 * @param string $callbackName
+	 * @param string $lastAttempt
+	 * @return \Kdyby\Doctrine\QueryBuilder
+	 */
+	private function getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt) {
+		$qb = $this->em->createQueryBuilder()
+			->select('e')
+			->from('\\' . $this->getEntityClass(), 'e')
+			->andWhere('e != :entity')
+			->andWhere('e.callbackName ' . (strpos($callbackName, '%') !== FALSE ? 'LIKE' : '=') . ' :callbackName')
+			->andWhere('e.state IN (:state)')
+			->setParameter('entity', $entity)
+			->setParameter('callbackName', $callbackName)
+			->setParameter('state', [Entity\QueueEntity::STATE_READY, Entity\QueueEntity::STATE_PROCESSING])
+			->orderBy('e.created');
+
+		if ($lastAttempt !== '0') {
+			$qb->andWhere('(e.lastAttempt IS NULL OR e.lastAttempt > :lastAttempt)')
+				->setParameter('lastAttempt', new \DateTimeImmutable('-' . $lastAttempt));
+		}
+
+		return $qb;
+	}
 
 	/**
 	 * Publikuje novou zprávu do fronty

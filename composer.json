@@ -2,17 +2,17 @@
 	"name": "adt/background-queue",
 	"type": "library",
 	"description": "Background queue for Nette Framework",
-	"keywords": ["ADT", "nette", "RabbitMQ"],
+	"keywords": ["ADT", "Nette", "RabbitMQ"],
 	"license": ["MIT"],
 	"authors": [
 		{
-			"name": "Apps Dev Team s.r.o.",
-			"homepage": "http://appsdevteam.com"
+			"name": "Apps Dev Team",
+			"homepage": "https://www.appsdevteam.com"
 		}
 	],
 	"require": {
-		"nette/utils": "^2.3 || ~3.0",
-		"nette/di": "^2.3 || ~3.0",
+		"nette/utils": "^3.0",
+		"nette/di": "^3.0",
 		"kdyby/doctrine": "^3.2",
 		"opis/closure": "^3.5"
 	},

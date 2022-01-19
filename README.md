@@ -174,6 +174,27 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter {
 }
 ```
 
+###2.1 Použití bez RabbitMQ
+
+```
+namespace App\Presenters;
+
+class DefaultPresenter extends \Nette\Application\UI\Presenter {
+
+    /** @var \ADT\BackgroundQueue\Service @autowire */
+    protected $queueService;
+
+    public function actionDefault() {
+        $entity = new \App\Model\Entity\QueueEntity;
+        $entity->setClosure(function (QueueEntity $entity) {
+            ...
+        });
+
+        $this->queueService->publish($entity);
+    }
+}
+```
+
 ### 2.1 Příklad metody pro zpracování
 
 ```

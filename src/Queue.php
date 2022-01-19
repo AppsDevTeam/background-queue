@@ -135,16 +135,23 @@ class Queue
 
 		$output = NULL;
 
-		$entity->lastAttempt = new \DateTime;
-		$entity->numberOfAttempts++;
+		$entity->setLastAttempt(new \DateTime);
+		$entity->increaseNumberOfAttempts();
 
 		$e = null;
 		try {
-			if (!isset($this->config["callbacks"][$entity->getCallbackName()])) {
-				throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
-			}
 
-			$callback = $this->config["callbacks"][$entity->getCallbackName()];
+			if ($entity->getClosure()) {
+				$callback = $entity->getClosure();
+
+			} else {
+
+				if (!isset($this->config["callbacks"][$entity->getCallbackName()])) {
+					throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
+				}
+
+				$callback = $this->config["callbacks"][$entity->getCallbackName()];
+			}
 
 			// změna stavu na zpracovává se
 			$this->changeEntityState($entity, Entity\QueueEntity::STATE_PROCESSING);
@@ -220,10 +227,10 @@ class Queue
 		\Tracy\Debugger::log(new \Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . ($e ? '; ErrorMessage: ' . $e->getMessage() : ''), 0, $e));
 	}
 
-    /**
-     * Metoda, která pro všechny záznamy z DB s nastaveným stavem STATE_WAITING_FOR_MANUAL_QUEUING nastaví stav READY a dá je zpět do fronty
-     * @throws \Exception
-     */
+	/**
+	 * Metoda, která pro všechny záznamy z DB s nastaveným stavem STATE_WAITING_FOR_MANUAL_QUEUING nastaví stav READY a dá je zpět do fronty
+	 * @throws \Exception
+	 */
 	public function processWaitingForManualQueuing() {
 		// vybere z DB záznamy s kriticku chybou
 		$qb = $this->em->createQueryBuilder()
@@ -245,8 +252,8 @@ class Queue
 	 */
 	protected function changeEntityState(Entity\QueueEntity $entity, $state, $errorMessage = NULL) {
 		/** @var ADT\BackgroundQueue\Entity\QueueEntity */
-		$entity->state = $state;
-		$entity->errorMessage = $errorMessage;
+		$entity->setState($state);
+		$entity->setErrorMessage($errorMessage);
 
 		$this->em->persist($entity);
 		$this->em->flush($entity);

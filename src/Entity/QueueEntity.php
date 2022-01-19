@@ -3,30 +3,15 @@
 namespace ADT\BackgroundQueue\Entity;
 
 use Doctrine\ORM\Mapping as ORM;
+use Opis\Closure\SerializableClosure;
 
 /**
  * QueueEntity
  *
  * @ORM\Table(name="rabbit_queue")
  * @ORM\Entity
- *
- * @method string getCallbackName()
- * @method array getParameters()
- * @method int getState()
- * @method \DateTime getCreated()
- * @method \DateTime getLastAttempt()
- * @method int getNumberOfAttempts()
- * @method string getErrorMessage()
- *
- * @method void setParameters(array $parameters)
- * @method void setCallbackName($callbackName)
- * @method void setState(int $state)
- * @method void setLastAttempt(\DateTime $lastAttempt)
- * @method void setErrorMessage($errorMessage)
  */
 class QueueEntity {
-
-	use \Kdyby\Doctrine\MagicAccessors\MagicAccessors;
 
 	const STATE_READY = 1; // připraveno
 	const STATE_PROCESSING = 2; // zpracovává se
@@ -52,10 +37,10 @@ class QueueEntity {
 	}
 
 	/**
-	 * @throws \Nette\NotSupportedException
+	 * @throws \Exception
 	 */
 	final public function setId() {
-		throw new \Nette\NotSupportedException('Entity id is read-only.');
+		throw new \Exception('Entity id is read-only.');
 	}
 
 	public function __clone() {
@@ -67,7 +52,7 @@ class QueueEntity {
 	 *
 	 * @var string
 	 *
-	 * @ORM\Column(name="callbackName", type="string", length=255, nullable=false)
+	 * @ORM\Column(name="callbackName", type="string", length=255, nullable=true)
 	 */
 	protected $callbackName;
 
@@ -99,10 +84,10 @@ class QueueEntity {
 	/**
 	 * Datum posledního pokusu o zpracování
 	 *
-  	 * @var \DateTime
-   	 *
-  	 * @ORM\Column(name="lastAttempt", type="datetime", nullable=true)
-   	 */
+	 * @var \DateTime
+	 *
+	 * @ORM\Column(name="lastAttempt", type="datetime", nullable=true)
+	 */
 	protected $lastAttempt;
 
 	/**
@@ -132,6 +117,14 @@ class QueueEntity {
 	 */
 	protected $description;
 
+
+	/**
+	 * @var string
+	 *
+	 * @ORM\Column(name="closure", type="text", nullable=true)
+	 */
+	protected $closure;
+
 	public function __construct() {
 		$this->created = new \DateTime;
 		$this->numberOfAttempts = 0;
@@ -145,4 +138,131 @@ class QueueEntity {
 	public function isReadyForProcess() {
 		return $this->state === self::STATE_READY || $this->state === self::STATE_ERROR_TEMPORARY;
 	}
+
+	/**
+	 * @return string
+	 */
+	public function getCallbackName() {
+		return $this->callbackName;
+	}
+
+	/**
+	 * @param string $callbackName
+	 */
+	public function setCallbackName($callbackName) {
+		$this->callbackName = $callbackName;
+	}
+
+	/**
+	 * @return string|callable
+	 */
+	public function getDescription() {
+		return $this->description;
+	}
+
+	/**
+	 * @param string|callable $description
+	 */
+	public function setDescription($description) {
+		$this->description = $description;
+	}
+
+	/**
+	 * @return array
+	 */
+	public function getParameters() {
+		return $this->parameters;
+	}
+
+	/**
+	 * @param array $parameters
+	 */
+	public function setParameters(array $parameters) {
+		$this->parameters = $parameters;
+	}
+
+	/**
+	 * @return int
+	 */
+	public function getState() {
+		return $this->state;
+	}
+
+	/**
+	 * @param int $state
+	 */
+	public function setState($state) {
+		$this->state = $state;
+	}
+
+	/**
+	 * @return \DateTime
+	 */
+	public function getCreated() {
+		return $this->created;
+	}
+
+	/**
+	 * @return \DateTime
+	 */
+	public function getLastAttempt() {
+		return $this->lastAttempt;
+	}
+
+	/**
+	 * @param \DateTime $lastAttempt
+	 */
+	public function setLastAttempt(\DateTime $lastAttempt) {
+		$this->lastAttempt = $lastAttempt;
+	}
+
+	/**
+	 * @return int
+	 */
+	public function getNumberOfAttempts() {
+		return $this->numberOfAttempts;
+	}
+
+	/**
+	 * @param int $numberOfAttempts
+	 */
+	public function setNumberOfAttempts($numberOfAttempts) {
+		$this->numberOfAttempts = $numberOfAttempts;
+	}
+
+	public function increaseNumberOfAttempts() {
+		$this->numberOfAttempts++;
+	}
+
+	/**
+	 * @return string
+	 */
+	public function getErrorMessage() {
+		return $this->errorMessage;
+	}
+
+	/**
+	 * @param string $errorMessage
+	 */
+	public function setErrorMessage($errorMessage) {
+		$this->errorMessage = $errorMessage;
+	}
+
+	/**
+	 * @return callable|bool
+	 */
+	public function getClosure() {
+
+		/** @var SerializableClosure $closure */
+		$closure = unserialize($this->closure);
+		return $closure ? $closure->getClosure() : FALSE;
+	}
+
+	/**
+	 * @param callable $closure
+	 */
+	public function setClosure(callable $closure) {
+		$this->closure = serialize(new SerializableClosure($closure));
+	}
+
 }

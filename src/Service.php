@@ -54,19 +54,14 @@ class Service {
 	 * @param string|NULL $queueName
 	 * @throws \Exception
 	 */
-	public function publish(Entity\QueueEntity $entity, $queueName = NULL) {
+	public function publish(Entity\QueueEntity $entity, $queueName = NULL) 
+	{
+		if (!$entity->getCallbackName()) {
+			throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
+		}
 
-		if ($this->bunny) {
-			if (!$entity->getCallbackName()) {
-				throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
-			}
-
-			if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
-				throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
-			}
-
-		} elseif (!$entity->getClosure()) {
-			throw new \Exception("Entita nemá nastavený parametr \"closure\".");
+		if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
+			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 		}
 
 		$this->onShutdown[] = function () use ($entity, $queueName) {

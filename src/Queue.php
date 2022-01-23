@@ -3,24 +3,23 @@
 namespace ADT\BackgroundQueue;
 
 use Doctrine\ORM\EntityManagerInterface;
-use Doctrine\Persistence\ManagerRegistry;
 use ADT\BackgroundQueue\Entity\EntityInterface;
 
 class Queue
 {
 	use \Nette\SmartObject;
-	
+
 	protected EntityManagerInterface $em;
-	
+
 	protected array $config;
-	
+
 	protected Service $service;
-	
+
 	protected float $executionTime;
-	
+
 	public array $onAfterProcess = [];
 
-	
+
 	public function __construct(EntityManagerInterface $em, Service $service)
 	{
 		$this->em = $em;
@@ -35,7 +34,7 @@ class Queue
 	{
 		$this->config = $config;
 	}
-	
+
 	/**
 	 * Metoda pro zpracování obecné fronty
 	 */
@@ -144,10 +143,14 @@ class Queue
 			$this->changeEntityState($entity, EntityInterface::STATE_PROCESSING);
 
 			// zpracování callbacku
-			$output = $callback($entity);
+			try {
+				$output = $callback($entity);
+			} catch (WaitException $e) {
+				$output = $e;
+			}
 
-			if ($output === false) {
-				// pokud mětoda vrátí FALSE, zpráva nebyla zpracována, entitě nastavit chybový stav
+			if ($output === false || $output instanceof WaitException) {
+				// pokud metoda vrátí FALSE, nebo WaitException, zpráva nebyla zpracována, entitě nastavit chybový stav
 				// zpráva se znovu zpracuje
 				$state = EntityInterface::STATE_ERROR_TEMPORARY;
 			} else {
@@ -193,6 +196,19 @@ class Queue
 				// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)
 				// a po 20 minutách se přesune zpět do fronty "generalQueue" a znovu se zpracuje
 				$this->service->publish($entity, 'generalQueueError');
+
+				if ($output instanceof WaitException) {
+					// callback vyvolal výjimku WaitException, tj. zprávu v současné chvíli nelze zpracovat kvůli
+					// nějakým dalším závislostem (např. se čeká na dokončení jiné zprávy); zprávu zařadíme do fronty
+					// "waitingQueue", kde zůstane několik vteřin a poté bude přesunuta zpět do fronty "generalQueue"
+					// k opakovanému zpracování
+					$this->service->publish($entity, 'waitingQueue');
+				} else {
+					// callback vrátil FALSE, tj. došlo k nějaké chybě a zpracování chceme zopakovat; zprávu zařadíme
+					// do fronty "generalQueueError", kde zůstane 20 minut (dle nastavení v rabbimq.neon) a poté bude
+					// přesunuta zpět do fronty "generalQueue" k opakovanému zpracování
+					$this->service->publish($entity, 'generalQueueError');
+				}
 			}
 		} catch (\Exception $innerEx) {
 			// může nastat v případě, kdy v callbacku selhal např. INSERT a entity manager se uzavřel
@@ -226,7 +242,7 @@ class Queue
 	{
 		$entity->setState($state)
 			->setErrorMessage($errorMessage);
-		
+
 		$this->em->flush($entity);
 	}
 

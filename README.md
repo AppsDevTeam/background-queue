@@ -132,6 +132,14 @@ rabbitmq:
             queue: {name: 'generalErrorQueue', arguments: {'x-dead-letter-exchange': ['S', 'generalExchange'], 'x-message-ttl': ['I', 1200000]}} # 20 minut v ms
             contentType: text/plain
 
+        # Fronta pro zprávy, které chceme zpracovat co nejdříve, ale nyní to ještě není možné, např. protože čekáme
+        # na dokončení jiné zprávy. Zprávy zařezené do této fronty po pár vteřinách (dle nastavení "x-message-ttl")
+        # přesuneme zpět do fronty "generalQueue" pro opětovné zpracování.
+        waitingQueue:
+            exchange: {name: 'waitingExchange', type: direct}
+            queue: {name: 'waitingQueue', arguments: {'x-dead-letter-exchange': ['S', 'generalExchange'], 'x-message-ttl': ['I', 3000]}} # 3 sekundy v ms
+            contentType: text/plain
+
     consumers:
         generalQueue:
             exchange: {name: 'generalExchange', type: direct}
@@ -211,7 +219,7 @@ class Rabbit extends Facade {
 }
 ```
 
-Callback (App\Facades\Rabbit::process) vrátí při úspěšném zpracování TRUE (nebo nevrátí nic). Pokud se jedná o opakovatelnou chybu (např. momentálně nedostupné API), musí vrátit FALSE (zpracuje se automaticky později).
+Callback (App\Facades\Rabbit::process) vrátí při úspěšném zpracování TRUE (nebo nevrátí nic). Pokud se jedná o opakovatelnou chybu (např. momentálně nedostupné API), musí vrátit FALSE (zpracuje se automaticky později). Pokud chceme úlohu zpracovat později, vyvoláme v callbacku výjimku typu `ADT\BackgroundQueue\WaitException`.
 
 
 ## 3 Instalace RabbitMq na server

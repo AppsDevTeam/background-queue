@@ -285,23 +285,14 @@ class Queue
 	{
 		$qb = $this->em->getRepository($this->service->getEntityClass())
 			->createQueryBuilder('e')
-			->andWhere("e.state IN (:state)");
+			->andWhere("e.state IN (:state)")
+			->setParameter("state", EntityInterface::READY_TO_PROCESS_STATES);
 
 		// vybere jeden konkrétní záznam
 		if ($id) {
 			$qb
 				->andWhere("e.id = :id")
-				->setParameter('id', $id)
-				->setParameter("state", [
-					EntityInterface::STATE_READY,
-					EntityInterface::STATE_ERROR_TEMPORARY,
-					EntityInterface::STATE_ERROR_FATAL,
-					EntityInterface::STATE_WAITING_FOR_MANUAL_QUEUING,
-				]);
-
-			// vybere nezpracovane zaznamy
-		} else {
-			$qb->setParameter("state", EntityInterface::STATE_READY);
+				->setParameter('id', $id);
 		}
 
 		foreach ($qb->getQuery()->getResult() as $entity) {

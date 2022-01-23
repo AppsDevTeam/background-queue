@@ -120,7 +120,7 @@ trait EntityTrait
 	 */
 	public function isReadyForProcess()
 	{
-		return $this->state === self::STATE_READY || $this->state === self::STATE_ERROR_TEMPORARY;
+		return in_array($this->state, EntityInterface::READY_TO_PROCESS_STATES);
 	}
 
 	/**

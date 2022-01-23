@@ -6,6 +6,7 @@ use ADT\BackgroundQueue\Entity\EntityInterface;
 use ADT\BackgroundQueue\MQ\Destination;
 use ADT\BackgroundQueue\MQ\Message;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
 use Interop\Queue\Producer;
 
@@ -48,14 +49,16 @@ class Service
 	 * Vrací nejstarší nedokončený záznam dle $callbackName, jenž není $entity a poslední pokus o jeho provedení není
 	 * starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
 	 *
-	 * @param Entity\QueueEntity|null $entity záznam, který bude z vyhledávání vyloučen
+	 * @param EntityInterface $entity záznam, který bude z vyhledávání vyloučen
 	 * @param string $callbackName pokud obsahuje znak '%', použije se při vyhledávání operátor LIKE, jinak =
-	 * @param string $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
+	 * @param string|null $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
 	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
 	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
-	 * @return Entity\QueueEntity|null
+	 * @return EntityInterface|null
+	 * @throws \Doctrine\ORM\NonUniqueResultException
 	 */
-	public function getAnotherProcessingEntityByCallbackName($entity, $callbackName, $lastAttempt) {
+	public function getUnfinishedEntityByCallbackName(EntityInterface $entity, string $callbackName, ?string $lastAttempt = null): ?EntityInterface
+	{
 		$qb = $this->getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt);
 
 		return $qb->getQuery()->setMaxResults(1)->getOneOrNullResult();
@@ -65,46 +68,37 @@ class Service
 	 * Vrací nejstarší nedokončený záznam dle $callbackName a $description, jenž není $entity a poslední pokus o jeho
 	 * provedení není starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
 	 *
-	 * @param Entity\QueueEntity|null $entity záznam, který bude z vyhledávání vyloučen
+	 * @param EntityInterface $entity záznam, který bude z vyhledávání vyloučen
 	 * @param string $callbackName pokud obsahuje znak '%', použije se při vyhledávání operátor LIKE, jinak =
-	 * @param string|null $description
-	 * @param string $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
+	 * @param string $description
+	 * @param string|null $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
 	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
 	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
-	 * @return Entity\QueueEntity|null
+	 * @return EntityInterface|null
+	 * @throws \Doctrine\ORM\NonUniqueResultException
 	 */
-	public function getAnotherProcessingEntityByCallbackNameAndDescription($entity, $callbackName, $description, $lastAttempt) {
+	public function getUnfinishedEntityByCallbackNameAndDescription(EntityInterface $entity, string $callbackName, string $description, ?string $lastAttempt = null): ?EntityInterface
+	{
 		$qb = $this->getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt);
 
-		if  ($description === NULL) {
-			$qb->andWhere('e.description IS NULL');
-		} else  {
-			$qb->andWhere('e.description = :description')
-				->setParameter('description', $description);
-		}
+		$qb->andWhere('e.description = :description')
+			->setParameter('description', $description);
 
 		return $qb->getQuery()->setMaxResults(1)->getOneOrNullResult();
 	}
 
-	/**
-	 * @param Entity\QueueEntity|null
-	 * @param string $callbackName
-	 * @param string $lastAttempt
-	 * @return \Kdyby\Doctrine\QueryBuilder
-	 */
-	private function getAnotherProcessingEntityQueryBuilder($entity, $callbackName, $lastAttempt) {
-		$qb = $this->em->createQueryBuilder()
-			->select('e')
-			->from('\\' . $this->getEntityClass(), 'e')
+	private function getAnotherProcessingEntityQueryBuilder(EntityInterface $entity, string $callbackName, ?string $lastAttempt = null): QueryBuilder
+	{
+		$qb = $this->createQueryBuilder()
 			->andWhere('e != :entity')
-			->andWhere('e.callbackName ' . (strpos($callbackName, '%') !== FALSE ? 'LIKE' : '=') . ' :callbackName')
-			->andWhere('e.state IN (:state)')
 			->setParameter('entity', $entity)
+			->andWhere('e.callbackName ' . (strpos($callbackName, '%') !== FALSE ? 'LIKE' : '=') . ' :callbackName')
 			->setParameter('callbackName', $callbackName)
-			->setParameter('state', [Entity\QueueEntity::STATE_READY, Entity\QueueEntity::STATE_PROCESSING])
+			->andWhere('e.state != :state')
+			->setParameter('state', EntityInterface::STATE_DONE)
 			->orderBy('e.created');
 
-		if ($lastAttempt !== '0') {
+		if ($lastAttempt) {
 			$qb->andWhere('(e.lastAttempt IS NULL OR e.lastAttempt > :lastAttempt)')
 				->setParameter('lastAttempt', new \DateTimeImmutable('-' . $lastAttempt));
 		}
@@ -117,7 +111,7 @@ class Service
 	 *
 	 * @throws \Exception
 	 */
-	public function publish(EntityInterface $entity, ?string $queueName = null)
+	public function publish(EntityInterface $entity, ?string $queueName = null): void
 	{
 		if (!$entity->getCallbackName()) {
 			throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
@@ -125,10 +119,6 @@ class Service
 
 		if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
 			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
-		}
-
-		if (!$this->producer && $queueName) {
-			throw new \Exception('Don\'t specify "queueName" parameter or specify "broker.producer" in config.');
 		}
 
 		if ($this->producer && !$queueName && !$this->config['broker']['defaultQueue']) {
@@ -149,7 +139,7 @@ class Service
 
 				} catch (\Exception $e) {
 					// kdyz se to snazi hodit do rabbita a ono se to nepodari, nastavit stav STATE_WAITING_FOR_MANUAL_QUEUING
-					$entity->setState(Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING);
+					$entity->setState(EntityInterface::STATE_WAITING_FOR_MANUAL_QUEUING);
 					$this->em->flush($entity);
 				}
 			}
@@ -159,7 +149,7 @@ class Service
 	/**
 	 * Publikuje No-operation zprávu do fronty.
 	 */
-	public function publishNoop()
+	public function publishNoop(): void
 	{
 		// odeslání do RabbitMQ
 		$this->producer->send(new Destination('generalQueue'), new \ADT\BackgroundQueue\MQ\Message($this->config['broker']['noopMessage']));
@@ -168,7 +158,7 @@ class Service
 	/**
 	 * Publikuje No-operation zprávu do fronty.
 	 */
-	public function publishSupervisorNoop()
+	public function publishSupervisorNoop(): void
 	{
 		for ($i = 0; $i < $this->config['supervisor']['numprocs']; $i++) {
 			$this->publishNoop();
@@ -182,14 +172,12 @@ class Service
 	 */
 	public function clearDoneRecords(array $callbacksNames = []): void
 	{
-		$qb = $this->em->getRepository($this->getEntityClass())
-			->createQueryBuilder('e');
-
-		$qb->delete()
+		$qb = $this->createQueryBuilder()
+			->delete()
 			->andWhere('e.created <= :ago')
 			->setParameter('ago', (new \DateTime('midnight'))->modify("-" . $this->config["clearOlderThan"]))
 			->andWhere('e.state = :state')
-			->setParameter('state', Entity\QueueEntity::STATE_DONE);
+			->setParameter('state', EntityInterface::STATE_DONE);
 
 		if ($callbacksNames) {
 			$qb->andWhere("e.callbackName IN (:callbacksNames)")
@@ -199,25 +187,8 @@ class Service
 		$qb->getQuery()->execute();
 	}
 
-	/**
-	 * Zjisti jestli existuje nedokonceny task s $callbackName
-	 */
-	public function hasNonFinishedTask(string $callbackName): bool
+	private function createQueryBuilder(): QueryBuilder
 	{
-		$qb = $this->em->getRepository($this->getEntityClass())
-			->createQueryBuilder();
-
-		$qb->select('COUNT(e.id)')
-			->andWhere('e.state IN (:state)')
-			->setParameter('state', [
-				Entity\QueueEntity::STATE_READY,
-				Entity\QueueEntity::STATE_PROCESSING,
-				Entity\QueueEntity::STATE_ERROR_TEMPORARY,
-				Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING,
-			])
-			->andWhere('e.callbackName = :callbackName')
-			->setParameter('callbackName', $callbackName);
-
-		return (bool) $qb->getQuery()->getSingleScalarResult();
+		return $this->em->getRepository($this->getEntityClass())->createQueryBuilder('e');
 	}
 }

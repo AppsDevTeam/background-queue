@@ -12,7 +12,13 @@ interface EntityInterface
 	const STATE_ERROR_TEMPORARY = 4; // opakovatelná chyba (např. nedostupné API)
 	const STATE_ERROR_FATAL = 5; // kritická chyba (např. chyba v implementaci)
 	const STATE_WAITING_FOR_MANUAL_QUEUING = 6; // task s opravenou permanentní chybou, který chceme spustit znovu
-	
+
+	const READY_TO_PROCESS_STATES = [
+		self::STATE_READY,
+		self::STATE_ERROR_TEMPORARY,
+		self::STATE_WAITING_FOR_MANUAL_QUEUING
+	];
+
 	public function getId();
 	public function setId();
 	public function isReadyForProcess();

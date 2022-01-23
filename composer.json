@@ -11,9 +11,9 @@
 		}
 	],
 	"require": {
-		"nette/utils": "^3.0",
 		"nette/di": "^3.0",
-		"kdyby/doctrine": "^3.2"
+		"doctrine/orm": "^2.0",
+		"queue-interop/queue-interop": "^0.8"
 	},
 	"autoload": {
 		"psr-4": { "ADT\\BackgroundQueue\\": "src/" }

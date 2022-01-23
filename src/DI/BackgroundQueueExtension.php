@@ -2,41 +2,50 @@
 
 namespace ADT\BackgroundQueue\DI;
 
+use Interop\Queue\Producer;
 use Nette\DI\Container;
+use Nette\DI\Definitions\Statement;
 use Nette\DI\Extensions\InjectExtension;
 use Nette\PhpGenerator\ClassType;
+use Nette\Schema\Expect;
+use Nette\Schema\Schema;
 
-class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
-
-	public function loadConfiguration() {
-		$builder = $this->getContainerBuilder();
-		$config = $this->validateConfig([
-			'lazy' => TRUE,
-			'callbacks' => [],
-			'queueEntityClass' => \ADT\BackgroundQueue\Entity\QueueEntity::class,
-			'noopMessage' => 'noop',
-			'supervisor' => [
-				'numprocs' => 1,
-				'startsecs' => 1, // [sec]
-			],
-			'clearOlderThan' => '14 days', // čas jak staré záznamy ode dneška budou smazány
-			'notifyOnNumberOfAttempts' => 5, // počet pokusů zpracování fronty pro zaslání mailu
-			'useRabbitMq' => true,
+class BackgroundQueueExtension extends \Nette\DI\CompilerExtension
+{
+	public function getConfigSchema(): Schema
+	{
+		return Expect::structure([
+			'queueEntityClass' => Expect::string()->required(),
+			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
+			'broker' => Expect::structure([
+				'producerClass' => Expect::string(),
+				'noopMessage' => Expect::string('noop'),
+				'defaultQueue' => Expect::string()
+			]),
+			'clearOlderThan' => Expect::string('14 days'),
+			'notifyOnNumberOfAttempts' => Expect::int(5)->min(1),
+			'lazy' => Expect::bool(true),
+			'supervisor' => Expect::structure([
+				'numprocs' => Expect::int(1)->min(1),
+				'startsecs' => Expect::int(1)->min(1)
+			])
 		]);
+	}
 
-		if ($config['supervisor']['numprocs'] <= 0) {
-			throw new \Nette\Utils\AssertionException('Hodnota configu %supervisor.numprocs% musí být kladné číslo');
-		}
+	public function loadConfiguration()
+	{
+		$builder = $this->getContainerBuilder();
+		$config = json_decode(json_encode($this->config), true);
 
 		if ($config['lazy']) {
 			foreach ($config['callbacks'] as $callbackSlug => $callback) {
 				if (
-					$config['lazy'] !== TRUE
+					$config['lazy'] !== true
 					&&
 					(
 						!isset($config['lazy'][$callbackSlug])
 						||
-						$config['lazy'][$callbackSlug] !== TRUE
+						$config['lazy'][$callbackSlug] !== true
 					)
 				) {
 					// Callback should not become lazy
@@ -58,40 +67,56 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 		$serviceConfig['callbackKeys'] = array_keys($config["callbacks"]);
 
 		// registrace service
-		$builder->addDefinition($this->prefix('service'))
+		$serviceDef = $builder->addDefinition($this->prefix('service'))
 			->setClass(\ADT\BackgroundQueue\Service::class)
-			->addSetup('$service->setConfig(?)', [$serviceConfig])
-			->addSetup('$service->setRabbitMq(?)', [$serviceConfig['useRabbitMq'] ? $this->getContainerBuilder()->getDefinitionByType('\Kdyby\RabbitMq\Connection') : null]);
+			->addSetup('$service->setConfig(?)', [$serviceConfig]);
 
 		// registrace commandů
 
 		$builder->addDefinition($this->prefix('processWaitingForManualQueuingCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ProcessWaitingForManualQueuingCommand::class)
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
+			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('processCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ProcessCommand::class)
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
+			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('processTemporaryErrorsCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ProcessTemporaryErrorsCommand::class)
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
+			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('reloadConsumerCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ReloadConsumerCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
+			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('clearCommand'))
 			->setClass(\ADT\BackgroundQueue\Console\ClearCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
+			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
+	}
 
+	public function beforeCompile()
+	{
+		parent::beforeCompile();
+
+		$builder = $this->getContainerBuilder();
+		$producerClass = $this->config->broker->producerClass;
+
+		// register MQ producer, if set
+		if ($producerClass) {
+			$producerDef = $builder->addDefinition($this->prefix('producer'))
+				->setType($producerClass)
+				->setAutowired(false);
+
+			$builder->getDefinition($this->prefix('service'))
+				->addSetup('setProducer', [$producerDef]);
+		}
 	}
 
 	public function afterCompile(ClassType $class)
@@ -100,7 +125,7 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
 
 		$serviceMethod->setBody('
 $service = (function () {
-	'. $serviceMethod->getBody() .'
+	' . $serviceMethod->getBody() . '
 })();
 
 $shutdownCallback = function () use ($service) {
@@ -121,5 +146,4 @@ if (php_sapi_name() === "cli") {
 return $service;
 		');
 	}
-
 }

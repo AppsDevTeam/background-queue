@@ -10,12 +10,13 @@ use Symfony\Component\Console\Input\InputArgument;
 /**
  * @see \ADT\BackgroundQueue\Queue::processWaitingForManualQueuing
  */
-class ProcessWaitingForManualQueuingCommand extends Command {
-
+class ProcessWaitingForManualQueuingCommand extends Command
+{
 	/** @var \ADT\BackgroundQueue\Queue */
 	protected $queue;
 
-	protected function configure() {
+	protected function configure()
+	{
 		$this->setName('adt:backgroundQueue:processWaitingForManualQueuing');
 		$this->setDescription('Nastaví všem záznamům se stavem STATE_WAITING_FOR_MANUAL_QUEUING stav STATE_READY a vrátí je do fronty.');
 	}
@@ -24,12 +25,13 @@ class ProcessWaitingForManualQueuingCommand extends Command {
 	 * @param InputInterface $input
 	 * @param OutputInterface $output
 	 */
-	protected function initialize(InputInterface $input, OutputInterface $output) {
+	protected function initialize(InputInterface $input, OutputInterface $output)
+	{
 		$this->queue = $this->getHelper('container')->getByType(\ADT\BackgroundQueue\Queue::class);
 	}
 
-	protected function execute(InputInterface $input, OutputInterface $output) {
+	protected function execute(InputInterface $input, OutputInterface $output)
+	{
 		$this->queue->processWaitingForManualQueuing();
 	}
-
 }

@@ -11,8 +11,8 @@ use Symfony\Component\Console\Input\InputArgument;
  * Smaže všechny záznamy z DB s nastaveným stavem STATE_DONE
  *  php www/index.php adt:backgroundQueue:delete
  */
-class ClearCommand extends Command {
-
+class ClearCommand extends Command
+{
 	/**
 	 * @var array
 	 */
@@ -21,11 +21,13 @@ class ClearCommand extends Command {
 	/** @var \ADT\BackgroundQueue\Service */
 	protected $queueService;
 
-	public function setConfig($config) {
+	public function setConfig($config)
+	{
 		$this->config = $config;
 	}
 
-	protected function configure() {
+	protected function configure()
+	{
 		$this->setName('backgroundQueue:clear');
 		$this->addArgument(
 			"callbacks",
@@ -39,12 +41,14 @@ class ClearCommand extends Command {
 	 * @param InputInterface $input
 	 * @param OutputInterface $output
 	 */
-	protected function initialize(InputInterface $input, OutputInterface $output) {
+	protected function initialize(InputInterface $input, OutputInterface $output)
+	{
 		$this->queueService = $this->getHelper('container')->getByType(\ADT\BackgroundQueue\Service::class);
 	}
 
-	protected function execute(InputInterface $input, OutputInterface $output) {
-		
+	protected function execute(InputInterface $input, OutputInterface $output)
+	{
+
 		$callbacks = $input->getArgument("callbacks");
 		$this->queueService->clearDoneRecords($callbacks);
 
@@ -52,5 +56,4 @@ class ClearCommand extends Command {
 			$output->writeln("SUCCESS");
 		}
 	}
-
 }

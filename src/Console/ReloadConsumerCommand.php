@@ -10,8 +10,8 @@ use Symfony\Component\Console\Input\InputArgument;
 /**
  * Vytvoří několik (dle konfigurace) noop operací, aby každý consumer zkontroloval, zda se nemá ukončit.
  */
-class ReloadConsumerCommand extends Command {
-
+class ReloadConsumerCommand extends Command
+{
 	/**
 	 * @var array
 	 */
@@ -20,11 +20,13 @@ class ReloadConsumerCommand extends Command {
 	/** @var \ADT\BackgroundQueue\Service */
 	protected $queueService;
 
-	public function setConfig($config) {
+	public function setConfig($config)
+	{
 		$this->config = $config;
 	}
 
-	protected function configure() {
+	protected function configure()
+	{
 		$this->setName('adt:backgroundQueue:consumerReload');
 		$this->setDescription('Vytvoří několik (dle konfigurace) noop operací, aby každý consumer zkontroloval, zda se nemá ukončit.');
 	}
@@ -33,13 +35,14 @@ class ReloadConsumerCommand extends Command {
 	 * @param InputInterface $input
 	 * @param OutputInterface $output
 	 */
-	protected function initialize(InputInterface $input, OutputInterface $output) {
+	protected function initialize(InputInterface $input, OutputInterface $output)
+	{
 		$this->queueService = $this->getHelper('container')->getByType(\ADT\BackgroundQueue\Service::class);
 	}
 
-	protected function execute(InputInterface $input, OutputInterface $output) {
+	protected function execute(InputInterface $input, OutputInterface $output)
+	{
 
 		$this->queueService->publishSupervisorNoop();
 	}
-
 }

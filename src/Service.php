@@ -2,59 +2,54 @@
 
 namespace ADT\BackgroundQueue;
 
-class Service {
+use ADT\BackgroundQueue\Entity\EntityInterface;
+use ADT\BackgroundQueue\MQ\Destination;
+use ADT\BackgroundQueue\MQ\Message;
+use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\Persistence\ManagerRegistry;
+use Interop\Queue\Producer;
 
+class Service
+{
 	use \Nette\SmartObject;
-	
-	/** @var \Kdyby\RabbitMq\Connection */
-	protected $bunny;
 
-	/** @var \Kdyby\Doctrine\EntityManager */
-	protected $em;
+	protected ?Producer $producer = null;
 
-	/** @var array */
-	protected $config;
+	protected EntityManagerInterface $em;
 
-	/** @var array */
-	public $onShutdown = [];
+	protected array $config;
 
-	/**
-	 * @param \Kdyby\Doctrine\EntityManager $em
-	 */
-	public function __construct(\Kdyby\Doctrine\EntityManager $em) {
+	public array $onShutdown = [];
+
+
+	public function __construct(EntityManagerInterface $em)
+	{
 		$this->em = $em;
 	}
 
-	/**
-	 * @param array $config
-	 */
-	public function setConfig(array $config) {
+	public function setConfig(array $config): self
+	{
 		$this->config = $config;
+		return $this;
 	}
 
-	/**
-	 * @param \Kdyby\RabbitMq\Connection|null $bunny
-	 */
-	public function setRabbitMq(\Kdyby\RabbitMq\Connection $bunny = null) {
-		$this->bunny = $bunny;
+	public function setProducer(?Producer $producer): self
+	{
+		$this->producer = $producer;
+		return $this;
 	}
-
-	/**
-	 * @return string
-	 */
-	public function getEntityClass() {
+	
+	public function getEntityClass(): string
+	{
 		return $this->config['queueEntityClass'];
 	}
-
-
+	
 	/**
 	 * Publikuje novou zprávu do fronty
 	 *
-	 * @param Entity\QueueEntity $entity
-	 * @param string|NULL $queueName
 	 * @throws \Exception
 	 */
-	public function publish(Entity\QueueEntity $entity, $queueName = NULL) 
+	public function publish(EntityInterface $entity, ?string $queueName = null)
 	{
 		if (!$entity->getCallbackName()) {
 			throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
@@ -63,23 +58,27 @@ class Service {
 		if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
 			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 		}
+		
+		if (!$this->producer && $queueName) {
+			throw new \Exception('Don\'t specify "queueName" parameter or specify "broker.producer" in config.');
+		}
+
+		if ($this->producer && !$queueName && !$this->config['broker']['defaultQueue']) {
+			throw new \Exception('Set parameter "queueName" or specify "broker.defaultQueue" in config.');
+		}
 
 		$this->onShutdown[] = function () use ($entity, $queueName) {
 			// uložení entity do DB
-			$this->em->persist($entity);
-			$this->em->flush($entity);
+			if (!$entity->getId()) {
+				$this->em->persist($entity)
+					->flush($entity);
+			}
 
-			if ($this->bunny) {
+			if ($this->producer) {
 				// odeslání do RabbitMQ
 				try {
-					$producer = $this->bunny->getProducer($queueName);
-					$producer->publish(
-					    $entity->getId(),
-					    '',
-					    [
-					        'timestamp' => (new \Nette\Utils\DateTime)->format('U'),
-					    ]
-					);
+					$this->producer->send(new Destination($queueName ?: $this->config['broker']['defaultQueue']), new Message($entity->getId()));
+
 				} catch (\Exception $e) {
 					// kdyz se to snazi hodit do rabbita a ono se to nepodari, nastavit stav STATE_WAITING_FOR_MANUAL_QUEUING
 					$entity->setState(Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING);
@@ -92,18 +91,17 @@ class Service {
 	/**
 	 * Publikuje No-operation zprávu do fronty.
 	 */
-	public function publishNoop() {
-
+	public function publishNoop()
+	{
 		// odeslání do RabbitMQ
-		$producer = $this->bunny->getProducer('generalQueue');
-		$producer->publish($this->config['noopMessage']);
+		$this->producer->send(new Destination('generalQueue'), new \ADT\BackgroundQueue\MQ\Message($this->config['broker']['noopMessage']));
 	}
 
 	/**
 	 * Publikuje No-operation zprávu do fronty.
 	 */
-	public function publishSupervisorNoop() {
-
+	public function publishSupervisorNoop()
+	{
 		for ($i = 0; $i < $this->config['supervisor']['numprocs']; $i++) {
 			$this->publishNoop();
 		}
@@ -114,19 +112,18 @@ class Service {
 	 *
 	 * @param array $callbacksNames nepovinný parametr pro výběr konkrétních callbacků
 	 */
-	public function clearDoneRecords($callbacksNames = []) {
-
-		$ago = (new \Nette\Utils\DateTime('midnight'))->modify("-".$this->config["clearOlderThan"]);
-		$state = Entity\QueueEntity::STATE_DONE;
-
-		$qb = $this->em->createQueryBuilder();
-		$qb->delete($this->getEntityClass() ,'e')
+	public function clearDoneRecords(array $callbacksNames = []): void
+	{
+		$qb = $this->em->getRepository($this->getEntityClass())
+			->createQueryBuilder('e');
+		
+		$qb->delete()
 			->andWhere('e.created <= :ago')
+			->setParameter('ago', (new \DateTime('midnight'))->modify("-" . $this->config["clearOlderThan"]))
 			->andWhere('e.state = :state')
-			->setParameter('ago', $ago)
-			->setParameter('state', $state);
+			->setParameter('state', Entity\QueueEntity::STATE_DONE);
 
-		if (!empty($callbacksNames)) {
+		if ($callbacksNames) {
 			$qb->andWhere("e.callbackName IN (:callbacksNames)")
 				->setParameter("callbacksNames", $callbacksNames);
 		}
@@ -137,25 +134,22 @@ class Service {
 	/**
 	 * Zjisti jestli existuje nedokonceny task s $callbackName
 	 */
-	public function hasNonFinishedTask($callbackName)
+	public function hasNonFinishedTask(string $callbackName): bool
 	{
-		$qb = $this->em->createQueryBuilder();
+		$qb = $this->em->getRepository($this->getEntityClass())
+			->createQueryBuilder();
 
 		$qb->select('COUNT(e.id)')
-			->from($this->getEntityClass(), 'e');
-
-		$qb->andWhere('e.state IN (:states)')
-			->setParameter('states', [
+			->andWhere('e.state IN (:state)')
+			->setParameter('state', [
 				Entity\QueueEntity::STATE_READY,
 				Entity\QueueEntity::STATE_PROCESSING,
 				Entity\QueueEntity::STATE_ERROR_TEMPORARY,
 				Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING,
-			]);
-
-		$qb->andWhere('e.callbackName = :callbackName')
+			])
+			->andWhere('e.callbackName = :callbackName')
 			->setParameter('callbackName', $callbackName);
 
 		return (bool) $qb->getQuery()->getSingleScalarResult();
 	}
-
 }

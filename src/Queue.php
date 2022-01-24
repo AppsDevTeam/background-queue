@@ -17,13 +17,13 @@ class Queue
 {
 	use RepositoryTrait;
 
-	protected array $config;
+	private array $config;
 
-	protected Service $service;
+	private Service $service;
 
-	protected float $executionTime;
+	private float $executionTime;
 
-	public array $onAfterProcess = [];
+	private \Closure $onAfterProcess;
 
 
 	public function __construct(EntityManagerInterface $em, Service $service)
@@ -31,7 +31,18 @@ class Queue
 		$this->em = $em;
 		$this->service = $service;
 		$this->executionTime = -microtime(true);
-		$this->onAfterProcess[] = [$this, 'checkExecutionTime'];
+
+		/**
+		 * Jedno zpracování je případně uměle protaženo sleepem, aby si *supervisord*
+		 * nemyslel, že se proces ukončil moc rychle.
+		 */
+		$this->onAfterProcess = function() {
+			$this->executionTime += microtime(true);
+			if ($this->executionTime < $this->config['supervisor']['startsecs']) {
+				// Pokud bychom zpracovali řádek z fronty moc rychle, udělej sleep
+				usleep(($this->config['supervisor']['startsecs'] - $this->executionTime) * 1000 * 1000);
+			}
+		};
 	}
 
 	/**
@@ -144,19 +155,6 @@ class Queue
 		$qb->getQuery()->execute();
 	}
 
-	/**
-	 * Jedno zpracování je případně uměle protaženo sleepem, aby si *supervisord*
-	 * nemyslel, že se proces ukončil moc rychle.
-	 */
-	public function checkExecutionTime()
-	{
-		$this->executionTime += microtime(true);
-		if ($this->executionTime < $this->config['supervisor']['startsecs']) {
-			// Pokud bychom zpracovali řádek z fronty moc rychle, udělej sleep
-			usleep(($this->config['supervisor']['startsecs'] - $this->executionTime) * 1000 * 1000);
-		}
-	}
-
 
 	private function changeEntityState(EntityInterface $entity, int $state, ?string $errorMessage = null): void
 	{
@@ -175,9 +173,7 @@ class Queue
 
 	private function onAfterProcess()
 	{
-		foreach ($this->onAfterProcess as $callback) {
-			$callback();
-		}
+		call_user_func($this->onAfterProcess);
 	}
 
 	private function getEntity(Message $message): ?EntityInterface

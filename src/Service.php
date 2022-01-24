@@ -18,11 +18,11 @@ class Service
 {
 	use RepositoryTrait;
 
-	protected ?Producer $producer = null;
+	private ?Producer $producer = null;
 
-	protected array $config;
+	private array $config;
 
-	public array $onShutdown = [];
+	private \Closure $onShutdown;
 
 
 	public function __construct(EntityManagerInterface $em)
@@ -113,7 +113,7 @@ class Service
 			throw new Exception('Set parameter "queueName" or specify "broker.defaultQueue" in config.');
 		}
 
-		$this->onShutdown[] = function () use ($entity, $queueName) {
+		$this->onShutdown = function () use ($entity, $queueName) {
 			// uložení entity do DB
 			if (!$entity->getId()) {
 				$this->em->persist($entity);
@@ -182,5 +182,10 @@ class Service
 		}
 
 		return $qb;
+	}
+
+	public function onShutdown()
+	{
+		call_user_func($this->onShutdown);
 	}
 }

@@ -98,13 +98,11 @@ class BackgroundQueueExtension extends CompilerExtension
 
 		$builder->addDefinition($this->prefix('reloadConsumerCommand'))
 			->setFactory(ReloadConsumerCommand::class)
-			->addSetup('$service->setConfig(?)', [$config])
 			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('clearCommand'))
 			->setFactory(ClearCommand::class)
-			->addSetup('$service->setConfig(?)', [$config])
 			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 	}

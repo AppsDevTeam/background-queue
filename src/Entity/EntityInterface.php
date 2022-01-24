@@ -10,7 +10,7 @@ interface EntityInterface
 	const STATE_PROCESSING = 2; // zpracovává se
 	const STATE_FINISHED = 3; // dokončeno
 	const STATE_TEMPORARILY_FAILED = 4; // opakovatelná chyba (např. nedostupné API)
-	const STATE_PERMANENT_FAILED = 5; // kritická chyba (např. chyba v implementaci)
+	const STATE_PERMANENTLY_FAILED = 5; // kritická chyba (např. chyba v implementaci)
 	const STATE_WAITING_FOR_MANUAL_QUEUING = 6; // task s opravenou permanentní chybou, který chceme spustit znovu
 
 	const READY_TO_PROCESS_STATES = [

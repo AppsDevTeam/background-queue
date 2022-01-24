@@ -6,7 +6,9 @@ use DateTime;
 use Doctrine\ORM\EntityManagerInterface;
 use ADT\BackgroundQueue\Entity\EntityInterface;
 use Exception;
+use Interop\Queue\Message;
 use Tracy\Debugger;
+use Tracy\ILogger;
 
 class Queue
 {
@@ -37,8 +39,10 @@ class Queue
 
 	/**
 	 * Metoda pro zpracování obecné fronty
+	 *
+	 * @throws Exception
 	 */
-	public function process(\PhpAmqpLib\Message\AMQPMessage $message)
+	public function process(Message $message)
 	{
 		// Před zpracováním callbacku promazat EntityManager
 		$this->em->clear();
@@ -93,7 +97,7 @@ class Queue
 	 */
 	public function processTemporarilyFailed()
 	{
-		/** @var  $entity */
+		/** @var EntityInterface $entity */
 		foreach ($this->getRepository()->findBy(['state' => EntityInterface::STATE_TEMPORARILY_FAILED]) as $entity) {
 			$this->processEntity($entity);
 		}
@@ -153,7 +157,7 @@ class Queue
 		$entity->setState($state)
 			->setErrorMessage($errorMessage);
 
-		$this->em->flush($entity);
+		$this->em->flush();
 	}
 
 
@@ -170,12 +174,7 @@ class Queue
 		}
 	}
 
-	/**
-	 *
-	 * @param \PhpAmqpLib\Message\AMQPMessage $message
-	 * @return EntityInterface|NULL
-	 */
-	private function getEntity(\PhpAmqpLib\Message\AMQPMessage $message): ?EntityInterface
+	private function getEntity(Message $message): ?EntityInterface
 	{
 		$id = (int) $message->getBody();
 
@@ -184,7 +183,7 @@ class Queue
 
 		// zalogovat (a smazat z RabbitMQ DB)
 		if (!$entity) {
-			Debugger::log("Nenalezen záznam pro ID \"$id\"", \Tracy\ILogger::ERROR);
+			Debugger::log("Nenalezen záznam pro ID \"$id\"", ILogger::ERROR);
 			return null;
 		}
 
@@ -203,7 +202,7 @@ class Queue
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			Debugger::log("BackgroundQueue: Neočekávaný stav, ID " . $entity->getId(), \Tracy\ILogger::ERROR);
+			Debugger::log("BackgroundQueue: Neočekávaný stav, ID " . $entity->getId(), ILogger::ERROR);
 			return;
 		}
 
@@ -250,22 +249,22 @@ class Queue
 				$state = EntityInterface::STATE_TEMPORARILY_FAILED;
 			} else {
 				// HTTP Code 3xx, 4xx
-				$state = EntityInterface::STATE_PERMANENT_FAILED;
+				$state = EntityInterface::STATE_PERMANENTLY_FAILED;
 			}
 		} catch (RequestException $e) {
 			if ($e->getCode() >= 300 && $e->getCode() < 500) {
-				$state = EntityInterface::STATE_PERMANENT_FAILED;
+				$state = EntityInterface::STATE_PERMANENTLY_FAILED;
 			} else {
 				$state = EntityInterface::STATE_TEMPORARILY_FAILED;
 			}
 		} catch (Exception $e) {
-			$state = EntityInterface::STATE_PERMANENT_FAILED;
+			$state = EntityInterface::STATE_PERMANENTLY_FAILED;
 		}
 
 		try {
 			$this->changeEntityState($entity, $state, $e ? $e->getMessage() : null);
 
-			if ($state === EntityInterface::STATE_PERMANENT_FAILED) {
+			if ($state === EntityInterface::STATE_PERMANENTLY_FAILED) {
 				// odeslání emailu o chybě v callbacku
 				static::logException('Permanent error occured', $entity, $state, $e);
 			} elseif ($state === EntityInterface::STATE_TEMPORARILY_FAILED) {
@@ -273,10 +272,6 @@ class Queue
 				if ($entity->getNumberOfAttempts() == $this->config["notifyOnNumberOfAttempts"]) {
 					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(), $entity, $state, $e);
 				}
-
-				// Zprávu pošleme do fronty "generalQueueError", kde zpráva zůstane 20 minut (nastavuje se v neonu)
-				// a po 20 minutách se přesune zpět do fronty "generalQueue" a znovu se zpracuje
-				$this->service->publish($entity, 'generalQueueError');
 
 				if ($output instanceof WaitException) {
 					// callback vyvolal výjimku WaitException, tj. zprávu v současné chvíli nelze zpracovat kvůli
@@ -300,10 +295,10 @@ class Queue
 
 	/**
 	 *
-	 * @param \PhpAmqpLib\Message\AMQPMessage $message
+	 * @param Message $message
 	 * @return bool|NULL Null znamená, že se nejedná o speciální zprávu.
 	 */
-	private function processSpecialMessage(\PhpAmqpLib\Message\AMQPMessage $message)
+	private function processSpecialMessage(Message $message): ?bool
 	{
 		if ($message->getBody() === $this->config['broker']['noopMessage']) {
 			// Zpracuj Noop zprávu

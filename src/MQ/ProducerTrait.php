@@ -4,36 +4,63 @@
 namespace ADT\BackgroundQueue\MQ;
 
 
-use Interop\Queue\Destination;
-use Interop\Queue\Message;
+use Interop\Queue\Producer;
 
+/** @Suppress("unused") */
 trait ProducerTrait
 {
-	public function setDeliveryDelay(int $deliveryDelay = null): \Interop\Queue\Producer
+	/**
+	 * @throws \Exception
+	 * @Suppress("unused")
+	 * @noinspection PhpUnusedParameterInspection
+	 */
+	public function setDeliveryDelay(int $deliveryDelay = null): Producer
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 * @Suppress("unused")
+	 */
 	public function getDeliveryDelay(): ?int
 	{
 		throw new \Exception('Not implemented.');
 	}
 
-	public function setPriority(int $priority = null): \Interop\Queue\Producer
+	/**
+	 * @throws \Exception
+	 * @Suppress("unused")
+	 * @noinspection PhpUnusedParameterInspection
+	 */
+	public function setPriority(int $priority = null): Producer
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 * @Suppress("unused")
+	 */
 	public function getPriority(): ?int
 	{
 		throw new \Exception('Not implemented.');
 	}
 
-	public function setTimeToLive(int $timeToLive = null): \Interop\Queue\Producer
+	/**
+	 * @throws \Exception
+	 * @Suppress("unused")
+	 * @noinspection PhpUnusedParameterInspection
+	 */
+	public function setTimeToLive(int $timeToLive = null): Producer
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 * @Suppress("unused")
+	 */
 	public function getTimeToLive(): ?int
 	{
 		throw new \Exception('Not implemented.');

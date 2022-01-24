@@ -6,6 +6,9 @@ use DateTime;
 use Doctrine\ORM\EntityManagerInterface;
 use ADT\BackgroundQueue\Entity\EntityInterface;
 use Exception;
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Exception\ServerException;
 use Interop\Queue\Message;
 use Tracy\Debugger;
 use Tracy\ILogger;
@@ -31,6 +34,9 @@ class Queue
 		$this->onAfterProcess[] = [$this, 'checkExecutionTime'];
 	}
 
+	/**
+	 * @Suppress("unused")
+	 */
 	public function setConfig(array $config): self
 	{
 		$this->config = $config;
@@ -42,7 +48,7 @@ class Queue
 	 *
 	 * @throws Exception
 	 */
-	public function process(Message $message)
+	public function process(Message $message): ?bool
 	{
 		// Před zpracováním callbacku promazat EntityManager
 		$this->em->clear();
@@ -206,8 +212,6 @@ class Queue
 			return;
 		}
 
-		$output = null;
-
 		$entity->setLastAttempt(new DateTime());
 		$entity->increaseNumberOfAttempts();
 
@@ -223,28 +227,18 @@ class Queue
 			$this->changeEntityState($entity, EntityInterface::STATE_PROCESSING);
 
 			// zpracování callbacku
-			try {
-				$output = $callback($entity);
-			} catch (WaitException $e) {
-				$output = $e;
-			}
-
-			if ($output === false || $output instanceof WaitException) {
-				// pokud metoda vrátí FALSE, nebo WaitException, zpráva nebyla zpracována, entitě nastavit chybový stav
-				// zpráva se znovu zpracuje
-				$state = EntityInterface::STATE_TEMPORARILY_FAILED;
-			} else {
-				// pokud metoda vrátí cokoliv jiného (nebo nevrátí nic),
-				// proběhla v pořádku, nastavit stav dokončeno
-				$state = EntityInterface::STATE_FINISHED;
-			}
-		} catch (\GuzzleHttp\Exception\GuzzleException $e) {
+			// pokud metoda vrátí FALSE, zpráva nebyla zpracována, zpráva se znovu zpracuje pozdeji
+			// pokud metoda vrátí cokoliv jiného (nebo nevrátí nic), proběhla v pořádku, nastavit stav dokončeno
+			$state = $callback($entity) === false ? EntityInterface::STATE_TEMPORARILY_FAILED: EntityInterface::STATE_FINISHED;
+		} catch (WaitException $e) {
+			$state = EntityInterface::STATE_TEMPORARILY_FAILED;
+		} catch (GuzzleException $e) {
 			if (
 				// HTTP Code 0
-				$e instanceof \GuzzleHttp\Exception\ConnectException
+				$e instanceof ConnectException
 				||
 				// HTTP Code 5xx
-				$e instanceof \GuzzleHttp\Exception\ServerException
+				$e instanceof ServerException
 			) {
 				$state = EntityInterface::STATE_TEMPORARILY_FAILED;
 			} else {
@@ -273,7 +267,7 @@ class Queue
 					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(), $entity, $state, $e);
 				}
 
-				if ($output instanceof WaitException) {
+				if ($e instanceof WaitException) {
 					// callback vyvolal výjimku WaitException, tj. zprávu v současné chvíli nelze zpracovat kvůli
 					// nějakým dalším závislostem (např. se čeká na dokončení jiné zprávy); zprávu zařadíme do fronty
 					// "waitingQueue", kde zůstane několik vteřin a poté bude přesunuta zpět do fronty "generalQueue"

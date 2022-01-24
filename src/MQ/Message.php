@@ -25,71 +25,113 @@ class Message implements \Interop\Queue\Message
 		$this->body = $body;
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function setProperties(array $properties): void
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function getProperties(): array
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function setProperty(string $name, $value): void
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function getProperty(string $name, $default = null)
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function setHeaders(array $headers): void
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function getHeaders(): array
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function setHeader(string $name, $value): void
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function getHeader(string $name, $default = null)
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function setRedelivered(bool $redelivered): void
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function isRedelivered(): bool
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function setCorrelationId(string $correlationId = null): void
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function getCorrelationId(): ?string
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function setMessageId(string $messageId = null): void
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function getMessageId(): ?string
 	{
 		throw new \Exception('Not implemented.');
@@ -105,11 +147,17 @@ class Message implements \Interop\Queue\Message
 		$this->timestamp = $timestamp;
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function setReplyTo(string $replyTo = null): void
 	{
 		throw new \Exception('Not implemented.');
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	public function getReplyTo(): ?string
 	{
 		throw new \Exception('Not implemented.');

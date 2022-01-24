@@ -15,6 +15,6 @@ class Destination implements \Interop\Queue\Destination
 
 	public function __toString()
 	{
-		return $queueName;
+		return $this->queueName;
 	}
 }

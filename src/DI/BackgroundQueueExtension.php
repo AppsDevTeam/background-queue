@@ -2,7 +2,14 @@
 
 namespace ADT\BackgroundQueue\DI;
 
-use Interop\Queue\Producer;
+use ADT\BackgroundQueue\Console\ClearCommand;
+use ADT\BackgroundQueue\Console\ProcessCommand;
+use ADT\BackgroundQueue\Console\ProcessTemporaryErrorsCommand;
+use ADT\BackgroundQueue\Console\ProcessWaitingForManualQueuingCommand;
+use ADT\BackgroundQueue\Console\ReloadConsumerCommand;
+use ADT\BackgroundQueue\Queue;
+use ADT\BackgroundQueue\Service;
+use Nette\DI\CompilerExtension;
 use Nette\DI\Container;
 use Nette\DI\Definitions\Statement;
 use Nette\DI\Extensions\InjectExtension;
@@ -10,7 +17,8 @@ use Nette\PhpGenerator\ClassType;
 use Nette\Schema\Expect;
 use Nette\Schema\Schema;
 
-class BackgroundQueueExtension extends \Nette\DI\CompilerExtension
+/** @noinspection PhpUnused */
+class BackgroundQueueExtension extends CompilerExtension
 {
 	public function getConfigSchema(): Schema
 	{
@@ -52,13 +60,13 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension
 					continue;
 				}
 
-				$config['callbacks'][$callbackSlug] = new \Nette\DI\Statement('function(){ return call_user_func_array(?, func_get_args()); }', [ $callback ]);
+				$config['callbacks'][$callbackSlug] = new Statement('function(){ return call_user_func_array(?, func_get_args()); }', [ $callback ]);
 			}
 		}
 
 		// registrace queue service
 		$builder->addDefinition($this->prefix('queue'))
-			->setClass(\ADT\BackgroundQueue\Queue::class)
+			->setFactory(Queue::class)
 			->addSetup('$service->setConfig(?)', [$config]);
 
 		// Z `callbacks` nepředáváme celé servisy ale pouze klíče, protože nic víc nepotřebujeme a měli bychom zbytečnou závislost.
@@ -67,35 +75,35 @@ class BackgroundQueueExtension extends \Nette\DI\CompilerExtension
 		$serviceConfig['callbackKeys'] = array_keys($config["callbacks"]);
 
 		// registrace service
-		$serviceDef = $builder->addDefinition($this->prefix('service'))
-			->setClass(\ADT\BackgroundQueue\Service::class)
+		$builder->addDefinition($this->prefix('service'))
+			->setFactory(Service::class)
 			->addSetup('$service->setConfig(?)', [$serviceConfig]);
 
 		// registrace commandů
 
 		$builder->addDefinition($this->prefix('processWaitingForManualQueuingCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ProcessWaitingForManualQueuingCommand::class)
+			->setFactory(ProcessWaitingForManualQueuingCommand::class)
 			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('processCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ProcessCommand::class)
+			->setFactory(ProcessCommand::class)
 			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('processTemporaryErrorsCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ProcessTemporaryErrorsCommand::class)
+			->setFactory(ProcessTemporaryErrorsCommand::class)
 			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('reloadConsumerCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ReloadConsumerCommand::class)
+			->setFactory(ReloadConsumerCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
 			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
 		$builder->addDefinition($this->prefix('clearCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ClearCommand::class)
+			->setFactory(ClearCommand::class)
 			->addSetup('$service->setConfig(?)', [$config])
 			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');

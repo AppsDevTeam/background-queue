@@ -2,255 +2,187 @@
 
 namespace ADT\BackgroundQueue\Entity;
 
-use Doctrine\ORM\Mapping as ORM;
-
+/** @noinspection PhpUnused */
 trait EntityTrait
 {
 	/**
 	 * @ORM\Id
 	 * @ORM\Column(type="integer")
 	 * @ORM\GeneratedValue
-	 * @var integer
 	 * @internal
 	 */
-	protected $id;
+	private ?int $id;
 
 	/**
 	 * Název callbacku, index z nastavení "callbacks" z neonu
 	 *
-	 * @var string
-	 *
 	 * @ORM\Column(name="callbackName", type="string", length=255, nullable=true)
 	 */
-	protected $callbackName;
+	private string $callbackName;
 
 	/**
-	 * @var array
-	 *
 	 * @ORM\Column(name="parameters", type="array", nullable=true)
 	 */
-	protected $parameters;
+	private ?array $parameters = null;
 
 	/**
 	 * Stav - přijato, zpracovává se, dokončeno
 	 *
-	 * @var integer
-	 *
 	 * @ORM\Column(name="state", type="integer", length=1, nullable=false)
 	 */
-	protected $state = self::STATE_READY;
+	private int $state = EntityInterface::STATE_READY;
 
 	/**
 	 * Datum vytvoření
 	 *
-	 * @var \DateTime
-	 *
 	 * @ORM\Column(name="created", type="datetime", nullable=false)
 	 */
-	protected $created;
+	private \DateTime $created;
 
 	/**
 	 * Datum posledního pokusu o zpracování
 	 *
-	 * @var \DateTime
-	 *
 	 * @ORM\Column(name="lastAttempt", type="datetime", nullable=true)
 	 */
-	protected $lastAttempt;
+	private ?\DateTime $lastAttempt = null;
 
 	/**
 	 * Počet opakování (včetně prvního zpracování)
 	 *
-	 * @var integer
-	 *
-	 * @ORM\Column(name="numberOfAttempts", type="integer", length=11, nullable=false, options={"default":0})
+	 * @ORM\Column(name="numberOfAttempts", type="integer", nullable=false, options={"default":0})
 	 */
-	protected $numberOfAttempts;
+	private int $numberOfAttempts = 0;
 
 	/**
 	 * Chybová zpráva při stavu STATE_ERROR_FATAL
 	 *
-	 * @var string
-	 *
 	 * @ORM\Column(name="errorMessage", type="text", nullable=true)
 	 */
-	protected $errorMessage;
+	private string $errorMessage;
 
 	/**
 	 * Optional description
 	 *
-	 * @var string
-	 *
-	 * @ORM\Column(name="description", type="string", length=255, nullable=true)
+	 * @ORM\Column(name="description", type="string", nullable=true)
 	 */
-	protected $description;
+	private ?string $description;
 
 
-	public function __construct()
+	final public function __construct()
 	{
 		$this->created = new \DateTime();
 		$this->numberOfAttempts = 0;
 	}
 
-	public function __clone()
+	final public function __clone()
 	{
 		$this->id = null;
 	}
 
-	/**
-	 * @return integer
-	 */
-	final public function getId()
+	/** @noinspection PhpUnused */
+	final public function getId(): int
 	{
 		return $this->id;
 	}
 
-	/**
-	 * @throws \Exception
-	 */
-	final public function setId()
-	{
-		throw new \Exception('Entity id is read-only.');
-	}
-	
-	/**
-	 * Vrátí TRUE, pokud je zpráva připravená pro zpracování
-	 *
-	 * @return bool
-	 */
-	public function isReadyForProcess()
+	/** @noinspection PhpUnused */
+	final public function isReadyForProcess(): bool
 	{
 		return in_array($this->state, EntityInterface::READY_TO_PROCESS_STATES);
 	}
 
-	/**
-	 * @return string
-	 */
-	public function getCallbackName()
+	/** @noinspection PhpUnused */
+	final public function getCallbackName(): string
 	{
 		return $this->callbackName;
 	}
 
-	/**
-	 * @param string $callbackName
-	 */
-	public function setCallbackName($callbackName)
+	/** @noinspection PhpUnused */
+	final public function setCallbackName(string $callbackName): self
 	{
 		$this->callbackName = $callbackName;
 		return $this;
 	}
 
-	/**
-	 * @return string|callable
-	 */
-	public function getDescription()
+	/** @noinspection PhpUnused */
+	final public function getDescription(): ?string
 	{
 		return $this->description;
 	}
 
-	/**
-	 * @param string|callable $description
-	 */
-	public function setDescription($description)
+	/** @noinspection PhpUnused */
+	final public function setDescription($description): self
 	{
 		$this->description = $description;
 		return $this;
 	}
 
-	/**
-	 * @return array
-	 */
-	public function getParameters()
+	/** @noinspection PhpUnused */
+	final public function getParameters(): ?array
 	{
 		return $this->parameters;
 	}
 
-	/**
-	 * @param array $parameters
-	 */
-	public function setParameters(array $parameters)
+	/** @noinspection PhpUnused */
+	final public function setParameters(?array $parameters): self
 	{
 		$this->parameters = $parameters;
 		return $this;
 	}
 
-	/**
-	 * @return int
-	 */
-	public function getState()
+	/** @noinspection PhpUnused */
+	final public function getState(): int
 	{
 		return $this->state;
 	}
 
-	/**
-	 * @param int $state
-	 */
-	public function setState($state)
+	/** @noinspection PhpUnused */
+	final public function setState(int $state): self
 	{
 		$this->state = $state;
 		return $this;
 	}
 
-	/**
-	 * @return \DateTime
-	 */
-	public function getCreated()
+	/** @noinspection PhpUnused */
+	final public function getCreated(): \DateTime
 	{
 		return $this->created;
 	}
 
-	/**
-	 * @return \DateTime
-	 */
-	public function getLastAttempt()
+	/** @noinspection PhpUnused */
+	final public function getLastAttempt(): \DateTime
 	{
 		return $this->lastAttempt;
 	}
 
-	/**
-	 * @param \DateTime $lastAttempt
-	 */
-	public function setLastAttempt(\DateTime $lastAttempt)
+	/** @noinspection PhpUnused */
+	final public function setLastAttempt(\DateTime $lastAttempt): self
 	{
 		$this->lastAttempt = $lastAttempt;
 		return $this;
 	}
 
-	/**
-	 * @return int
-	 */
-	public function getNumberOfAttempts()
+	/** @noinspection PhpUnused */
+	final public function getNumberOfAttempts(): int
 	{
 		return $this->numberOfAttempts;
 	}
 
-	/**
-	 * @param int $numberOfAttempts
-	 */
-	public function setNumberOfAttempts($numberOfAttempts)
-	{
-		$this->numberOfAttempts = $numberOfAttempts;
-		return $this;
-	}
-
-	public function increaseNumberOfAttempts()
+	/** @noinspection PhpUnused */
+	final public function increaseNumberOfAttempts(): self
 	{
 		$this->numberOfAttempts++;
 		return $this;
 	}
 
-	/**
-	 * @return string
-	 */
-	public function getErrorMessage()
+	/** @noinspection PhpUnused */
+	final public function getErrorMessage(): string
 	{
 		return $this->errorMessage;
 	}
 
-	/**
-	 * @param string $errorMessage
-	 */
-	public function setErrorMessage($errorMessage)
+	/** @noinspection PhpUnused */
+	final public function setErrorMessage(string $errorMessage): self
 	{
 		$this->errorMessage = $errorMessage;
 		return $this;

@@ -34,7 +34,6 @@ interface EntityInterface
 	public function getLastAttempt();
 	public function setLastAttempt(\DateTime $lastAttempt);
 	public function getNumberOfAttempts();
-	public function setNumberOfAttempts($numberOfAttempts);
 	public function increaseNumberOfAttempts();
 	public function getErrorMessage();
 	public function setErrorMessage($errorMessage);

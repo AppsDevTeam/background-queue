@@ -30,12 +30,18 @@ class Service
 		$this->em = $em;
 	}
 
+	/**
+	 * @Suppress("unused")
+	 */
 	public function setConfig(array $config): self
 	{
 		$this->config = $config;
 		return $this;
 	}
 
+	/**
+	 * @Suppress("unused")
+	 */
 	public function setProducer(?Producer $producer): self
 	{
 		$this->producer = $producer;
@@ -53,6 +59,8 @@ class Service
 	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
 	 * @return EntityInterface|null
 	 * @throws NonUniqueResultException
+	 * @throws Exception
+	 * @Suppress("unused")
 	 */
 	public function getUnfinishedEntityByCallbackName(EntityInterface $entity, string $callbackName, ?string $lastAttempt = null): ?EntityInterface
 	{
@@ -73,6 +81,8 @@ class Service
 	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
 	 * @return EntityInterface|null
 	 * @throws NonUniqueResultException
+	 * @throws Exception
+	 * @Suppress("unused")
 	 */
 	public function getUnfinishedEntityByCallbackNameAndDescription(EntityInterface $entity, string $callbackName, string $description, ?string $lastAttempt = null): ?EntityInterface
 	{

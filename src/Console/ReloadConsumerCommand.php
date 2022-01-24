@@ -2,28 +2,17 @@
 
 namespace ADT\BackgroundQueue\Console;
 
+use ADT\BackgroundQueue\Service;
+use Interop\Queue\Exception;
+use Interop\Queue\Exception\InvalidDestinationException;
+use Interop\Queue\Exception\InvalidMessageException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Input\InputArgument;
 
-/**
- * Vytvoří několik (dle konfigurace) noop operací, aby každý consumer zkontroloval, zda se nemá ukončit.
- */
 class ReloadConsumerCommand extends Command
 {
-	/**
-	 * @var array
-	 */
-	protected $config;
-
-	/** @var \ADT\BackgroundQueue\Service */
-	protected $queueService;
-
-	public function setConfig($config)
-	{
-		$this->config = $config;
-	}
+	protected Service $queueService;
 
 	protected function configure()
 	{
@@ -31,18 +20,18 @@ class ReloadConsumerCommand extends Command
 		$this->setDescription('Vytvoří několik (dle konfigurace) noop operací, aby každý consumer zkontroloval, zda se nemá ukončit.');
 	}
 
-	/**
-	 * @param InputInterface $input
-	 * @param OutputInterface $output
-	 */
 	protected function initialize(InputInterface $input, OutputInterface $output)
 	{
-		$this->queueService = $this->getHelper('container')->getByType(\ADT\BackgroundQueue\Service::class);
+		$this->queueService = $this->getHelper('container')->getByType(Service::class);
 	}
 
+	/**
+	 * @throws Exception
+	 * @throws InvalidDestinationException
+	 * @throws InvalidMessageException
+	 */
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
-
 		$this->queueService->publishSupervisorNoop();
 	}
 }

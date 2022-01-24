@@ -2,18 +2,14 @@
 
 namespace ADT\BackgroundQueue\Console;
 
+use ADT\BackgroundQueue\Queue;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Input\InputArgument;
 
-/**
- * @see \ADT\BackgroundQueue\Queue::processWaitingForManualQueuing
- */
 class ProcessWaitingForManualQueuingCommand extends Command
 {
-	/** @var \ADT\BackgroundQueue\Queue */
-	protected $queue;
+	protected Queue $queue;
 
 	protected function configure()
 	{
@@ -21,15 +17,14 @@ class ProcessWaitingForManualQueuingCommand extends Command
 		$this->setDescription('Nastaví všem záznamům se stavem STATE_WAITING_FOR_MANUAL_QUEUING stav STATE_READY a vrátí je do fronty.');
 	}
 
-	/**
-	 * @param InputInterface $input
-	 * @param OutputInterface $output
-	 */
 	protected function initialize(InputInterface $input, OutputInterface $output)
 	{
-		$this->queue = $this->getHelper('container')->getByType(\ADT\BackgroundQueue\Queue::class);
+		$this->queue = $this->getHelper('container')->getByType(Queue::class);
 	}
 
+	/**
+	 * @throws \Exception
+	 */
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
 		$this->queue->processWaitingForManualQueuing();

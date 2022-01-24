@@ -58,14 +58,14 @@ trait EntityTrait
 	 *
 	 * @ORM\Column(name="errorMessage", type="text", nullable=true)
 	 */
-	private ?string $errorMessage;
+	private ?string $errorMessage = null;
 
 	/**
 	 * Optional description
 	 *
 	 * @ORM\Column(name="description", type="string", nullable=true)
 	 */
-	private ?string $description;
+	private ?string $description = null;
 
 
 	final public function __construct()

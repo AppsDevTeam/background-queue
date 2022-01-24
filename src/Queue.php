@@ -70,8 +70,7 @@ class Queue
 	 */
 	public function processUnfinished(?int $id = null)
 	{
-		$qb = $this->getRepository()
-			->createQueryBuilder('e')
+		$qb = $this->createQueryBuilder()
 			->andWhere("e.state IN (:state)")
 			->setParameter("state", EntityInterface::READY_TO_PROCESS_STATES);
 

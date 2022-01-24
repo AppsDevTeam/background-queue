@@ -58,7 +58,7 @@ trait EntityTrait
 	 *
 	 * @ORM\Column(name="errorMessage", type="text", nullable=true)
 	 */
-	private string $errorMessage;
+	private ?string $errorMessage;
 
 	/**
 	 * Optional description
@@ -111,7 +111,7 @@ trait EntityTrait
 	}
 
 	/** @noinspection PhpUnused */
-	final public function setDescription($description): self
+	final public function setDescription(?string $description): self
 	{
 		$this->description = $description;
 		return $this;
@@ -150,13 +150,13 @@ trait EntityTrait
 	}
 
 	/** @noinspection PhpUnused */
-	final public function getLastAttempt(): \DateTime
+	final public function getLastAttempt(): ?\DateTime
 	{
 		return $this->lastAttempt;
 	}
 
 	/** @noinspection PhpUnused */
-	final public function setLastAttempt(\DateTime $lastAttempt): self
+	final public function setLastAttempt(?\DateTime $lastAttempt): self
 	{
 		$this->lastAttempt = $lastAttempt;
 		return $this;
@@ -176,13 +176,13 @@ trait EntityTrait
 	}
 
 	/** @noinspection PhpUnused */
-	final public function getErrorMessage(): string
+	final public function getErrorMessage(): ?string
 	{
 		return $this->errorMessage;
 	}
 
 	/** @noinspection PhpUnused */
-	final public function setErrorMessage(string $errorMessage): self
+	final public function setErrorMessage(?string $errorMessage): self
 	{
 		$this->errorMessage = $errorMessage;
 		return $this;

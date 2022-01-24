@@ -122,6 +122,7 @@ class BackgroundQueueExtension extends CompilerExtension
 				->setType($producerClass)
 				->setAutowired(false);
 
+			/** @noinspection PhpPossiblePolymorphicInvocationInspection */
 			$builder->getDefinition($this->prefix('service'))
 				->addSetup('setProducer', [$producerDef]);
 		}

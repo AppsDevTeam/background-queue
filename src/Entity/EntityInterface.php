@@ -19,22 +19,38 @@ interface EntityInterface
 		self::STATE_WAITING_FOR_MANUAL_QUEUING
 	];
 
-	public function getId();
-	public function setId();
-	public function isReadyForProcess();
+	/** @noinspection PhpUnused */
+	public function getId(): int;
+	/** @noinspection PhpUnused */
+	public function isReadyForProcess(): bool;
+	/** @noinspection PhpUnused */
 	public function getCallbackName();
-	public function setCallbackName($callbackName);
+	/** @noinspection PhpUnused */
+	public function setCallbackName(string $callbackName): self;
+	/** @noinspection PhpUnused */
 	public function getDescription();
-	public function setDescription($description);
+	/** @noinspection PhpUnused */
+	public function setDescription(?string $description): self;
+	/** @noinspection PhpUnused */
 	public function getParameters();
-	public function setParameters(array $parameters);
+	/** @noinspection PhpUnused */
+	public function setParameters(?array $parameters): self;
+	/** @noinspection PhpUnused */
 	public function getState();
-	public function setState($state);
+	/** @noinspection PhpUnused */
+	public function setState(int $state): self;
+	/** @noinspection PhpUnused */
 	public function getCreated();
+	/** @noinspection PhpUnused */
 	public function getLastAttempt();
-	public function setLastAttempt(\DateTime $lastAttempt);
+	/** @noinspection PhpUnused */
+	public function setLastAttempt(\DateTime $lastAttempt): self;
+	/** @noinspection PhpUnused */
 	public function getNumberOfAttempts();
-	public function increaseNumberOfAttempts();
+	/** @noinspection PhpUnused */
+	public function increaseNumberOfAttempts(): self;
+	/** @noinspection PhpUnused */
 	public function getErrorMessage();
-	public function setErrorMessage($errorMessage);
+	/** @noinspection PhpUnused */
+	public function setErrorMessage(?string $errorMessage): self;
 }

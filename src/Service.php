@@ -5,18 +5,20 @@ namespace ADT\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\EntityInterface;
 use ADT\BackgroundQueue\MQ\Destination;
 use ADT\BackgroundQueue\MQ\Message;
+use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\NonUniqueResultException;
 use Doctrine\ORM\QueryBuilder;
-use Doctrine\Persistence\ManagerRegistry;
+use Exception;
+use Interop\Queue\Exception\InvalidDestinationException;
+use Interop\Queue\Exception\InvalidMessageException;
 use Interop\Queue\Producer;
 
 class Service
 {
-	use \Nette\SmartObject;
+	use RepositoryTrait;
 
 	protected ?Producer $producer = null;
-
-	protected EntityManagerInterface $em;
 
 	protected array $config;
 
@@ -40,11 +42,6 @@ class Service
 		return $this;
 	}
 
-	public function getEntityClass(): string
-	{
-		return $this->config['queueEntityClass'];
-	}
-
 	/**
 	 * Vrací nejstarší nedokončený záznam dle $callbackName, jenž není $entity a poslední pokus o jeho provedení není
 	 * starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
@@ -55,7 +52,7 @@ class Service
 	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
 	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
 	 * @return EntityInterface|null
-	 * @throws \Doctrine\ORM\NonUniqueResultException
+	 * @throws NonUniqueResultException
 	 */
 	public function getUnfinishedEntityByCallbackName(EntityInterface $entity, string $callbackName, ?string $lastAttempt = null): ?EntityInterface
 	{
@@ -75,7 +72,7 @@ class Service
 	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
 	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
 	 * @return EntityInterface|null
-	 * @throws \Doctrine\ORM\NonUniqueResultException
+	 * @throws NonUniqueResultException
 	 */
 	public function getUnfinishedEntityByCallbackNameAndDescription(EntityInterface $entity, string $callbackName, string $description, ?string $lastAttempt = null): ?EntityInterface
 	{
@@ -87,49 +84,30 @@ class Service
 		return $qb->getQuery()->setMaxResults(1)->getOneOrNullResult();
 	}
 
-	private function getAnotherProcessingEntityQueryBuilder(EntityInterface $entity, string $callbackName, ?string $lastAttempt = null): QueryBuilder
-	{
-		$qb = $this->createQueryBuilder()
-			->andWhere('e != :entity')
-			->setParameter('entity', $entity)
-			->andWhere('e.callbackName ' . (strpos($callbackName, '%') !== FALSE ? 'LIKE' : '=') . ' :callbackName')
-			->setParameter('callbackName', $callbackName)
-			->andWhere('e.state != :state')
-			->setParameter('state', EntityInterface::STATE_DONE)
-			->orderBy('e.created');
-
-		if ($lastAttempt) {
-			$qb->andWhere('(e.lastAttempt IS NULL OR e.lastAttempt > :lastAttempt)')
-				->setParameter('lastAttempt', new \DateTimeImmutable('-' . $lastAttempt));
-		}
-
-		return $qb;
-	}
-
 	/**
 	 * Publikuje novou zprávu do fronty
 	 *
-	 * @throws \Exception
+	 * @throws Exception
 	 */
 	public function publish(EntityInterface $entity, ?string $queueName = null): void
 	{
 		if (!$entity->getCallbackName()) {
-			throw new \Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
+			throw new Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
 		}
 
 		if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
-			throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
+			throw new Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 		}
 
 		if ($this->producer && !$queueName && !$this->config['broker']['defaultQueue']) {
-			throw new \Exception('Set parameter "queueName" or specify "broker.defaultQueue" in config.');
+			throw new Exception('Set parameter "queueName" or specify "broker.defaultQueue" in config.');
 		}
 
 		$this->onShutdown[] = function () use ($entity, $queueName) {
 			// uložení entity do DB
 			if (!$entity->getId()) {
-				$this->em->persist($entity)
-					->flush($entity);
+				$this->em->persist($entity);
+				$this->em->flush();
 			}
 
 			if ($this->producer) {
@@ -137,10 +115,10 @@ class Service
 				try {
 					$this->producer->send(new Destination($queueName ?: $this->config['broker']['defaultQueue']), new Message($entity->getId()));
 
-				} catch (\Exception $e) {
+				} catch (Exception $e) {
 					// kdyz se to snazi hodit do rabbita a ono se to nepodari, nastavit stav STATE_WAITING_FOR_MANUAL_QUEUING
 					$entity->setState(EntityInterface::STATE_WAITING_FOR_MANUAL_QUEUING);
-					$this->em->flush($entity);
+					$this->em->flush();
 				}
 			}
 		};
@@ -148,15 +126,24 @@ class Service
 
 	/**
 	 * Publikuje No-operation zprávu do fronty.
+	 *
+	 * @throws \Interop\Queue\Exception
+	 * @throws InvalidDestinationException
+	 * @throws InvalidMessageException
 	 */
 	public function publishNoop(): void
 	{
 		// odeslání do RabbitMQ
-		$this->producer->send(new Destination('generalQueue'), new \ADT\BackgroundQueue\MQ\Message($this->config['broker']['noopMessage']));
+		$this->producer->send(new Destination('generalQueue'), new Message($this->config['broker']['noopMessage']));
 	}
+
 
 	/**
 	 * Publikuje No-operation zprávu do fronty.
+	 *
+	 * @throws InvalidDestinationException
+	 * @throws InvalidMessageException
+	 * @throws \Interop\Queue\Exception
 	 */
 	public function publishSupervisorNoop(): void
 	{
@@ -166,29 +153,24 @@ class Service
 	}
 
 	/**
-	 * Metoda, která smaže všechny záznamy z DB s nastaveným stavem STATE_DONE.
-	 *
-	 * @param array $callbacksNames nepovinný parametr pro výběr konkrétních callbacků
+	 * @throws Exception
 	 */
-	public function clearDoneRecords(array $callbacksNames = []): void
+	private function getAnotherProcessingEntityQueryBuilder(EntityInterface $entity, string $callbackName, ?string $lastAttempt = null): QueryBuilder
 	{
 		$qb = $this->createQueryBuilder()
-			->delete()
-			->andWhere('e.created <= :ago')
-			->setParameter('ago', (new \DateTime('midnight'))->modify("-" . $this->config["clearOlderThan"]))
-			->andWhere('e.state = :state')
-			->setParameter('state', EntityInterface::STATE_DONE);
+			->andWhere('e != :entity')
+			->setParameter('entity', $entity)
+			->andWhere('e.callbackName ' . (strpos($callbackName, '%') !== FALSE ? 'LIKE' : '=') . ' :callbackName')
+			->setParameter('callbackName', $callbackName)
+			->andWhere('e.state != :state')
+			->setParameter('state', EntityInterface::STATE_FINISHED)
+			->orderBy('e.created');
 
-		if ($callbacksNames) {
-			$qb->andWhere("e.callbackName IN (:callbacksNames)")
-				->setParameter("callbacksNames", $callbacksNames);
+		if ($lastAttempt) {
+			$qb->andWhere('(e.lastAttempt IS NULL OR e.lastAttempt > :lastAttempt)')
+				->setParameter('lastAttempt', new DateTimeImmutable('-' . $lastAttempt));
 		}
 
-		$qb->getQuery()->execute();
-	}
-
-	private function createQueryBuilder(): QueryBuilder
-	{
-		return $this->em->getRepository($this->getEntityClass())->createQueryBuilder('e');
+		return $qb;
 	}
 }

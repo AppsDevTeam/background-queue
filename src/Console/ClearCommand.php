@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Console;
 
+use ADT\BackgroundQueue\Queue;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -13,18 +14,7 @@ use Symfony\Component\Console\Input\InputArgument;
  */
 class ClearCommand extends Command
 {
-	/**
-	 * @var array
-	 */
-	protected $config;
-
-	/** @var \ADT\BackgroundQueue\Service */
-	protected $queueService;
-
-	public function setConfig($config)
-	{
-		$this->config = $config;
-	}
+	protected Queue $queue;
 
 	protected function configure()
 	{
@@ -50,7 +40,7 @@ class ClearCommand extends Command
 	{
 
 		$callbacks = $input->getArgument("callbacks");
-		$this->queueService->clearDoneRecords($callbacks);
+		$this->queue->clearFinishedRecords($callbacks);
 
 		if ($input->getOption('verbose')) {
 			$output->writeln("SUCCESS");

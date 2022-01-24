@@ -11,9 +11,12 @@
 		}
 	],
 	"require": {
+		"php": "^7.4|^8.0",
 		"nette/di": "^3.0",
 		"doctrine/orm": "^2.0",
-		"queue-interop/queue-interop": "^0.8"
+		"symfony/console": "^4.0|^5.0|^6.0",
+		"queue-interop/queue-interop": "^0.8",
+		"tracy/tracy": "^2.9"
 	},
 	"autoload": {
 		"psr-4": { "ADT\\BackgroundQueue\\": "src/" }

@@ -2,14 +2,15 @@
 
 namespace ADT\BackgroundQueue;
 
+use DateTime;
 use Doctrine\ORM\EntityManagerInterface;
 use ADT\BackgroundQueue\Entity\EntityInterface;
+use Exception;
+use Tracy\Debugger;
 
 class Queue
 {
-	use \Nette\SmartObject;
-
-	protected EntityManagerInterface $em;
+	use RepositoryTrait;
 
 	protected array $config;
 
@@ -24,15 +25,14 @@ class Queue
 	{
 		$this->em = $em;
 		$this->service = $service;
-
 		$this->executionTime = -microtime(true);
-
 		$this->onAfterProcess[] = [$this, 'checkExecutionTime'];
 	}
 
-	public function setConfig(array $config)
+	public function setConfig(array $config): self
 	{
 		$this->config = $config;
+		return $this;
 	}
 
 	/**
@@ -63,6 +63,79 @@ class Queue
 	}
 
 	/**
+	 * Metoda zpracující callbacky nezpracovaných entit nebo jednu konkrétní entitu
+	 * bez rabbita a consumeru
+	 *
+	 * @throws Exception
+	 */
+	public function processUnfinished(?int $id = null)
+	{
+		$qb = $this->getRepository()
+			->createQueryBuilder('e')
+			->andWhere("e.state IN (:state)")
+			->setParameter("state", EntityInterface::READY_TO_PROCESS_STATES);
+
+		// vybere jeden konkrétní záznam
+		if ($id) {
+			$qb
+				->andWhere("e.id = :id")
+				->setParameter('id', $id);
+		}
+
+		foreach ($qb->getQuery()->getResult() as $entity) {
+			$this->processEntity($entity);
+		}
+	}
+
+	/**
+	 * Metoda zpracující callbacky entit s nastavenym stavem STATE_TEMPORARILY_FAILED.
+	 *
+	 * @throws Exception
+	 */
+	public function processTemporarilyFailed()
+	{
+		/** @var  $entity */
+		foreach ($this->getRepository()->findBy(['state' => EntityInterface::STATE_TEMPORARILY_FAILED]) as $entity) {
+			$this->processEntity($entity);
+		}
+	}
+
+	/**
+	 * Metoda, která pro všechny záznamy z DB s nastaveným stavem STATE_WAITING_FOR_MANUAL_QUEUING nastaví stav READY a dá je zpět do fronty
+	 * @throws Exception
+	 */
+	public function processWaitingForManualQueuing(): void
+	{
+		/** @var EntityInterface $entity */
+		foreach ($this->getRepository()->findBy(['state' => EntityInterface::STATE_WAITING_FOR_MANUAL_QUEUING]) as $entity) {
+			$this->changeEntityState($entity, EntityInterface::STATE_READY);
+			$this->service->publish($entity);
+		}
+	}
+
+	/**
+	 * Metoda, která smaže všechny záznamy z DB s nastaveným stavem STATE_FINISHED.
+	 *
+	 * @param array $callbacksNames nepovinný parametr pro výběr konkrétních callbacků
+	 */
+	public function clearFinishedRecords(array $callbacksNames = []): void
+	{
+		$qb = $this->createQueryBuilder()
+			->delete()
+			->andWhere('e.created <= :ago')
+			->setParameter('ago', (new DateTime('midnight'))->modify("-" . $this->config["clearOlderThan"]))
+			->andWhere('e.state = :state')
+			->setParameter('state', EntityInterface::STATE_FINISHED);
+
+		if ($callbacksNames) {
+			$qb->andWhere("e.callbackName IN (:callbacksNames)")
+				->setParameter("callbacksNames", $callbacksNames);
+		}
+
+		$qb->getQuery()->execute();
+	}
+
+	/**
 	 * Jedno zpracování je případně uměle protaženo sleepem, aby si *supervisord*
 	 * nemyslel, že se proces ukončil moc rychle.
 	 */
@@ -75,16 +148,26 @@ class Queue
 		}
 	}
 
-	/**
-	 *
-	 * @param \PhpAmqpLib\Message\AMQPMessage $message
-	 * @return bool|NULL Null znamená, že se nejedná o speciální zprávu.
-	 */
-	protected function processSpecialMessage(\PhpAmqpLib\Message\AMQPMessage $message)
+
+	private function changeEntityState(EntityInterface $entity, int $state, ?string $errorMessage = null): void
 	{
-		if ($message->getBody() === $this->config['broker']['noopMessage']) {
-			// Zpracuj Noop zprávu
-			return true;
+		$entity->setState($state)
+			->setErrorMessage($errorMessage);
+
+		$this->em->flush($entity);
+	}
+
+
+	private static function logException(string $errorMessage, EntityInterface $entity, string $state, ?Exception $e = null): void
+	{
+		Debugger::log(new Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . ($e ? '; ErrorMessage: ' . $e->getMessage() : ''), 0, $e));
+	}
+
+
+	private function onAfterProcess()
+	{
+		foreach ($this->onAfterProcess as $callback) {
+			$callback();
 		}
 	}
 
@@ -93,17 +176,16 @@ class Queue
 	 * @param \PhpAmqpLib\Message\AMQPMessage $message
 	 * @return EntityInterface|NULL
 	 */
-	protected function getEntity(\PhpAmqpLib\Message\AMQPMessage $message)
+	private function getEntity(\PhpAmqpLib\Message\AMQPMessage $message): ?EntityInterface
 	{
-		/** @var integer */
 		$id = (int) $message->getBody();
 
-		/** @var EntityInterface */
-		$entity = $this->em->getRepository($this->service->getEntityClass())->find($id);
+		/** @var EntityInterface $entity */
+		$entity = $this->getRepository()->find($id);
 
 		// zalogovat (a smazat z RabbitMQ DB)
 		if (!$entity) {
-			\Tracy\Debugger::log("Nenalezen záznam pro ID \"$id\"", \Tracy\ILogger::ERROR);
+			Debugger::log("Nenalezen záznam pro ID \"$id\"", \Tracy\ILogger::ERROR);
 			return null;
 		}
 
@@ -113,28 +195,28 @@ class Queue
 	/**
 	 * Metoda, která zpracuje jednu entitu
 	 *
-	 * @throws \Exception
+	 * @throws Exception
 	 */
-	protected function processEntity(EntityInterface $entity)
+	private function processEntity(EntityInterface $entity): void
 	{
 		// Zpráva není ke zpracování v případě, že nemá stav READY nebo ERROR_REPEATABLE
 		// Pokud při zpracování zprávy nastane chyba, zpráva zůstane ve stavu PROCESSING a consumer se ukončí.
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			\Tracy\Debugger::log("BackgroundQueue: Neočekávaný stav, ID " . $entity->getId(), \Tracy\ILogger::ERROR);
+			Debugger::log("BackgroundQueue: Neočekávaný stav, ID " . $entity->getId(), \Tracy\ILogger::ERROR);
 			return;
 		}
 
 		$output = null;
 
-		$entity->setLastAttempt(new \DateTime());
+		$entity->setLastAttempt(new DateTime());
 		$entity->increaseNumberOfAttempts();
 
 		$e = null;
 		try {
 			if (!isset($this->config["callbacks"][$entity->getCallbackName()])) {
-				throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
+				throw new Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 			}
 
 			$callback = $this->config["callbacks"][$entity->getCallbackName()];
@@ -152,11 +234,11 @@ class Queue
 			if ($output === false || $output instanceof WaitException) {
 				// pokud metoda vrátí FALSE, nebo WaitException, zpráva nebyla zpracována, entitě nastavit chybový stav
 				// zpráva se znovu zpracuje
-				$state = EntityInterface::STATE_ERROR_TEMPORARY;
+				$state = EntityInterface::STATE_TEMPORARILY_FAILED;
 			} else {
 				// pokud metoda vrátí cokoliv jiného (nebo nevrátí nic),
 				// proběhla v pořádku, nastavit stav dokončeno
-				$state = EntityInterface::STATE_DONE;
+				$state = EntityInterface::STATE_FINISHED;
 			}
 		} catch (\GuzzleHttp\Exception\GuzzleException $e) {
 			if (
@@ -166,28 +248,28 @@ class Queue
 				// HTTP Code 5xx
 				$e instanceof \GuzzleHttp\Exception\ServerException
 			) {
-				$state = EntityInterface::STATE_ERROR_TEMPORARY;
+				$state = EntityInterface::STATE_TEMPORARILY_FAILED;
 			} else {
 				// HTTP Code 3xx, 4xx
-				$state = EntityInterface::STATE_ERROR_FATAL;
+				$state = EntityInterface::STATE_PERMANENT_FAILED;
 			}
 		} catch (RequestException $e) {
 			if ($e->getCode() >= 300 && $e->getCode() < 500) {
-				$state = EntityInterface::STATE_ERROR_FATAL;
+				$state = EntityInterface::STATE_PERMANENT_FAILED;
 			} else {
-				$state = EntityInterface::STATE_ERROR_TEMPORARY;
+				$state = EntityInterface::STATE_TEMPORARILY_FAILED;
 			}
-		} catch (\Exception $e) {
-			$state = EntityInterface::STATE_ERROR_FATAL;
+		} catch (Exception $e) {
+			$state = EntityInterface::STATE_PERMANENT_FAILED;
 		}
 
 		try {
 			$this->changeEntityState($entity, $state, $e ? $e->getMessage() : null);
 
-			if ($state === EntityInterface::STATE_ERROR_FATAL) {
+			if ($state === EntityInterface::STATE_PERMANENT_FAILED) {
 				// odeslání emailu o chybě v callbacku
 				static::logException('Permanent error occured', $entity, $state, $e);
-			} elseif ($state === EntityInterface::STATE_ERROR_TEMPORARY) {
+			} elseif ($state === EntityInterface::STATE_TEMPORARILY_FAILED) {
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($entity->getNumberOfAttempts() == $this->config["notifyOnNumberOfAttempts"]) {
 					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(), $entity, $state, $e);
@@ -210,108 +292,25 @@ class Queue
 					$this->service->publish($entity, 'generalQueueError');
 				}
 			}
-		} catch (\Exception $innerEx) {
+		} catch (Exception $innerEx) {
 			// může nastat v případě, kdy v callbacku selhal např. INSERT a entity manager se uzavřel
 			// entita zustane viset ve stavu "probiha"
 			static::logException($innerEx->getMessage(), $entity, $state, $e);
 		}
 	}
 
-	private static function logException(string $errorMessage, EntityInterface $entity, string $state, ?\Exception $e = null): void
-	{
-		\Tracy\Debugger::log(new \Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . ($e ? '; ErrorMessage: ' . $e->getMessage() : ''), 0, $e));
-	}
-
 	/**
-	 * Metoda, která pro všechny záznamy z DB s nastaveným stavem STATE_WAITING_FOR_MANUAL_QUEUING nastaví stav READY a dá je zpět do fronty
-	 * @throws \Exception
-	 */
-	public function processWaitingForManualQueuing(): void
-	{
-		/** @var EntityInterface $entity */
-		foreach (
-			$this->em->getRepository($this->service->getEntityClass())
-				->findBy(['state' => EntityInterface::STATE_WAITING_FOR_MANUAL_QUEUING]) as $entity
-		) {
-			$this->changeEntityState($entity, EntityInterface::STATE_READY);
-			$this->service->publish($entity);
-		}
-	}
-
-	protected function changeEntityState(EntityInterface $entity, int $state, ?string $errorMessage = null): void
-	{
-		$entity->setState($state)
-			->setErrorMessage($errorMessage);
-
-		$this->em->flush($entity);
-	}
-
-	/**
-	 * Vrátí TRUE, pokud je $errorCode 5XX
-	 */
-	public static function isServerError($errorCode): bool
-	{
-		return substr($errorCode, 0, 1) === '5';
-	}
-
-	/**
-	 * Returns TRUE if everything is allright, FALSE if it's repetable error, otherwise throws exception
 	 *
-	 * @throws \GuzzleHttp\Exception\GuzzleException
+	 * @param \PhpAmqpLib\Message\AMQPMessage $message
+	 * @return bool|NULL Null znamená, že se nejedná o speciální zprávu.
 	 */
-	public static function handleGuzzleError(\GuzzleHttp\Exception\GuzzleException $guzzleException): bool
+	private function processSpecialMessage(\PhpAmqpLib\Message\AMQPMessage $message)
 	{
-		if (
-			// HTTP Code 0
-			$guzzleException instanceof \GuzzleHttp\Exception\ConnectException
-			||
-			// HTTP Code 5xx
-			$guzzleException instanceof \GuzzleHttp\Exception\ServerException
-		) {
-			return false;
+		if ($message->getBody() === $this->config['broker']['noopMessage']) {
+			// Zpracuj Noop zprávu
+			return true;
 		}
 
-		// other exceptions like 3xx (\GuzzleHttp\Exception\TooManyRedirectsException) or 4xx (\GuzzleHttp\Exception\ClientException) are unrepeatable and we want to throw exception
-		throw $guzzleException;
-	}
-
-	/**
-	 * Metoda zpracující callbacky nezpracovaných entit nebo jednu konkrétní entitu
-	 * bez rabbita a consumeru
-	 *
-	 * @throws \Exception
-	 */
-	public function processUnprocessedEntities(?int $id = null)
-	{
-		$qb = $this->em->getRepository($this->service->getEntityClass())
-			->createQueryBuilder('e')
-			->andWhere("e.state IN (:state)")
-			->setParameter("state", EntityInterface::READY_TO_PROCESS_STATES);
-
-		// vybere jeden konkrétní záznam
-		if ($id) {
-			$qb
-				->andWhere("e.id = :id")
-				->setParameter('id', $id);
-		}
-
-		foreach ($qb->getQuery()->getResult() as $entity) {
-			$this->processEntity($entity);
-		}
-	}
-
-	/**
-	 * Metoda zpracující callbacky entit s nastavenym stavem STATE_ERROR_TEMPORARY
-	 *
-	 * @throws \Exception
-	 */
-	public function processTemporaryErrors()
-	{
-		foreach (
-			$this->em->getRepository($this->service->getEntityClass())
-				->findBy(['state' => EntityInterface::STATE_ERROR_TEMPORARY]) as $entity
-		) {
-			$this->processEntity($entity);
-		}
+		return null;
 	}
 }

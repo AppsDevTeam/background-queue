@@ -37,6 +37,6 @@ class ProcessCommand extends Command
 	 */
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
-		$this->queue->processUnprocessedEntities($input->getArgument(self::PARAM_ID));
+		$this->queue->processUnfinished($input->getArgument(self::PARAM_ID));
 	}
 }

@@ -184,8 +184,8 @@ class Service
 		return $qb;
 	}
 
-	public function onShutdown()
+	public function onShutdown(): void
 	{
-		call_user_func($this->onShutdown);
+		$this->onShutdown->call($this);
 	}
 }

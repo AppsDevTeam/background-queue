@@ -173,7 +173,7 @@ class Queue
 
 	private function onAfterProcess()
 	{
-		call_user_func($this->onAfterProcess);
+		$this->onAfterProcess->call($this);
 	}
 
 	private function getEntity(Message $message): ?EntityInterface

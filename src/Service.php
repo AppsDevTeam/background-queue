@@ -22,7 +22,7 @@ class Service
 
 	private array $config;
 
-	private \Closure $onShutdown = null;
+	private ?\Closure $onShutdown = null;
 
 
 	public function __construct(EntityManagerInterface $em)

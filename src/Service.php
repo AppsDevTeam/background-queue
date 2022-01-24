@@ -186,6 +186,8 @@ class Service
 
 	public function onShutdown(): void
 	{
-		$this->onShutdown->call($this);
+		if ($this->onShutdown) {
+			$this->onShutdown->call($this);
+		}
 	}
 }

@@ -168,8 +168,8 @@ class Service
 	private function getAnotherProcessingEntityQueryBuilder(EntityInterface $entity, string $callbackName, ?string $lastAttempt = null): QueryBuilder
 	{
 		$qb = $this->createQueryBuilder()
-			->andWhere('e != :entity')
-			->setParameter('entity', $entity)
+			->andWhere('e.id < :id')
+			->setParameter('id', $entity->getId())
 			->andWhere('e.callbackName ' . (strpos($callbackName, '%') !== FALSE ? 'LIKE' : '=') . ' :callbackName')
 			->setParameter('callbackName', $callbackName)
 			->andWhere('e.state != :state')

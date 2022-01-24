@@ -20,7 +20,7 @@ interface EntityInterface
 	];
 
 	/** @noinspection PhpUnused */
-	public function getId(): int;
+	public function getId(): ?int;
 	/** @noinspection PhpUnused */
 	public function isReadyForProcess(): bool;
 	/** @noinspection PhpUnused */

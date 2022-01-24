@@ -11,7 +11,7 @@ trait EntityTrait
 	 * @ORM\GeneratedValue
 	 * @internal
 	 */
-	private ?int $id;
+	private ?int $id = null;
 
 	/**
 	 * Název callbacku, index z nastavení "callbacks" z neonu
@@ -80,7 +80,7 @@ trait EntityTrait
 	}
 
 	/** @noinspection PhpUnused */
-	final public function getId(): int
+	final public function getId(): ?int
 	{
 		return $this->id;
 	}

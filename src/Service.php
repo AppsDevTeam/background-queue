@@ -22,7 +22,8 @@ class Service
 
 	private array $config;
 
-	private ?\Closure $onShutdown = null;
+	/** @var Closure[]  */
+	private array $onShutdown = [];
 
 
 	public function __construct(EntityManagerInterface $em)
@@ -113,7 +114,7 @@ class Service
 			throw new Exception('Set parameter "queueName" or specify "broker.defaultQueue" in config.');
 		}
 
-		$this->onShutdown = function () use ($entity, $queueName) {
+		$this->onShutdown[] = function () use ($entity, $queueName) {
 			// uložení entity do DB
 			if (!$entity->getId()) {
 				$this->em->persist($entity);
@@ -186,8 +187,8 @@ class Service
 
 	public function onShutdown(): void
 	{
-		if ($this->onShutdown) {
-			$this->onShutdown->call($this);
+		foreach ($this->onShutdown as $_handler) {
+			$_handler->call($this);
 		}
 	}
 }

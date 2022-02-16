@@ -53,4 +53,8 @@ interface EntityInterface
 	public function getErrorMessage();
 	/** @noinspection PhpUnused */
 	public function setErrorMessage(?string $errorMessage): self;
+	/** @noinspection PhpUnused */
+	public function getNotifyOnNumberOfAttempts(): ?int;
+	/** @noinspection PhpUnused */
+	public function setNotifyOnNumberOfAttempts(?int $errorMessage): self;
 }

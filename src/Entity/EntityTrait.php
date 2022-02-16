@@ -54,14 +54,6 @@ trait EntityTrait
 	private int $numberOfAttempts = 0;
 
 	/**
-	 * Počet opakování, po kterých se posílá výjimka o překročeném limitu
-	 * Má prioritu pred globálnym nastavením notifyOnNumberOfAttempts z configu, ktoré je pre všetky entity rovnaké
-	 *
-	 * @ORM\Column(name="notifyOnNumberOfAttempts", type="integer", nullable=true, options={"default":null})
-	 */
-	private ?int $notifyOnNumberOfAttempts = null;
-
-	/**
 	 * Chybová zpráva při stavu STATE_ERROR_FATAL
 	 *
 	 * @ORM\Column(name="errorMessage", type="text", nullable=true)
@@ -193,19 +185,6 @@ trait EntityTrait
 	final public function setErrorMessage(?string $errorMessage): self
 	{
 		$this->errorMessage = $errorMessage;
-		return $this;
-	}
-
-	/** @noinspection PhpUnused */
-	final public function getNotifyOnNumberOfAttempts(): ?int
-	{
-		return $this->notifyOnNumberOfAttempts;
-	}
-
-	/** @noinspection PhpUnused */
-	final public function setNotifyOnNumberOfAttempts(?int $notifyOnNumberOfAttempts): self
-	{
-		$this->notifyOnNumberOfAttempts = $notifyOnNumberOfAttempts;
 		return $this;
 	}
 }

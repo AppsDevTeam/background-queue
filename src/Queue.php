@@ -259,18 +259,7 @@ class Queue
 				static::logException('Permanent error occured', $entity, $state, $e);
 			} elseif ($state === EntityInterface::STATE_TEMPORARILY_FAILED) {
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
-				if (
-					(
-						$entity->getNotifyOnNumberOfAttempts() !== null
-						&&
-						$entity->getNotifyOnNumberOfAttempts() === $entity->getNumberOfAttempts()
-					)
-					||
-					(
-						$entity->getNotifyOnNumberOfAttempts() === null
-						&& $entity->getNumberOfAttempts() == $this->config["notifyOnNumberOfAttempts"]
-					)
-				) {
+				if ($entity->getNumberOfAttempts() == $this->config["notifyOnNumberOfAttempts"]) {
 					static::logException('Number of temporary error attempts reached ' . $entity->getNumberOfAttempts(), $entity, $state, $e);
 				}
 

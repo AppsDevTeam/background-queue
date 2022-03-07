@@ -5,15 +5,13 @@ namespace ADT\BackgroundQueue\Console;
 use ADT\BackgroundQueue\Entity\EntityInterface;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Input\InputArgument;
 
-class ProcessCommand extends Command
+class ProcessTemporarilyFailedCommand extends Command
 {
 	protected function configure()
 	{
-		$this->setName('background-queue:process');
-		$this->setDescription('Processes all records in the READY state.');
-		$this->addArgument('id', InputArgument::OPTIONAL, "Process the message in the READY state and with the specified id.");
+		$this->setName('background-queue:process-temporarily-failed');
+		$this->setDescription('Processes all records in the TEMPORARILY_FAILED state.');
 	}
 
 	/**
@@ -22,14 +20,8 @@ class ProcessCommand extends Command
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
 		$qb = $this->repository->createQueryBuilder()
-			->andWhere("e.state IN (:state)")
-			->setParameter("state", EntityInterface::STATE_READY);
-
-		if ($input->getArgument('id')) {
-			$qb
-				->andWhere("e.id = :id")
-				->setParameter('id', $input->getArgument('id'));
-		}
+			->andWhere('e.state = :state')
+			->setParameter('sstate', EntityInterface::STATE_TEMPORARILY_FAILED);
 
 		/** @var EntityInterface $_entity */
 		foreach ($qb->getQuery()->getResult() as $_entity) {

@@ -22,8 +22,5 @@
 	},
 	"autoload": {
 		"psr-4": { "ADT\\BackgroundQueue\\": "src/" }
-	},
-	"require-dev": {
-		"guzzlehttp/guzzle": "^7.4"
 	}
 }

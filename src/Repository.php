@@ -123,23 +123,23 @@ class Repository
 				->execute();
 		} else {
 			$metadata = $this->em->getClassMetadata($this->config['entityClass']);
-			$metadata->getFieldNames();
 
-			$this->em->getConnection()->createQueryBuilder()
-				->insert($this->getTableName(), "e")
-				->values(
-					[
-						$metadata->getColumnName('createdAt') => '?',
-						$metadata->getColumnName('expiresAt') => '?',
-						$metadata->getColumnName('sessionId') => '?',
-						$metadata->getColumnName('data') => '?'
-					]
-				)
-				->setParameter(0, (new \DateTime()), Types::DATETIME_MUTABLE)
-				->setParameter(1, (new \DateTime("+$expiration minutes")), Types::DATETIME_MUTABLE)
-				->setParameter(2, $id)
-				->setParameter(3, $data)
+			$values = [];
+			$parameters = [];
+			foreach ($metadata->getFieldNames() as $_fieldName) {
+				$values[$metadata->getColumnName($_fieldName)] = '?';
+				$val = $entity->{'get'.ucfirst($_fieldName)}();
+				$parameters[] = is_array($val) ? serialize($val) : ($val instanceof \DateTimeInterface ? $val->format('Y-m-d H:i:s') : $val);
+			}
+
+			$response = $this->em->getConnection()->createQueryBuilder()
+				->insert('background_message', 'e')
+				->values($values)
+				->setParameters($parameters)
 				->execute();
+
+			print_r ($this->em->getConnection()->lastInsertId());
+			die();
 		}
 	}
 

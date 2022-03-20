@@ -35,7 +35,7 @@ class Producer
 	/**
 	 * @Suppress("unused")
 	 */
-	public function setProducer(?Producer $producer): self
+	public function setProducer(?\Interop\Queue\Producer $producer): self
 	{
 		$this->producer = $producer;
 		return $this;

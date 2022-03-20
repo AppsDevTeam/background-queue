@@ -29,6 +29,7 @@ class BackgroundQueueExtension extends CompilerExtension
 			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
 			'broker' => Expect::structure([
 				'producerClass' => Expect::string()->required(),
+				'consumerClass' => Expect::string()->required(),
 				'noopMessage' => Expect::string('noop'),
 				'defaultQueue' => Expect::string()
 			]),
@@ -77,7 +78,8 @@ class BackgroundQueueExtension extends CompilerExtension
 
 		$builder->addDefinition($this->prefix('repository'))
 			->setFactory(Repository::class)
-			->addSetup('$service->setEntityManager(?)', [$builder->getDefinitionByType(EntityManagerInterface::class)]);
+			->addSetup('$service->setEntityManager(?)', [$builder->getDefinitionByType(EntityManagerInterface::class)])
+			->addSetup('$service->setConfig(?)', [$config]);
 
 		// registrace commandů
 
@@ -114,23 +116,23 @@ class BackgroundQueueExtension extends CompilerExtension
 		parent::beforeCompile();
 
 		$builder = $this->getContainerBuilder();
-		$producerClass = $this->config->broker->producerClass;
+		$broker = $this->config->broker;
 
 		// register MQ producer, if set
-		if ($producerClass) {
-			$producerDef = $builder->addDefinition($this->prefix('producer'))
-				->setType($producerClass)
+		if ($broker) {
+			$producerDef = $builder->addDefinition($this->prefix('broker.producer'))
+				->setType($broker->producerClass)
 				->setAutowired(false);
 
 			/** @noinspection PhpPossiblePolymorphicInvocationInspection */
-			$builder->getDefinition($this->prefix('service'))
+			$builder->getDefinition($this->prefix('producer'))
 				->addSetup('setProducer', [$producerDef]);
 		}
 	}
 
 	public function afterCompile(ClassType $class)
 	{
-		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('service')));
+		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('producer')));
 
 		$serviceMethod->setBody('
 $service = (function () {

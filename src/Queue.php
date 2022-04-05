@@ -2,6 +2,9 @@
 
 namespace ADT\BackgroundQueue;
 
+use Tracy\Debugger;
+use Tracy\Logger;
+
 class Queue 
 {	
 	use \Nette\SmartObject;
@@ -109,7 +112,7 @@ class Queue
 
 		// zalogovat (a smazat z RabbitMQ DB)
 		if (!$entity) {
-			\Tracy\Debugger::log("Nenalezen záznam pro ID \"$id\"", \Tracy\ILogger::ERROR);
+			Debugger::log("Nenalezen záznam pro ID \"$id\"", \Tracy\ILogger::ERROR);
 			return NULL;
 		}
 		
@@ -129,7 +132,7 @@ class Queue
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			\Tracy\Debugger::log("BackgroundQueue: Neočekávaný stav, ID " . $entity->getId(), \Tracy\ILogger::ERROR);
+			Debugger::log("BackgroundQueue: Neočekávaný stav, ID " . $entity->getId(), \Tracy\ILogger::ERROR);
 			return;
 		}
 
@@ -217,7 +220,7 @@ class Queue
 
 	private static function logException($errorMessage, $entity, $state, \Exception $e = null)
 	{
-		\Tracy\Debugger::log(new \Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . ($e ? '; ErrorMessage: ' . $e->getMessage() : ''), 0, $e));
+		Debugger::log(new \Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . ($e ? '; ErrorMessage: ' . $e->getMessage() : ''), 0, $e), Logger::EXCEPTION);
 	}
 
     /**

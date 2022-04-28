@@ -72,7 +72,7 @@ class Service {
 			if ($this->bunny) {
 				// odeslání do RabbitMQ
 				try {
-					$producer = $this->bunny->getProducer($queueName);
+					$producer = $this->bunny->getProducer($queueName ?: 'generalQueue');
 					$producer->publish(
 					    $entity->getId(),
 					    '',

@@ -2,7 +2,9 @@
 
 namespace ADT\BackgroundQueue;
 
-class Queue 
+use ADT\BackgroundQueue\Entity\QueueEntity;
+
+class Queue
 {	
 	use \Nette\SmartObject;
 
@@ -232,8 +234,9 @@ class Queue
 			->andWhere("e.state = :state")
 			->setParameter("state", Entity\QueueEntity::STATE_WAITING_FOR_MANUAL_QUEUING);
 
+		/** @var QueueEntity $entity */
 		foreach ($entities = $qb->getQuery()->getResult() as $entity) {
-			$entity->state = Entity\QueueEntity::STATE_READY;
+			$entity->setState(Entity\QueueEntity::STATE_READY);
 			$this->service->publish($entity);
 		}
 	}

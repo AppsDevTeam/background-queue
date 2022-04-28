@@ -13,8 +13,7 @@
 	"require": {
 		"nette/utils": "^3.0",
 		"nette/di": "^3.0",
-		"kdyby/doctrine": "^3.2",
-		"laravel/serializable-closure": "^1.0"
+		"kdyby/doctrine": "^3.2"
 	},
 	"autoload": {
 		"psr-4": { "ADT\\BackgroundQueue\\": "src/" }

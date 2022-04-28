@@ -3,7 +3,6 @@
 namespace ADT\BackgroundQueue\Entity;
 
 use Doctrine\ORM\Mapping as ORM;
-use Opis\Closure\SerializableClosure;
 
 /**
  * QueueEntity
@@ -59,7 +58,7 @@ class QueueEntity {
 	/**
 	 * @var array
 	 *
-	 * @ORM\Column(name="parameters", type="array", nullable=true)
+	 * @ORM\Column(name="parameters", type="array", nullable=false)
 	 */
 	protected $parameters;
 
@@ -116,14 +115,6 @@ class QueueEntity {
 	 * @ORM\Column(name="description", type="string", length=255, nullable=true)
 	 */
 	protected $description;
-
-
-	/**
-	 * @var string
-	 *
-	 * @ORM\Column(name="closure", type="text", nullable=true)
-	 */
-	protected $closure;
 
 	public function __construct() {
 		$this->created = new \DateTime;
@@ -247,22 +238,4 @@ class QueueEntity {
 	public function setErrorMessage($errorMessage) {
 		$this->errorMessage = $errorMessage;
 	}
-
-	/**
-	 * @return callable|bool
-	 */
-	public function getClosure() {
-
-		/** @var SerializableClosure $closure */
-		$closure = unserialize($this->closure);
-		return $closure ? $closure->getClosure() : FALSE;
-	}
-
-	/**
-	 * @param callable $closure
-	 */
-	public function setClosure(callable $closure) {
-		$this->closure = serialize(new SerializableClosure($closure));
-	}
-
 }

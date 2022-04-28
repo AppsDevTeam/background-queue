@@ -140,18 +140,11 @@ class Queue
 
 		$e = null;
 		try {
-
-			if ($entity->getClosure()) {
-				$callback = $entity->getClosure();
-
-			} else {
-
-				if (!isset($this->config["callbacks"][$entity->getCallbackName()])) {
-					throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
-				}
-
-				$callback = $this->config["callbacks"][$entity->getCallbackName()];
+			if (!isset($this->config["callbacks"][$entity->getCallbackName()])) {
+				throw new \Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
 			}
+
+			$callback = $this->config["callbacks"][$entity->getCallbackName()];
 
 			// změna stavu na zpracovává se
 			$this->changeEntityState($entity, Entity\QueueEntity::STATE_PROCESSING);

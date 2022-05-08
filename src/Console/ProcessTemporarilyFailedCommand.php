@@ -3,6 +3,7 @@
 namespace ADT\BackgroundQueue\Console;
 
 use ADT\BackgroundQueue\Entity\EntityInterface;
+use Exception;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
@@ -15,17 +16,17 @@ class ProcessTemporarilyFailedCommand extends Command
 	}
 
 	/**
-	 * @throws \Exception
+	 * @throws Exception
 	 */
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
-		$qb = $this->repository->createQueryBuilder()
+		$qb = $this->backgroundQueue->createQueryBuilder()
 			->andWhere('e.state = :state')
 			->setParameter('sstate', EntityInterface::STATE_TEMPORARILY_FAILED);
 
 		/** @var EntityInterface $_entity */
 		foreach ($qb->getQuery()->getResult() as $_entity) {
-			$this->repository->processEntity($_entity);
+			$this->backgroundQueue->process($_entity);
 		}
 	}
 }

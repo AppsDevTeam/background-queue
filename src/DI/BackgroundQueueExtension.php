@@ -2,21 +2,17 @@
 
 namespace ADT\BackgroundQueue\DI;
 
+use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Console\ClearFinishedCommand;
 use ADT\BackgroundQueue\Console\ProcessCommand;
 use ADT\BackgroundQueue\Console\ProcessTemporarilyFailedCommand;
-use ADT\BackgroundQueue\Console\ProcessWaitingForManualQueuingCommand;
-use ADT\BackgroundQueue\Console\ReloadConsumersCommand;
-use ADT\BackgroundQueue\Processor;
-use ADT\BackgroundQueue\Producer;
-use ADT\BackgroundQueue\Repository;
-use Doctrine\ORM\EntityManagerInterface;
 use Nette\DI\CompilerExtension;
 use Nette\DI\Container;
 use Nette\DI\Definitions\Statement;
 use Nette\DI\Extensions\InjectExtension;
 use Nette\PhpGenerator\ClassType;
 use Nette\Schema\Expect;
+use Nette\Schema\Processor;
 use Nette\Schema\Schema;
 
 /** @noinspection PhpUnused */
@@ -25,14 +21,10 @@ class BackgroundQueueExtension extends CompilerExtension
 	public function getConfigSchema(): Schema
 	{
 		return Expect::structure([
+			'entityManager' => Expect::anyOf(Expect::type(\Nette\DI\Statement::class), Expect::type(Statement::class)), // nette/di 2.4
 			'entityClass' => Expect::string()->required(),
 			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
-			'broker' => Expect::structure([
-				'producerClass' => Expect::string()->required(),
-				'consumerClass' => Expect::string()->required(),
-				'noopMessage' => Expect::string('noop'),
-				'defaultQueue' => Expect::string()
-			]),
+			'onAfterSave' => Expect::type('callable'),
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1),
 			'minExecutionTime' => Expect::int(1)->min(0),
 			'temporaryErrorCallback' => Expect::array()
@@ -42,7 +34,7 @@ class BackgroundQueueExtension extends CompilerExtension
 	public function loadConfiguration()
 	{
 		// nette/di 2.4
-		$this->config = (new \Nette\Schema\Processor)->process($this->getConfigSchema(), $this->config);
+		$this->config = (new Processor)->process($this->getConfigSchema(), $this->config);
 
 		$builder = $this->getContainerBuilder();
 		$config = json_decode(json_encode($this->config), true);
@@ -59,27 +51,9 @@ class BackgroundQueueExtension extends CompilerExtension
 
 		// registrace processoru
 
-		$builder->addDefinition($this->prefix('processor'))
-			->setFactory(Processor::class)
-			->addSetup('$service->setConfig(?)', [$config]);
-
-		// registrace producera
-
-		// Z `callbacks` nepředáváme celé servisy ale pouze klíče, protože nic víc nepotřebujeme a měli bychom zbytečnou závislost.
-		$serviceConfig = $config;
-		unset($serviceConfig['callbacks']);
-		$serviceConfig['callbackKeys'] = array_keys($config["callbacks"]);
-
-		$builder->addDefinition($this->prefix('producer'))
-			->setFactory(Producer::class)
-			->addSetup('$service->setConfig(?)', [$serviceConfig]);
-
-		// registrace repository
-
-		$builder->addDefinition($this->prefix('repository'))
-			->setFactory(Repository::class)
-			->addSetup('$service->setEntityManager(?)', [$builder->getDefinitionByType(EntityManagerInterface::class)])
-			->addSetup('$service->setConfig(?)', [$config]);
+		$builder->addDefinition($this->prefix('backgroundQueue'))
+			->setFactory(BackgroundQueue::class)
+			->setArguments(['config' => $config]);
 
 		// registrace commandů
 
@@ -97,42 +71,11 @@ class BackgroundQueueExtension extends CompilerExtension
 			->setFactory(ClearFinishedCommand::class)
 			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
-
-		if ($config['broker']) {
-			$builder->addDefinition($this->prefix('processWaitingForManualQueuingCommand'))
-				->setFactory(ProcessWaitingForManualQueuingCommand::class)
-				->addTag(InjectExtension::TAG_INJECT, false)
-				->addTag('kdyby.console.command');
-
-			$builder->addDefinition($this->prefix('reloadConsumersCommand'))
-				->setFactory(ReloadConsumersCommand::class)
-				->addTag(InjectExtension::TAG_INJECT, false)
-				->addTag('kdyby.console.command');
-		}
-	}
-
-	public function beforeCompile()
-	{
-		parent::beforeCompile();
-
-		$builder = $this->getContainerBuilder();
-		$broker = $this->config->broker;
-
-		// register MQ producer, if set
-		if ($broker) {
-			$producerDef = $builder->addDefinition($this->prefix('broker.producer'))
-				->setType($broker->producerClass)
-				->setAutowired(false);
-
-			/** @noinspection PhpPossiblePolymorphicInvocationInspection */
-			$builder->getDefinition($this->prefix('producer'))
-				->addSetup('setProducer', [$producerDef]);
-		}
 	}
 
 	public function afterCompile(ClassType $class)
 	{
-		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('producer')));
+		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('service')));
 
 		$serviceMethod->setBody('
 $service = (function () {

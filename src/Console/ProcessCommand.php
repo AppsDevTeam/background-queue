@@ -3,6 +3,7 @@
 namespace ADT\BackgroundQueue\Console;
 
 use ADT\BackgroundQueue\Entity\EntityInterface;
+use Exception;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
@@ -17,11 +18,11 @@ class ProcessCommand extends Command
 	}
 
 	/**
-	 * @throws \Exception
+	 * @throws Exception
 	 */
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
-		$qb = $this->repository->createQueryBuilder()
+		$qb = $this->backgroundQueue->createQueryBuilder()
 			->andWhere("e.state IN (:state)")
 			->setParameter("state", EntityInterface::STATE_READY);
 
@@ -33,7 +34,7 @@ class ProcessCommand extends Command
 
 		/** @var EntityInterface $_entity */
 		foreach ($qb->getQuery()->getResult() as $_entity) {
-			$this->repository->processEntity($_entity);
+			$this->backgroundQueue->process($_entity);
 		}
 	}
 }

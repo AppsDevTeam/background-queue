@@ -4,6 +4,8 @@
 namespace ADT\BackgroundQueue\Entity;
 
 
+use DateTime;
+
 interface EntityInterface
 {
 	const STATE_READY = 1; // připraveno
@@ -11,12 +13,10 @@ interface EntityInterface
 	const STATE_FINISHED = 3; // dokončeno
 	const STATE_TEMPORARILY_FAILED = 4; // opakovatelná chyba (např. nedostupné API)
 	const STATE_PERMANENTLY_FAILED = 5; // kritická chyba (např. chyba v implementaci)
-	const STATE_WAITING_FOR_MANUAL_QUEUING = 6; // task s opravenou permanentní chybou, který chceme spustit znovu
-
+	
 	const READY_TO_PROCESS_STATES = [
 		self::STATE_READY,
 		self::STATE_TEMPORARILY_FAILED,
-		self::STATE_WAITING_FOR_MANUAL_QUEUING
 	];
 
 	/** @noinspection PhpUnused */
@@ -44,7 +44,7 @@ interface EntityInterface
 	/** @noinspection PhpUnused */
 	public function getLastAttempt();
 	/** @noinspection PhpUnused */
-	public function setLastAttempt(\DateTime $lastAttempt): self;
+	public function setLastAttempt(DateTime $lastAttempt): self;
 	/** @noinspection PhpUnused */
 	public function getNumberOfAttempts();
 	/** @noinspection PhpUnused */

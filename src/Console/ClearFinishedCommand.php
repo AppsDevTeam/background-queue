@@ -3,6 +3,7 @@
 namespace ADT\BackgroundQueue\Console;
 
 use ADT\BackgroundQueue\Entity\EntityInterface;
+use DateTime;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
@@ -23,17 +24,16 @@ class ClearFinishedCommand extends Command
 
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
-		$qb = $this->repository->createQueryBuilder()
+		$qb = $this->backgroundQueue->createQueryBuilder()
 			->delete()
 			->andWhere('e.state = :state')
 			->setParameter('state', EntityInterface::STATE_FINISHED);
 
 		if ($input->getArgument("days")) {
 			$qb->andWhere('e.created <= :ago')
-				->setParameter('ago', (new \DateTime('midnight'))->modify('-' . $input->getArgument("days") . ' days'));
+				->setParameter('ago', (new DateTime('midnight'))->modify('-' . $input->getArgument("days") . ' days'));
 		}
 
-		$qb->getQuery()
-			->execute();
+		$qb->getQuery()->execute();
 	}
 }

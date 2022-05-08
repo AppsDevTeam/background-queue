@@ -2,6 +2,8 @@
 
 namespace ADT\BackgroundQueue\Entity;
 
+use DateTime;
+
 /** @noinspection PhpUnused */
 trait EntityTrait
 {
@@ -37,14 +39,14 @@ trait EntityTrait
 	 *
 	 * @ORM\Column(name="created", type="datetime", nullable=false)
 	 */
-	private \DateTime $created;
+	private DateTime $created;
 
 	/**
 	 * Datum posledního pokusu o zpracování
 	 *
 	 * @ORM\Column(name="lastAttempt", type="datetime", nullable=true)
 	 */
-	private ?\DateTime $lastAttempt = null;
+	private ?DateTime $lastAttempt = null;
 
 	/**
 	 * Počet opakování (včetně prvního zpracování)
@@ -70,7 +72,7 @@ trait EntityTrait
 
 	final public function __construct()
 	{
-		$this->created = new \DateTime();
+		$this->created = new DateTime();
 		$this->numberOfAttempts = 0;
 	}
 
@@ -144,19 +146,19 @@ trait EntityTrait
 	}
 
 	/** @noinspection PhpUnused */
-	final public function getCreated(): \DateTime
+	final public function getCreated(): DateTime
 	{
 		return $this->created;
 	}
 
 	/** @noinspection PhpUnused */
-	final public function getLastAttempt(): ?\DateTime
+	final public function getLastAttempt(): ?DateTime
 	{
 		return $this->lastAttempt;
 	}
 
 	/** @noinspection PhpUnused */
-	final public function setLastAttempt(?\DateTime $lastAttempt): self
+	final public function setLastAttempt(?DateTime $lastAttempt): self
 	{
 		$this->lastAttempt = $lastAttempt;
 		return $this;

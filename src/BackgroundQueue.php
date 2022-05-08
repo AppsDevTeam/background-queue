@@ -3,40 +3,82 @@
 namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Entity\EntityInterface;
-use Doctrine\DBAL\Connection;
+use DateTime;
+use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\EntityRepository;
 use Doctrine\ORM\NonUniqueResultException;
 use Doctrine\ORM\QueryBuilder;
 use Exception;
-use Interop\Queue\Message;
 use Tracy\Debugger;
 use Tracy\ILogger;
 
-class Repository
+class BackgroundQueue
 {
-	use ConfigTrait;
-
+	private array $config;	
+	
 	private EntityManagerInterface $em;
 
-	private EntityRepository $repository;
+	/** @var Closure[]  */
+	private array $onShutdown = [];
 
-	private Connection $connection;
+	/** @var Closure[]  */
+	private array $onAfterSave = [];
+
+
+	public function __construct(array $config)
+	{
+		$this->config = $config;
+		$this->em = $this->config['entityManager'];
+	}
+
+	/**
+	 * Publikuje novou zprávu do fronty
+	 *
+	 * @throws Exception
+	 * @Suppress("unused")
+	 */
+	public function publish(EntityInterface $entity): void
+	{
+		if (!$entity->getCallbackName()) {
+			throw new Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
+		}
+
+		if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
+			throw new Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
+		}
+
+		$this->onShutdown[] = function () use ($entity) {
+			// uložení entity do DB
+			if (!$entity->getId()) {
+				$this->save($entity);
+			}
+			
+			$this->onAfterSave($entity);
+		};
+	}
+
+	/**
+	 * @internal
+	 * @Suppress("unused")
+	 */
+	public function onShutdown(): void
+	{
+		foreach ($this->onShutdown as $_handler) {
+			$_handler->call($this);
+		}
+	}
 
 	/**
 	 * @Suppress("unused")
 	 */
-	public function setEntityManager(EntityManagerInterface $em): self
+	public function onAfterSave(EntityInterface $entity): void
 	{
-		$this->em = $em;
-		return $this;
+		foreach ($this->onAfterSave as $_handler) {
+			$_handler->call($this, $entity);
+		}
 	}
-
-	private function getRepository(): EntityRepository
-	{
-		return $this->em->getRepository($this->config['entityClass']);
-	}
-
+	
 	public function createQueryBuilder(): QueryBuilder
 	{
 		return $this->getRepository()->createQueryBuilder('e');
@@ -47,8 +89,21 @@ class Repository
 	 *
 	 * @throws Exception
 	 */
-	public function processEntity(EntityInterface $entity): void
+	public function process($entity): void
 	{
+		if (is_int($entity)) {
+			$id = $entity;
+
+			/** @var EntityInterface $entity */
+			$entity = $this->getRepository()->find($id);
+
+			// zalogovat (a smazat z RabbitMQ DB)
+			if (!$entity) {
+				Debugger::log("Nenalezen záznam pro ID \"$id\"", ILogger::EXCEPTION);
+				return;
+			}
+		}
+		
 		// Zpráva není ke zpracování v případě, že nemá stav READY nebo ERROR_REPEATABLE
 		// Pokud při zpracování zprávy nastane chyba, zpráva zůstane ve stavu PROCESSING a consumer se ukončí.
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
@@ -58,7 +113,7 @@ class Repository
 			return;
 		}
 
-		$entity->setLastAttempt(new \DateTime());
+		$entity->setLastAttempt(new DateTime());
 		$entity->increaseNumberOfAttempts();
 
 		$e = null;
@@ -84,7 +139,6 @@ class Repository
 		try {
 			$entity->setState($state)
 				->setErrorMessage($e ? $e->getMessage() : null);
-
 			$this->save($entity);
 
 			if ($state === EntityInterface::STATE_PERMANENTLY_FAILED) {
@@ -109,54 +163,11 @@ class Repository
 
 	public function save($entity)
 	{
-		// TODO
-		if ($entity->getId()) {
-			$this->createQueryBuilder()
-				->update()
-				->set("e.expiresAt", '?1')
-				->set("e.data", '?2')
-				->where("e.sessionId = :sessionId")
-				->setParameter(1, new \DateTime("+$expiration minutes"))
-				->setParameter(2, $data)
-				->setParameter("sessionId", $id)
-				->getQuery()
-				->execute();
-		} else {
-			$metadata = $this->em->getClassMetadata($this->config['entityClass']);
-
-			$values = [];
-			$parameters = [];
-			foreach ($metadata->getFieldNames() as $_fieldName) {
-				$values[$metadata->getColumnName($_fieldName)] = '?';
-				$val = $entity->{'get'.ucfirst($_fieldName)}();
-				$parameters[] = is_array($val) ? serialize($val) : ($val instanceof \DateTimeInterface ? $val->format('Y-m-d H:i:s') : $val);
-			}
-
-			$response = $this->em->getConnection()->createQueryBuilder()
-				->insert('background_message', 'e')
-				->values($values)
-				->setParameters($parameters)
-				->execute();
-
-			print_r ($this->em->getConnection()->lastInsertId());
-			die();
-		}
-	}
-
-	public function getEntity(Message $message): ?EntityInterface
-	{
-		$id = (int) $message->getBody();
-
-		/** @var EntityInterface $entity */
-		$entity = $this->getRepository()->find($id);
-
-		// zalogovat (a smazat z RabbitMQ DB)
-		if (!$entity) {
-			Debugger::log("Nenalezen záznam pro ID \"$id\"", ILogger::EXCEPTION);
-			return null;
+		if (!$entity->getId()) {
+			$this->em->persist($entity);
 		}
 
-		return $entity;
+		$this->em->flush();
 	}
 
 	/**
@@ -222,11 +233,17 @@ class Repository
 
 		if ($lastAttempt) {
 			$qb->andWhere('(e.lastAttempt IS NULL OR e.lastAttempt > :lastAttempt)')
-				->setParameter('lastAttempt', new \DateTimeImmutable('-' . $lastAttempt));
+				->setParameter('lastAttempt', new DateTimeImmutable('-' . $lastAttempt));
 		}
 
 		return $qb;
 	}
+
+	private function getRepository(): EntityRepository
+	{
+		return $this->em->getRepository($this->config['entityClass']);
+	}
+
 
 	private static function logException(string $errorMessage, EntityInterface $entity, string $state, ?Exception $e = null): void
 	{

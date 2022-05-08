@@ -8,7 +8,6 @@ use ADT\BackgroundQueue\Console\ProcessCommand;
 use ADT\BackgroundQueue\Console\ProcessTemporarilyFailedCommand;
 use Nette\DI\CompilerExtension;
 use Nette\DI\Container;
-use Nette\DI\Definitions\Statement;
 use Nette\DI\Extensions\InjectExtension;
 use Nette\PhpGenerator\ClassType;
 use Nette\Schema\Expect;
@@ -21,13 +20,13 @@ class BackgroundQueueExtension extends CompilerExtension
 	public function getConfigSchema(): Schema
 	{
 		return Expect::structure([
-			'entityManager' => Expect::anyOf(Expect::type(\Nette\DI\Statement::class), Expect::type(Statement::class)), // nette/di 2.4
 			'entityClass' => Expect::string()->required(),
-			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
-			'onAfterSave' => Expect::type('callable'),
+			'doctrineConnection' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
+			'doctrineOrmConfiguration' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
+			'jobs' => Expect::arrayOf('callable', 'string')->required(),
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1),
-			'minExecutionTime' => Expect::int(1)->min(0),
-			'temporaryErrorCallback' => Expect::array()
+			'onPublish' => Expect::type('callable'),
+			'onTemporaryError' => Expect::type('callable')
 		]);
 	}
 
@@ -38,24 +37,31 @@ class BackgroundQueueExtension extends CompilerExtension
 
 		$builder = $this->getContainerBuilder();
 		$config = json_decode(json_encode($this->config), true);
-		
-		foreach ($config['callbacks'] as $callbackSlug => $callback) {
-			if (class_exists(Statement::class)) {
-				$config['callbacks'][$callbackSlug] = new Statement('function(){ return call_user_func_array(?, func_get_args()); }', [$callback]);
-			} else {
-				// nette/di 2.4
-				$config['callbacks'][$callbackSlug] = new \Nette\DI\Statement('function(){ return call_user_func_array(?, func_get_args()); }', [ $callback ]);
 
-			}
+		if (class_exists(\Nette\DI\Definitions\Statement::class, false)) {
+			$statementClass = \Nette\DI\Definitions\Statement::class;
+		} else {
+			// nette/di 2.4
+			$statementClass = \Nette\DI\Statement::class;
+		}
+		$statementEntity = "function(){ return call_user_func_array(?, func_get_args()); }";
+		foreach ($config['jobs'] as $callbackSlug => $callback) {
+			$config['jobs'][$callbackSlug] = new $statementClass($statementEntity, [$callback]);
+		}
+		if ($config['onPublish']) {
+			$config['onPublish'] = new $statementClass($statementEntity, [$config['onPublish']]);
+		}
+		if ($config['onTemporaryError']) {
+			$config['onTemporaryError'] = new $statementClass($statementEntity, [$config['onTemporaryError']]);
 		}
 
-		// registrace processoru
+		// service registration
 
 		$builder->addDefinition($this->prefix('backgroundQueue'))
 			->setFactory(BackgroundQueue::class)
 			->setArguments(['config' => $config]);
 
-		// registrace commandů
+		// command registration
 
 		$builder->addDefinition($this->prefix('processCommand'))
 			->setFactory(ProcessCommand::class)
@@ -75,7 +81,7 @@ class BackgroundQueueExtension extends CompilerExtension
 
 	public function afterCompile(ClassType $class)
 	{
-		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('service')));
+		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('backgroundQueue')));
 
 		$serviceMethod->setBody('
 $service = (function () {

@@ -5,9 +5,13 @@ namespace ADT\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\EntityInterface;
 use DateTime;
 use DateTimeImmutable;
+use Doctrine\DBAL\Connection;
+use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\EntityRepository;
 use Doctrine\ORM\NonUniqueResultException;
+use Doctrine\ORM\OptimisticLockException;
+use Doctrine\ORM\ORMException;
 use Doctrine\ORM\QueryBuilder;
 use Exception;
 use Tracy\Debugger;
@@ -22,14 +26,16 @@ class BackgroundQueue
 	/** @var Closure[]  */
 	private array $onShutdown = [];
 
-	/** @var Closure[]  */
-	private array $onAfterSave = [];
-
-
+	/**
+	 * @throws ORMException
+	 */
 	public function __construct(array $config)
 	{
 		$this->config = $config;
-		$this->em = $this->config['entityManager'];
+
+		/** @var Connection $connection */
+		$connection = $config['doctrineConnection'];
+		$this->em = EntityManager::create($connection, $config['doctrineOrmConfiguration'], $connection->getEventManager());
 	}
 
 	/**
@@ -41,11 +47,11 @@ class BackgroundQueue
 	public function publish(EntityInterface $entity): void
 	{
 		if (!$entity->getCallbackName()) {
-			throw new Exception("Entita nemá nastavený povinný parametr \"callbackName\".");
+			throw new Exception('Entita nemá nastavený povinný parametr "callbackName".');
 		}
 
-		if (!in_array($entity->getCallbackName(), $this->config['callbackKeys'])) {
-			throw new Exception("Neexistuje callback \"" . $entity->getCallbackName() . "\".");
+		if (!isset($this->config['jobs'][$entity->getCallbackName()])) {
+			throw new Exception('Neexistuje callback "' . $entity->getCallbackName() . '".');
 		}
 
 		$this->onShutdown[] = function () use ($entity) {
@@ -53,40 +59,19 @@ class BackgroundQueue
 			if (!$entity->getId()) {
 				$this->save($entity);
 			}
-			
-			$this->onAfterSave($entity);
+
+			if ($this->config['onAfterSave']) {
+				$this->config['onAfterSave']($entity);
+				$this->save($entity);
+			}
 		};
-	}
-
-	/**
-	 * @internal
-	 * @Suppress("unused")
-	 */
-	public function onShutdown(): void
-	{
-		foreach ($this->onShutdown as $_handler) {
-			$_handler->call($this);
-		}
-	}
-
-	/**
-	 * @Suppress("unused")
-	 */
-	public function onAfterSave(EntityInterface $entity): void
-	{
-		foreach ($this->onAfterSave as $_handler) {
-			$_handler->call($this, $entity);
-		}
-	}
-	
-	public function createQueryBuilder(): QueryBuilder
-	{
-		return $this->getRepository()->createQueryBuilder('e');
 	}
 
 	/**
 	 * Metoda, která zpracuje jednu entitu
 	 *
+	 * @param int|EntityInterface $entity
+	 * @return void
 	 * @throws Exception
 	 */
 	public function process($entity): void
@@ -161,15 +146,6 @@ class BackgroundQueue
 		}
 	}
 
-	public function save($entity)
-	{
-		if (!$entity->getId()) {
-			$this->em->persist($entity);
-		}
-
-		$this->em->flush();
-	}
-
 	/**
 	 * Vrací nejstarší nedokončený záznam dle $callbackName, jenž není $entity a poslední pokus o jeho provedení není
 	 * starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
@@ -239,14 +215,42 @@ class BackgroundQueue
 		return $qb;
 	}
 
+	public function createQueryBuilder(): QueryBuilder
+	{
+		return $this->getRepository()->createQueryBuilder('e');
+	}
+
+	/**
+	 * @internal
+	 * @Suppress("unused")
+	 */
+	public function onShutdown(): void
+	{
+		foreach ($this->onShutdown as $_handler) {
+			$_handler->call($this);
+		}
+	}
+
 	private function getRepository(): EntityRepository
 	{
 		return $this->em->getRepository($this->config['entityClass']);
 	}
 
+	/**
+	 * @throws OptimisticLockException
+	 * @throws ORMException
+	 */
+	private function save(EntityInterface $entity): void
+	{
+		if (!$entity->getId()) {
+			$this->em->persist($entity);
+		}
+
+		$this->em->flush();
+	}
 
 	private static function logException(string $errorMessage, EntityInterface $entity, string $state, ?Exception $e = null): void
 	{
-		Debugger::log(new Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . ($e ? '; ErrorMessage: ' . $e->getMessage() : ''), 0, $e), ILogger::EXCEPTION);
+		Debugger::log(new Exception('BackgroundQueue: ' . $errorMessage  . '; ID: ' . $entity->getId() . '; State: ' . $state . ($e ? '; ErrorMessage: ' . $e->getMessage() : ''), 0, $e), ILogger::CRITICAL);
 	}
 }

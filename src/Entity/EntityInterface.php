@@ -3,7 +3,6 @@
 namespace ADT\BackgroundQueue\Entity;
 
 use DateTimeImmutable;
-use DateTimeInterface;
 
 interface EntityInterface
 {
@@ -31,7 +30,7 @@ interface EntityInterface
 	/** @noinspection PhpUnused */
 	public function setSerialGroup(?string $description): self;
 	/** @noinspection PhpUnused */
-	public function getParameters(): array;
+	public function getParameters(): ?array;
 	/** @noinspection PhpUnused */
 	public function setParameters(?array $parameters): self;
 	/** @noinspection PhpUnused */
@@ -41,9 +40,9 @@ interface EntityInterface
 	/** @noinspection PhpUnused */
 	public function getCreatedAt(): DateTimeImmutable;
 	/** @noinspection PhpUnused */
-	public function getLastAttempt();
+	public function getLastAttemptAt();
 	/** @noinspection PhpUnused */
-	public function setLastAttempt(DateTimeInterface $lastAttempt): self;
+	public function setLastAttemptAt(DateTimeImmutable $lastAttempt): self;
 	/** @noinspection PhpUnused */
 	public function getNumberOfAttempts(): int;
 	/** @noinspection PhpUnused */

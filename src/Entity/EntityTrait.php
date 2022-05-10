@@ -19,7 +19,7 @@ trait EntityTrait
 	/**
 	 * Název callbacku, index z nastavení "callbacks" z neonu
 	 *
-	 * @ORM\Column( type="string", length=255, nullable=true)
+	 * @ORM\Column(type="string", length=255, nullable=false)
 	 */
 	private string $callbackName;
 
@@ -153,13 +153,13 @@ trait EntityTrait
 	}
 
 	/** @noinspection PhpUnused */
-	final public function getLastAttemptAt(): ?DateTimeInterface
+	final public function getLastAttemptAt(): ?DateTimeImmutable
 	{
 		return $this->lastAttemptAt;
 	}
 
 	/** @noinspection PhpUnused */
-	final public function setLastAttempt(DateTimeInterface $lastAttemptAt): self
+	final public function setLastAttemptAt(DateTimeImmutable $lastAttemptAt): self
 	{
 		$this->lastAttemptAt = $lastAttemptAt;
 		return $this;

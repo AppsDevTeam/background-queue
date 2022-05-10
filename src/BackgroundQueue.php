@@ -3,7 +3,7 @@
 namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Entity\EntityInterface;
-use DateTime;
+use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
@@ -115,7 +115,7 @@ class BackgroundQueue
 		// změna stavu na zpracovává se
 		try {
 			$entity->setState(EntityInterface::STATE_PROCESSING);
-			$entity->setLastAttempt(new DateTime());
+			$entity->setLastAttemptAt(new DateTimeImmutable());
 			$entity->increaseNumberOfAttempts();
 			$this->save($entity);
 		} catch (Exception $e) {

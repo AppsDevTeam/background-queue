@@ -23,7 +23,7 @@ class BackgroundQueueExtension extends CompilerExtension
 			'entityClass' => Expect::string()->required(),
 			'doctrineConnection' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
 			'doctrineOrmConfiguration' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
-			'jobs' => Expect::arrayOf('callable', 'string')->required(),
+			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1),
 			'onPublish' => Expect::type('callable'),
 			'onTemporaryError' => Expect::type('callable')
@@ -45,8 +45,8 @@ class BackgroundQueueExtension extends CompilerExtension
 			$statementClass = \Nette\DI\Statement::class;
 		}
 		$statementEntity = "function(){ return call_user_func_array(?, func_get_args()); }";
-		foreach ($config['jobs'] as $callbackSlug => $callback) {
-			$config['jobs'][$callbackSlug] = new $statementClass($statementEntity, [$callback]);
+		foreach ($config['callbacks'] as $callbackSlug => $callback) {
+			$config['callbacks'][$callbackSlug] = new $statementClass($statementEntity, [$callback]);
 		}
 		if ($config['onPublish']) {
 			$config['onPublish'] = new $statementClass($statementEntity, [$config['onPublish']]);

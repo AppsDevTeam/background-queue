@@ -2,7 +2,8 @@
 
 namespace ADT\BackgroundQueue\Entity;
 
-use DateTime;
+use DateTimeImmutable;
+use DateTimeInterface;
 
 /** @noinspection PhpUnused */
 trait EntityTrait
@@ -37,16 +38,16 @@ trait EntityTrait
 	/**
 	 * Datum vytvoření
 	 *
-	 * @ORM\Column(name="created", type="datetime", nullable=false)
+	 * @ORM\Column(name="created", type="datetime_immutable", nullable=false)
 	 */
-	private DateTime $created;
+	private DateTimeInterface $createdAt;
 
 	/**
 	 * Datum posledního pokusu o zpracování
 	 *
-	 * @ORM\Column(name="lastAttempt", type="datetime", nullable=true)
+	 * @ORM\Column(name="lastAttempt", type="datetime_immutable", nullable=true)
 	 */
-	private ?DateTime $lastAttempt = null;
+	private ?DateTimeInterface $lastAttemptAt = null;
 
 	/**
 	 * Počet opakování (včetně prvního zpracování)
@@ -72,7 +73,7 @@ trait EntityTrait
 
 	final public function __construct()
 	{
-		$this->created = new DateTime();
+		$this->createdAt = new DateTimeImmutable();
 		$this->numberOfAttempts = 0;
 	}
 
@@ -146,21 +147,21 @@ trait EntityTrait
 	}
 
 	/** @noinspection PhpUnused */
-	final public function getCreated(): DateTime
+	final public function getCreatedAt(): DateTimeImmutable
 	{
-		return $this->created;
+		return $this->createdAt;
 	}
 
 	/** @noinspection PhpUnused */
-	final public function getLastAttempt(): ?DateTime
+	final public function getLastAttemptAt(): ?DateTimeInterface
 	{
-		return $this->lastAttempt;
+		return $this->lastAttemptAt;
 	}
 
 	/** @noinspection PhpUnused */
-	final public function setLastAttempt(?DateTime $lastAttempt): self
+	final public function setLastAttempt(DateTimeInterface $lastAttemptAt): self
 	{
-		$this->lastAttempt = $lastAttempt;
+		$this->lastAttemptAt = $lastAttemptAt;
 		return $this;
 	}
 

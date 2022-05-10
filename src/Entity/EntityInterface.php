@@ -5,6 +5,8 @@ namespace ADT\BackgroundQueue\Entity;
 
 
 use DateTime;
+use DateTimeImmutable;
+use DateTimeInterface;
 
 interface EntityInterface
 {
@@ -24,33 +26,33 @@ interface EntityInterface
 	/** @noinspection PhpUnused */
 	public function isReadyForProcess(): bool;
 	/** @noinspection PhpUnused */
-	public function getCallbackName();
+	public function getCallbackName(): string;
 	/** @noinspection PhpUnused */
 	public function setCallbackName(string $callbackName): self;
 	/** @noinspection PhpUnused */
-	public function getDescription();
+	public function getDescription(): ?string;
 	/** @noinspection PhpUnused */
 	public function setDescription(?string $description): self;
 	/** @noinspection PhpUnused */
-	public function getParameters();
+	public function getParameters(): array;
 	/** @noinspection PhpUnused */
 	public function setParameters(?array $parameters): self;
 	/** @noinspection PhpUnused */
-	public function getState();
+	public function getState(): int;
 	/** @noinspection PhpUnused */
 	public function setState(int $state): self;
 	/** @noinspection PhpUnused */
-	public function getCreated();
+	public function getCreatedAt(): DateTimeImmutable;
 	/** @noinspection PhpUnused */
 	public function getLastAttempt();
 	/** @noinspection PhpUnused */
-	public function setLastAttempt(DateTime $lastAttempt): self;
+	public function setLastAttempt(DateTimeInterface $lastAttempt): self;
 	/** @noinspection PhpUnused */
-	public function getNumberOfAttempts();
+	public function getNumberOfAttempts(): int;
 	/** @noinspection PhpUnused */
 	public function increaseNumberOfAttempts(): self;
 	/** @noinspection PhpUnused */
-	public function getErrorMessage();
+	public function getErrorMessage(): ?string;
 	/** @noinspection PhpUnused */
 	public function setErrorMessage(?string $errorMessage): self;
 }

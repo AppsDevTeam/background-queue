@@ -19,56 +19,56 @@ trait EntityTrait
 	/**
 	 * Název callbacku, index z nastavení "callbacks" z neonu
 	 *
-	 * @ORM\Column(name="callbackName", type="string", length=255, nullable=true)
+	 * @ORM\Column( type="string", length=255, nullable=true)
 	 */
 	private string $callbackName;
 
 	/**
-	 * @ORM\Column(name="parameters", type="array", nullable=true)
+	 * @ORM\Column(type="array", nullable=true)
 	 */
 	private ?array $parameters = null;
 
 	/**
 	 * Stav - přijato, zpracovává se, dokončeno
 	 *
-	 * @ORM\Column(name="state", type="integer", length=1, nullable=false)
+	 * @ORM\Column(type="integer", length=1, nullable=false)
 	 */
 	private int $state = EntityInterface::STATE_READY;
 
 	/**
 	 * Datum vytvoření
 	 *
-	 * @ORM\Column(name="created", type="datetime_immutable", nullable=false)
+	 * @ORM\Column(type="datetime_immutable", nullable=false)
 	 */
 	private DateTimeInterface $createdAt;
 
 	/**
 	 * Datum posledního pokusu o zpracování
 	 *
-	 * @ORM\Column(name="lastAttempt", type="datetime_immutable", nullable=true)
+	 * @ORM\Column(type="datetime_immutable", nullable=true)
 	 */
 	private ?DateTimeInterface $lastAttemptAt = null;
 
 	/**
 	 * Počet opakování (včetně prvního zpracování)
 	 *
-	 * @ORM\Column(name="numberOfAttempts", type="integer", nullable=false, options={"default":0})
+	 * @ORM\Column(type="integer", nullable=false, options={"default":0})
 	 */
 	private int $numberOfAttempts = 0;
 
 	/**
 	 * Chybová zpráva při stavu STATE_ERROR_FATAL
 	 *
-	 * @ORM\Column(name="errorMessage", type="text", nullable=true)
+	 * @ORM\Column(type="text", nullable=true)
 	 */
 	private ?string $errorMessage = null;
 
 	/**
 	 * Optional description
 	 *
-	 * @ORM\Column(name="description", type="string", nullable=true)
+	 * @ORM\Column(type="string", nullable=true)
 	 */
-	private ?string $description = null;
+	private ?string $serialGroup = null;
 
 
 	final public function __construct()
@@ -108,15 +108,15 @@ trait EntityTrait
 	}
 
 	/** @noinspection PhpUnused */
-	final public function getDescription(): ?string
+	final public function getSerialGroup(): ?string
 	{
-		return $this->description;
+		return $this->serialGroup;
 	}
 
 	/** @noinspection PhpUnused */
-	final public function setDescription(?string $description): self
+	final public function setSerialGroup(?string $serialGroup): self
 	{
-		$this->description = $description;
+		$this->serialGroup = $serialGroup;
 		return $this;
 	}
 

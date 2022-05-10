@@ -1,10 +1,7 @@
 <?php
 
-
 namespace ADT\BackgroundQueue\Entity;
 
-
-use DateTime;
 use DateTimeImmutable;
 use DateTimeInterface;
 
@@ -30,9 +27,9 @@ interface EntityInterface
 	/** @noinspection PhpUnused */
 	public function setCallbackName(string $callbackName): self;
 	/** @noinspection PhpUnused */
-	public function getDescription(): ?string;
+	public function getSerialGroup(): ?string;
 	/** @noinspection PhpUnused */
-	public function setDescription(?string $description): self;
+	public function setSerialGroup(?string $description): self;
 	/** @noinspection PhpUnused */
 	public function getParameters(): array;
 	/** @noinspection PhpUnused */

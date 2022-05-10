@@ -26,6 +26,7 @@ class BackgroundQueueExtension extends CompilerExtension
 			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1),
 			'onPublish' => Expect::type('callable'),
+			'onUnfinishedPreviousEntity' => Expect::type('callable'),
 			'onTemporaryError' => Expect::type('callable')
 		]);
 	}
@@ -50,6 +51,9 @@ class BackgroundQueueExtension extends CompilerExtension
 		}
 		if ($config['onPublish']) {
 			$config['onPublish'] = new $statementClass($statementEntity, [$config['onPublish']]);
+		}
+		if ($config['onUnfinishedPreviousEntity']) {
+			$config['onUnfinishedPreviousEntity'] = new $statementClass($statementEntity, [$config['onUnfinishedPreviousEntity']]);
 		}
 		if ($config['onTemporaryError']) {
 			$config['onTemporaryError'] = new $statementClass($statementEntity, [$config['onTemporaryError']]);

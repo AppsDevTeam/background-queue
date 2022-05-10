@@ -4,7 +4,6 @@ namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Entity\EntityInterface;
 use DateTime;
-use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
@@ -91,6 +90,21 @@ class BackgroundQueue
 			return;
 		}
 
+		if ($previousEntity = $this->getUnfinishedPreviousEntity($entity)) {
+			try {
+				$entity->setState(EntityInterface::STATE_TEMPORARILY_FAILED);
+				$entity->setErrorMessage('Waiting for entity ID ' . $previousEntity->getId());
+				$this->save($entity);
+
+				if ($this->config['onUnfinishedPreviousEntity']) {
+					$this->config['onUnfinishedPreviousEntity']($entity);
+				}
+			} catch (Exception $e) {
+				static::logException('Unexpected error occurred.', $entity, $e);
+				return;
+			}
+		}
+
 		if (!isset($this->config['callbacks'][$entity->getCallbackName()])) {
 			static::logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity);
 			return;
@@ -105,7 +119,7 @@ class BackgroundQueue
 			$entity->increaseNumberOfAttempts();
 			$this->save($entity);
 		} catch (Exception $e) {
-			static::logException($e->getMessage(), $entity, $e);
+			static::logException('Unexpected error occurred', $entity, $e);
 			return;
 		}
 
@@ -144,75 +158,32 @@ class BackgroundQueue
 	}
 
 	/**
-	 * Vrací nejstarší nedokončený záznam dle $callbackName, jenž není $entity a poslední pokus o jeho provedení není
-	 * starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
-	 *
-	 * @param string $callbackName pokud obsahuje znak '%', použije se při vyhledávání operátor LIKE, jinak =
-	 * @param ?EntityInterface $entity záznam, který bude z vyhledávání vyloučen
-	 * @param string|null $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
-	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
-	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
-	 * @return EntityInterface|null
 	 * @throws NonUniqueResultException
-	 * @throws Exception
-	 * @Suppress("unused")
 	 */
-	public function getUnfinishedEntityByCallbackName(string $callbackName, ?EntityInterface $entity = null, ?string $lastAttempt = null): ?EntityInterface
+	public function getUnfinishedPreviousEntity(EntityInterface $entity): ?EntityInterface
 	{
-		return $this->getUnfinishedEntityQueryBuilder($entity, $lastAttempt)
-			->andWhere('e.callbackName ' . (strpos($callbackName, '%') !== FALSE ? 'LIKE' : '=') . ' :callbackName')
-			->setParameter('callbackName', $callbackName)
-			->getQuery()
-			->setMaxResults(1)
-			->getOneOrNullResult();
-	}
+		if (!$entity->getSerialGroup()) {
+			return null;
+		}
 
-	/**
-	 * Vrací nejstarší nedokončený záznam dle $description, jenž není $entity a poslední pokus o jeho
-	 * provedení není starší než $lastAttempt, nebo ještě žádný nebyl (tj. je považován stále za aktivní).
-	 *
-	 * @param string $description
-	 * @param ?EntityInterface $entity záznam, který bude z vyhledávání vyloučen
-	 * @param string|null $lastAttempt maximální doba zpět, ve které považujeme záznamy ještě za aktivní, tj. starší záznamy
-	 *                            budou z vyhledávání vyloučeny jako neplatné; řetězec, který lze použít jako parametr
-	 *                            $format ve funkci {@see date()}, např. '2 hour'; '0' znamená bez omezení doby
-	 * @return EntityInterface|null
-	 * @throws NonUniqueResultException
-	 * @throws Exception
-	 * @Suppress("unused")
-	 */
-	public function getUnfinishedEntityByDescription(string $description, ?EntityInterface $entity = null, ?string $lastAttempt = null): ?EntityInterface
-	{
-		return $this->getUnfinishedEntityQueryBuilder($entity, $lastAttempt)
-			->andWhere('e.description = :description')
-			->setParameter('description', $description)
-			->getQuery()
-			->setMaxResults(1)
-			->getOneOrNullResult();
-	}
+		$qb = $this->createQueryBuilder();
 
-	/**
-	 * @throws Exception
-	 */
-	private function getUnfinishedEntityQueryBuilder(?EntityInterface $entity = null, ?string $lastAttempt = null): QueryBuilder
-	{
-		$qb = $this->createQueryBuilder()
-			->andWhere('e.state != :state')
+		$qb->andWhere('e.state != :state')
 			->setParameter('state', EntityInterface::STATE_FINISHED);
 
-		if ($entity) {
+		$qb->andWhere('e.serialGroup = :serialGroup')
+			->setParameter('serialGroup', $entity->getSerialGroup());
+
+		if ($entity->getId()) {
 			$qb->andWhere('e.id < :id')
 				->setParameter('id', $entity->getId());
 		}
 
-		if ($lastAttempt) {
-			$qb->andWhere('(e.lastAttempt IS NULL OR e.lastAttempt > :lastAttempt)')
-				->setParameter('lastAttempt', new DateTimeImmutable('-' . $lastAttempt));
-		}
-		
 		$qb->orderBy('e.created');
 
-		return $qb;
+		return $qb->getQuery()
+			->setMaxResults(1)
+			->getOneOrNullResult();
 	}
 
 	public function createQueryBuilder(): QueryBuilder

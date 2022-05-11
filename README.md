@@ -55,14 +55,16 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
             'subject' => 'Background queue test'
             'text' => 'Anything you want.'
         ];
-        $queue = 'cz';
 
-        $this->backgroundQueue->publish($callbackName, $parameters, $queue);
+        $this->backgroundQueue->publish($callbackName, $parameters);
     }
 }
+
 ```
 
 Záznam se uloží ve stavu `STATE_READY`.
+
+Metoda publish přijmá ještě nepovinný 3. parametr `serialGroup`, který zaručuje, že všechny joby v této skupině budou provedeny sériově.
 
 ### 2.2 Zprácování záznamu
 

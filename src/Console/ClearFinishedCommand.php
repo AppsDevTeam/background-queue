@@ -10,6 +10,8 @@ use Symfony\Component\Console\Input\InputArgument;
 
 class ClearFinishedCommand extends Command
 {
+	protected static $defaultName = 'background-queue:clear-finished';
+
 	protected function configure()
 	{
 		$this->setName('background-queue:clear-finished');

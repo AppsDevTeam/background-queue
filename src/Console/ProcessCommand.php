@@ -10,6 +10,8 @@ use Symfony\Component\Console\Input\InputArgument;
 
 class ProcessCommand extends Command
 {
+	protected static $defaultName = 'background-queue:process';
+
 	protected function configure()
 	{
 		$this->setName('background-queue:process');

@@ -9,6 +9,8 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class ProcessTemporarilyFailedCommand extends Command
 {
+	protected static $defaultName = 'background-queue:process-temporarily-failed';
+
 	protected function configure()
 	{
 		$this->setName('background-queue:process-temporarily-failed');

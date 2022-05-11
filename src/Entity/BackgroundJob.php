@@ -3,11 +3,24 @@
 namespace ADT\BackgroundQueue\Entity;
 
 use DateTimeImmutable;
-use DateTimeInterface;
+use Doctrine\ORM\Mapping as ORM;
 
-/** @noinspection PhpUnused */
-trait EntityTrait
+/**
+ * @ORM\Entity
+ */
+class BackgroundJob
 {
+	const STATE_READY = 1; // připraveno
+	const STATE_PROCESSING = 2; // zpracovává se
+	const STATE_FINISHED = 3; // dokončeno
+	const STATE_TEMPORARILY_FAILED = 4; // opakovatelná chyba (např. nedostupné API)
+	const STATE_PERMANENTLY_FAILED = 5; // kritická chyba (např. chyba v implementaci)
+
+	const READY_TO_PROCESS_STATES = [
+		self::STATE_READY,
+		self::STATE_TEMPORARILY_FAILED,
+	];
+
 	/**
 	 * @ORM\Id
 	 * @ORM\Column(type="integer")
@@ -16,9 +29,13 @@ trait EntityTrait
 	 */
 	private ?int $id = null;
 
+
 	/**
-	 * Název callbacku, index z nastavení "callbacks" z neonu
-	 *
+	 * @ORM\Column(type="string", nullable=false)
+	 */
+	private string $queue;
+
+	/**
 	 * @ORM\Column(type="string", length=255, nullable=false)
 	 */
 	private string $callbackName;
@@ -29,43 +46,31 @@ trait EntityTrait
 	private ?array $parameters = null;
 
 	/**
-	 * Stav - přijato, zpracovává se, dokončeno
-	 *
 	 * @ORM\Column(type="integer", length=1, nullable=false)
 	 */
-	private int $state = EntityInterface::STATE_READY;
+	private int $state = self::STATE_READY;
 
 	/**
-	 * Datum vytvoření
-	 *
 	 * @ORM\Column(type="datetime_immutable", nullable=false)
 	 */
-	private DateTimeInterface $createdAt;
+	private DateTimeImmutable $createdAt;
 
 	/**
-	 * Datum posledního pokusu o zpracování
-	 *
 	 * @ORM\Column(type="datetime_immutable", nullable=true)
 	 */
-	private ?DateTimeInterface $lastAttemptAt = null;
+	private ?DateTimeImmutable $lastAttemptAt = null;
 
 	/**
-	 * Počet opakování (včetně prvního zpracování)
-	 *
 	 * @ORM\Column(type="integer", nullable=false, options={"default":0})
 	 */
 	private int $numberOfAttempts = 0;
 
 	/**
-	 * Chybová zpráva při stavu STATE_ERROR_FATAL
-	 *
 	 * @ORM\Column(type="text", nullable=true)
 	 */
 	private ?string $errorMessage = null;
 
 	/**
-	 * Optional description
-	 *
 	 * @ORM\Column(type="string", nullable=true)
 	 */
 	private ?string $serialGroup = null;
@@ -74,7 +79,7 @@ trait EntityTrait
 	final public function __construct()
 	{
 		$this->createdAt = new DateTimeImmutable();
-		$this->numberOfAttempts = 0;
+
 	}
 
 	final public function __clone()
@@ -89,9 +94,16 @@ trait EntityTrait
 	}
 
 	/** @noinspection PhpUnused */
-	final public function isReadyForProcess(): bool
+	public function getQueue(): string
 	{
-		return in_array($this->state, EntityInterface::READY_TO_PROCESS_STATES);
+		return $this->queue;
+	}
+
+	/** @noinspection PhpUnused */
+	public function setQueue(string $queue): self
+	{
+		$this->queue = $queue;
+		return $this;
 	}
 
 	/** @noinspection PhpUnused */
@@ -189,5 +201,11 @@ trait EntityTrait
 	{
 		$this->errorMessage = $errorMessage;
 		return $this;
+	}
+
+	/** @noinspection PhpUnused */
+	final public function isReadyForProcess(): bool
+	{
+		return in_array($this->state, self::READY_TO_PROCESS_STATES);
 	}
 }

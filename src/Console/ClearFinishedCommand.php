@@ -2,7 +2,7 @@
 
 namespace ADT\BackgroundQueue\Console;
 
-use ADT\BackgroundQueue\Entity\EntityInterface;
+use ADT\BackgroundQueue\Entity\BackgroundJob;
 use DateTime;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -29,7 +29,7 @@ class ClearFinishedCommand extends Command
 		$qb = $this->backgroundQueue->createQueryBuilder()
 			->delete()
 			->andWhere('e.state = :state')
-			->setParameter('state', EntityInterface::STATE_FINISHED);
+			->setParameter('state', BackgroundJob::STATE_FINISHED);
 
 		if ($input->getArgument("days")) {
 			$qb->andWhere('e.created <= :ago')

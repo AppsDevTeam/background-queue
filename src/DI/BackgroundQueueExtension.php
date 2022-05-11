@@ -21,13 +21,14 @@ class BackgroundQueueExtension extends CompilerExtension
 	{
 		return Expect::structure([
 			'entityClass' => Expect::string()->required(),
-			'doctrineConnection' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
+			'doctrineDbalConnection' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
 			'doctrineOrmConfiguration' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
+			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
 			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
-			'notifyOnNumberOfAttempts' => Expect::int()->min(1),
-			'onPublish' => Expect::type('callable'),
-			'onUnfinishedPreviousEntity' => Expect::type('callable'),
-			'onTemporaryError' => Expect::type('callable')
+			'defaultQueue' => Expect::string(),
+			'onPublish' => Expect::anyOf(null, Expect::type('callable')),
+			'onUnfinishedPreviousEntity' => Expect::anyOf(null, Expect::type('callable')),
+			'onTemporaryError' => Expect::anyOf(null, Expect::type('callable'))
 		]);
 	}
 

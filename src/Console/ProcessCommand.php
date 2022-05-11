@@ -2,11 +2,10 @@
 
 namespace ADT\BackgroundQueue\Console;
 
-use ADT\BackgroundQueue\Entity\EntityInterface;
+use ADT\BackgroundQueue\Entity\BackgroundJob;
 use Exception;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Input\InputArgument;
 
 class ProcessCommand extends Command
 {
@@ -15,8 +14,7 @@ class ProcessCommand extends Command
 	protected function configure()
 	{
 		$this->setName('background-queue:process');
-		$this->setDescription('Processes all records in the READY state.');
-		$this->addArgument('id', InputArgument::OPTIONAL, "Process the message in the READY state and with the specified id.");
+		$this->setDescription('Processes all records in the READY or TEMPORARILY_FAILED state.');
 	}
 
 	/**
@@ -24,17 +22,12 @@ class ProcessCommand extends Command
 	 */
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
-		$qb = $this->backgroundQueue->createQueryBuilder()
-			->andWhere("e.state IN (:state)")
-			->setParameter("state", EntityInterface::STATE_READY);
+		$qb = $this->backgroundQueue->createQueryBuilder();
 
-		if ($input->getArgument('id')) {
-			$qb
-				->andWhere("e.id = :id")
-				->setParameter('id', $input->getArgument('id'));
-		}
+		$qb->andWhere("e.state IN (:state)")
+			->setParameter("state", BackgroundJob::READY_TO_PROCESS_STATES);
 
-		/** @var EntityInterface $_entity */
+		/** @var BackgroundJob $_entity */
 		foreach ($qb->getQuery()->getResult() as $_entity) {
 			$this->backgroundQueue->process($_entity);
 		}

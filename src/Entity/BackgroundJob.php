@@ -41,7 +41,7 @@ class BackgroundJob
 	private string $callbackName;
 
 	/**
-	 * @ORM\Column(type="array", nullable=true)
+	 * @ORM\Column(type="json", nullable=true)
 	 */
 	private ?array $parameters = null;
 

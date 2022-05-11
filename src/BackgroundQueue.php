@@ -41,32 +41,35 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @Suppress("unused")
 	 */
-	public function publish(string $callbackName, array $parameters = [], ?string $serialGroup = null, ?string $queue = null): void
+	public function publish(string $callbackName, array $parameters = [], ?string $serialGroup = null): void
 	{
 		if (!$callbackName) {
-			throw new Exception('The entity does not have the required parameter "callbackName" set.');
+			throw new Exception('The job does not have the required parameter "callbackName" set.');
 		}
 
 		if (!isset($this->config['callbacks'][$callbackName])) {
 			throw new Exception('Callback "' . $callbackName . '" does not exist.');
 		}
 
-		if (!$queue && !$this->config['defaultQueue']) {
-			throw new Exception('Specify either "queue" parameter or configure "defaultQueue".');
-		}
-
 		$entity = new BackgroundJob();
+		$entity->setQueue($this->config['queue']);
 		$entity->setCallbackName($callbackName);
 		$entity->setParameters($parameters);
 		$entity->setSerialGroup($serialGroup);
-		$entity->setQueue($queue ?: $this->config['defaultQueue']);
 
 		$this->onShutdown[] = function () use ($entity) {
 			$this->save($entity);
 
-			if ($this->config['onPublish']) {
-				$this->config['onPublish']($entity);
-				$this->save($entity);
+			if ($this->config['amqpPublishCallback']) {
+				try {
+					$this->config['amqpPublishCallback']($entity->getId());
+				} catch (Exception $e) {
+					self::logException('Unexpected error occurred.', $entity, $e);
+					
+					$entity->setState(BackgroundJob::STATE_TEMPORARILY_FAILED)
+						->setErrorMessage($e->getMessage());
+					$this->save($entity);
+				}
 			}
 		};
 	}
@@ -86,7 +89,7 @@ class BackgroundQueue
 
 			// zalogovat (a smazat z RabbitMQ DB)
 			if (!$entity) {
-				static::logException('No entity found for ID "' . $id . '"');
+				self::logException('No job found for ID "' . $id . '"');
 				return;
 			}
 		}
@@ -96,27 +99,23 @@ class BackgroundQueue
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			static::logException('Unexpected state', $entity);
+			self::logException('Unexpected state', $entity);
 			return;
 		}
 
-		if ($previousEntity = $this->getPreviousUnfinishedEntity($entity)) {
+		if ($previousEntity = $this->getPreviousUnfinishedJob($entity)) {
 			try {
 				$entity->setState(BackgroundJob::STATE_TEMPORARILY_FAILED);
-				$entity->setErrorMessage('Waiting for entity ID ' . $previousEntity->getId());
+				$entity->setErrorMessage('Waiting for job ID ' . $previousEntity->getId());
 				$this->save($entity);
-
-				if ($this->config['onPreviousUnfinishedEntity']) {
-					$this->config['onPreviousUnfinishedEntity']($entity);
-				}
 			} catch (Exception $e) {
-				static::logException('Unexpected error occurred.', $entity, $e);
+				self::logException('Unexpected error occurred.', $entity, $e);
 				return;
 			}
 		}
 
 		if (!isset($this->config['callbacks'][$entity->getCallbackName()])) {
-			static::logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity);
+			self::logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity);
 			return;
 		}
 
@@ -129,7 +128,7 @@ class BackgroundQueue
 			$entity->increaseNumberOfAttempts();
 			$this->save($entity);
 		} catch (Exception $e) {
-			static::logException('Unexpected error occurred', $entity, $e);
+			self::logException('Unexpected error occurred', $entity, $e);
 			return;
 		}
 
@@ -138,7 +137,7 @@ class BackgroundQueue
 		// pokud metoda vrátí cokoliv jiného (nebo nevrátí nic), proběhla v pořádku, nastavit stav dokončeno
 		$e = null;
 		try {
-			$state = $callback($entity) === false ? BackgroundJob::STATE_TEMPORARILY_FAILED: BackgroundJob::STATE_FINISHED;
+			$state = $callback($entity->getParameters()) === false ? BackgroundJob::STATE_TEMPORARILY_FAILED: BackgroundJob::STATE_FINISHED;
 		} catch (Exception $e) {
 			$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
 		}
@@ -151,26 +150,22 @@ class BackgroundQueue
 
 			if ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
 				// odeslání emailu o chybě v callbacku
-				static::logException('Permanent error occured', $entity, $e);
+				self::logException('Permanent error occured', $entity, $e);
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
-					static::logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
-				}
-
-				if ($this->config['onTemporaryError']) {
-					$this->config['onTemporaryError']($entity);
+					self::logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
 				}
 			}
 		} catch (Exception $innerEx) {
-			static::logException('Unexpected error occurred', $entity, $innerEx);
+			self::logException('Unexpected error occurred', $entity, $innerEx);
 		}
 	}
 
 	/**
 	 * @throws NonUniqueResultException
 	 */
-	public function getPreviousUnfinishedEntity(BackgroundJob $entity): ?BackgroundJob
+	public function getPreviousUnfinishedJob(BackgroundJob $entity): ?BackgroundJob
 	{
 		if (!$entity->getSerialGroup()) {
 			return null;
@@ -196,9 +191,14 @@ class BackgroundQueue
 			->getOneOrNullResult();
 	}
 
+	/**
+	 * @internal
+	 */
 	public function createQueryBuilder(): QueryBuilder
 	{
-		return $this->getRepository()->createQueryBuilder('e');
+		return $this->getRepository()->createQueryBuilder('e')
+			->andWhere('e.queue = :queue')
+			->setParameter('queue', $this->config['queue']);
 	}
 
 	/**
@@ -214,7 +214,7 @@ class BackgroundQueue
 
 	private function getRepository(): EntityRepository
 	{
-		return $this->em->getRepository($this->config['entityClass']);
+		return $this->em->getRepository(BackgroundJob::class);
 	}
 
 	/**

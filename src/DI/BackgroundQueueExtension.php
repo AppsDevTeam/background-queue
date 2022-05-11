@@ -20,15 +20,12 @@ class BackgroundQueueExtension extends CompilerExtension
 	public function getConfigSchema(): Schema
 	{
 		return Expect::structure([
-			'entityClass' => Expect::string()->required(),
 			'doctrineDbalConnection' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
 			'doctrineOrmConfiguration' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
-			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
 			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
-			'defaultQueue' => Expect::string(),
-			'onPublish' => Expect::anyOf(null, Expect::type('callable')),
-			'onUnfinishedPreviousEntity' => Expect::anyOf(null, Expect::type('callable')),
-			'onTemporaryError' => Expect::anyOf(null, Expect::type('callable'))
+			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
+			'queue' => Expect::string('general'),
+			'amqpPublishCallback' => Expect::anyOf(null, Expect::type('callable')),
 		]);
 	}
 
@@ -50,14 +47,8 @@ class BackgroundQueueExtension extends CompilerExtension
 		foreach ($config['callbacks'] as $callbackSlug => $callback) {
 			$config['callbacks'][$callbackSlug] = new $statementClass($statementEntity, [$callback]);
 		}
-		if ($config['onPublish']) {
-			$config['onPublish'] = new $statementClass($statementEntity, [$config['onPublish']]);
-		}
-		if ($config['onUnfinishedPreviousEntity']) {
-			$config['onUnfinishedPreviousEntity'] = new $statementClass($statementEntity, [$config['onUnfinishedPreviousEntity']]);
-		}
-		if ($config['onTemporaryError']) {
-			$config['onTemporaryError'] = new $statementClass($statementEntity, [$config['onTemporaryError']]);
+		if ($config['amqpPublishCallback']) {
+			$config['amqpPublishCallback'] = new $statementClass($statementEntity, [$config['amqpPublishCallback']]);
 		}
 
 		// service registration

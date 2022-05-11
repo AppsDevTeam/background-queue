@@ -1,6 +1,6 @@
 # BackgroundQueue
 
-Komponenta umožňuje zpracovávat úkoly na pozadí pomocí cronu nebo AMQP (např. RabbitMQ). Vhodné pro dlouhotrvající requesty, komunikaci s API nebo odesílání webhooků či e-mailů.
+Komponenta umožňuje zpracovávat úkoly na pozadí pomocí cronu nebo AMQP brokera (např. RabbitMQ). Vhodné pro dlouhotrvající requesty, komunikaci s API nebo odesílání webhooků či e-mailů.
 
 Komponenta využívá doctrine entity manager pro ukládání záznamů do fronty.
 
@@ -17,31 +17,21 @@ extensions:
 	backgroundQueue: ADT\BackgroundQueue\DI\BackgroundQueueExtension
 
 backgroundQueue:
-	entityClass: App\Model\Entity\BackgroundJob # doctrine entita představující záznam
 	doctrineDbalConnection: @doctrine.dbal.connection
 	doctrineOrmConfiguration: @doctrine.orm.configuration
-	notifyOnNumberOfAttempts: 5 # počet neúspěšných pokusů zpracování záznamu pro zalogování
-	callbacks: # při 
+	callbacks:
 		sendEmail: [@App\Model\Mailer, sendEmail]
 		...
-	defaultQueue: cz # nepovinné, název výchozí fronty, do které se ukládají záznamy
+	notifyOnNumberOfAttempts: 5 # počet pokusů o zpracování záznamu před zalogováním
+	queue: general # nepovinné, název výchozí fronty, do které se ukládají záznamy
+	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
 ```
 
-## 1.3 Vytvoření entity a migrace
+## 1.3 Registrace entity
 ```
-namespace App\Model\Entity;
-
-use ADT\BackgroundQueue\Entity\EntityInterface;
-use ADT\BackgroundQueue\Entity\EntityTrait;
-use Doctrine\ORM\Mapping as ORM;
-
-/**
- * @ORM\Entity
- */
-class BackgroundJob implements EntityInterface
-{
-	use EntityTrait;
-}
+nettrine.orm.attributes:
+	mapping:
+		ADT\BackgroundQueue\Entity: %appDir%/../vendor/adt/background-queue/src/Entity
 ```
 
 Následně je potřeba vygenerovat migraci.
@@ -92,9 +82,9 @@ Pokud callback vrátí false, záznam se uloží ve stavu `TEMPORARILY_FAILED`. 
 
 ### 2.3 Commandy
 
-`background-queue:process` zpracuje všechny nezpracované záznamy
+`background-queue:process` zpracuje všechny nezpracované záznamy, pro použítí bez AMQP brokera
 
-`background-queue:process-temporarily-failed` zpracuje záznam s ID 1 nehledě na jeho stav
+`background-queue:process-temporarily-failed` zpracuje záznamy ve stavu `TEMPORARILY_FAILED`
 
 `background-queue:clear` smaže všechny úspěšně zpracované záznamy
 

@@ -30,9 +30,16 @@ backgroundQueue:
 
 ## 1.3 Registrace entity
 ```
+# pokud používáte PHP 8 atributy
 nettrine.orm.attributes:
 	mapping:
 		ADT\BackgroundQueue\Entity: %appDir%/../vendor/adt/background-queue/src/Entity
+
+# pokud používáte anotace
+nettrine.orm.annotations:
+	mapping:
+		ADT\BackgroundQueue\Entity: %appDir%/../vendor/adt/background-queue/src/Entity
+
 ```
 
 Následně je potřeba vygenerovat migraci.

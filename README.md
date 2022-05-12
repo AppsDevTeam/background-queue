@@ -23,6 +23,7 @@ backgroundQueue:
 		sendEmail: [@App\Model\Mailer, sendEmail]
 		...
 	notifyOnNumberOfAttempts: 5 # počet pokusů o zpracování záznamu před zalogováním
+	tempDir: %tempDir% # cesta pro uložení zámku proti vícenásobnému spuštění commandu
 	queue: general # nepovinné, název výchozí fronty, do které se ukládají záznamy
 	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
 ```
@@ -47,7 +48,7 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
     /** @var \ADT\BackgroundQueue\BackgroundQueue @autowire */
     protected $backgroundQueue;
 
-    public function actionDefault() 
+    public function actionEmailInvoice(Invoice $invoice) 
     {
         $callbackname = 'sendEmail';
         $parameters = [
@@ -55,8 +56,9 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
             'subject' => 'Background queue test'
             'text' => 'Anything you want.'
         ];
+        $serialGroup = 'invoice-' . $invoice->getId();
 
-        $this->backgroundQueue->publish($callbackName, $parameters);
+        $this->backgroundQueue->publish($callbackName, $parameters, $serialGroup);
     }
 }
 
@@ -64,7 +66,7 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
 
 Záznam se uloží ve stavu `READY`.
 
-Metoda publish přijmá ještě nepovinný 3. parametr `serialGroup`, který zaručuje, že všechny joby v této skupině budou provedeny sériově.
+Parametr `$serialGroup` je nepovinný - jeho zadáním zajistítě, že všechny joby se stejným serialGroup budou provedeny sériově.
 
 ### 2.2 Zprácování záznamu
 
@@ -84,8 +86,10 @@ Pokud callback vrátí false, záznam se uloží ve stavu `TEMPORARILY_FAILED`. 
 
 ### 2.3 Commandy
 
-`background-queue:process` zpracuje všechny záznamy ve stavu `READY` a `TEMPORARILY_FAILED`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED`
+`background-queue:process` zpracuje všechny záznamy ve stavu `READY` a `TEMPORARILY_FAILED`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED`.
 
 `background-queue:clear` smaže všechny úspěšně zpracované záznamy
 
 `background-queue:clear 14` smaže všechny úspěšně zpracované záznamy starší 14 dní
+
+Všechny commandy jsou chráněny proti vícenásobnému spuštění.

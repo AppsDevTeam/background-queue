@@ -26,6 +26,10 @@ class ClearFinishedCommand extends Command
 
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
+		if (!$this->tryLock(false)) {
+			return;
+		}
+
 		$qb = $this->backgroundQueue->createQueryBuilder()
 			->delete()
 			->andWhere('e.state = :state')
@@ -37,5 +41,7 @@ class ClearFinishedCommand extends Command
 		}
 
 		$qb->getQuery()->execute();
+
+		$this->tryUnlock();
 	}
 }

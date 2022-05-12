@@ -22,6 +22,10 @@ class ProcessCommand extends Command
 	 */
 	protected function execute(InputInterface $input, OutputInterface $output)
 	{
+		if (!$this->tryLock(false)) {
+			return;
+		}
+
 		$qb = $this->backgroundQueue->createQueryBuilder();
 
 		if ($this->backgroundQueue->getConfig()['amqpPublishCallback']) {
@@ -31,11 +35,13 @@ class ProcessCommand extends Command
 		}
 
 		$qb->andWhere("e.state IN (:state)")
-			->setParameter("state", BackgroundJob::READY_TO_PROCESS_STATES);
+			->setParameter("state", $states);
 
 		/** @var BackgroundJob $_entity */
 		foreach ($qb->getQuery()->getResult() as $_entity) {
 			$this->backgroundQueue->process($_entity);
 		}
+
+		$this->tryUnlock();
 	}
 }

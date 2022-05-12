@@ -23,6 +23,7 @@ class BackgroundQueueExtension extends CompilerExtension
 			'doctrineOrmConfiguration' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
 			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
+			'tempDir' => Expect::string()->required(),
 			'queue' => Expect::string('general'),
 			'amqpPublishCallback' => Expect::anyOf(null, Expect::type('callable')),
 		]);

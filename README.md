@@ -86,10 +86,10 @@ Pokud callback vrátí false, záznam se uloží ve stavu `TEMPORARILY_FAILED`. 
 
 ### 2.3 Commandy
 
-`background-queue:process` zpracuje všechny záznamy ve stavu `READY` a `TEMPORARILY_FAILED`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED`.
+`background-queue:process` Zpracuje všechny záznamy ve stavu `READY` a `TEMPORARILY_FAILED`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED`. Command je ideální spouštět cronem každou minutu.
 
-`background-queue:clear` smaže všechny úspěšně zpracované záznamy
+`background-queue:clear` Smaže všechny úspěšně zpracované záznamy.
 
-`background-queue:clear 14` smaže všechny úspěšně zpracované záznamy starší 14 dní
+`background-queue:clear 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
 
 Všechny commandy jsou chráněny proti vícenásobnému spuštění.

@@ -49,7 +49,7 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
 
     public function actionDefault() 
     {
-        $callbackname = 'sendEmail;
+        $callbackname = 'sendEmail';
         $parameters = [
             'to' => 'hello@appsdevteam.com,
             'subject' => 'Background queue test'

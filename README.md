@@ -62,7 +62,7 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
 
 ```
 
-Záznam se uloží ve stavu `STATE_READY`.
+Záznam se uloží ve stavu `READY`.
 
 Metoda publish přijmá ještě nepovinný 3. parametr `serialGroup`, který zaručuje, že všechny joby v této skupině budou provedeny sériově.
 
@@ -84,9 +84,7 @@ Pokud callback vrátí false, záznam se uloží ve stavu `TEMPORARILY_FAILED`. 
 
 ### 2.3 Commandy
 
-`background-queue:process` zpracuje všechny nezpracované záznamy, pro použítí bez AMQP brokera
-
-`background-queue:process-temporarily-failed` zpracuje záznamy ve stavu `TEMPORARILY_FAILED`
+`background-queue:process` zpracuje všechny záznamy ve stavu `READY` a `TEMPORARILY_FAILED`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED`
 
 `background-queue:clear` smaže všechny úspěšně zpracované záznamy
 

@@ -24,6 +24,12 @@ class ProcessCommand extends Command
 	{
 		$qb = $this->backgroundQueue->createQueryBuilder();
 
+		if ($this->backgroundQueue->getConfig()['amqpPublishCallback']) {
+			$states = [BackgroundJob::STATE_TEMPORARILY_FAILED];
+		} else {
+			$states = BackgroundJob::READY_TO_PROCESS_STATES;
+		}
+
 		$qb->andWhere("e.state IN (:state)")
 			->setParameter("state", BackgroundJob::READY_TO_PROCESS_STATES);
 

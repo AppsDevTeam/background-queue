@@ -201,6 +201,11 @@ class BackgroundQueue
 			->setParameter('queue', $this->config['queue']);
 	}
 
+	public function getConfig(): array
+	{
+		return $this->config;
+	}
+
 	/**
 	 * @internal
 	 * @Suppress("unused")

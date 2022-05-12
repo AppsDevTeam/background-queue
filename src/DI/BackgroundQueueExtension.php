@@ -5,7 +5,6 @@ namespace ADT\BackgroundQueue\DI;
 use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Console\ClearFinishedCommand;
 use ADT\BackgroundQueue\Console\ProcessCommand;
-use ADT\BackgroundQueue\Console\ProcessTemporarilyFailedCommand;
 use Nette\DI\CompilerExtension;
 use Nette\DI\Container;
 use Nette\DI\Extensions\InjectExtension;
@@ -61,11 +60,6 @@ class BackgroundQueueExtension extends CompilerExtension
 
 		$builder->addDefinition($this->prefix('processCommand'))
 			->setFactory(ProcessCommand::class)
-			->addTag(InjectExtension::TAG_INJECT, false)
-			->addTag('kdyby.console.command');
-
-		$builder->addDefinition($this->prefix('processTemporarilyFailedCommand'))
-			->setFactory(ProcessTemporarilyFailedCommand::class)
 			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 

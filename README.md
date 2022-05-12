@@ -73,7 +73,7 @@ namespace App\Model;
 
 class Mailer
 {
-	public function send(\App\Model\Entity\BackgroundJob $entity) 
+	public function send(array $parameters) 
 	{
 	    ...
 	}

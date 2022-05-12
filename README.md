@@ -2,7 +2,7 @@
 
 Komponenta umožňuje zpracovávat úkoly na pozadí pomocí cronu nebo AMQP brokera (např. RabbitMQ). Vhodné pro dlouhotrvající requesty, komunikaci s API nebo odesílání webhooků či e-mailů.
 
-Komponenta využívá doctrine entity manager pro ukládání záznamů do fronty.
+Komponenta využívá vlastní doctrine entity manager pro ukládání záznamů do fronty. Tím pádem fungování komponenty není ovlivněno aplikačním entity managerem a naopak.
 
 ## 1. Instalace a konfigurace
 

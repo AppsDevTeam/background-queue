@@ -24,7 +24,7 @@ backgroundQueue:
 		...
 	notifyOnNumberOfAttempts: 5 # počet pokusů o zpracování záznamu před zalogováním
 	tempDir: %tempDir% # cesta pro uložení zámku proti vícenásobnému spuštění commandu
-	queue: general # nepovinné, název výchozí fronty, do které se ukládají záznamy
+	queue: general # nepovinné, název fronty, do které se ukládají záznamy
 	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
 ```
 

@@ -16,12 +16,17 @@ abstract class Command extends \Symfony\Component\Console\Command\Command
 
 	protected BackgroundQueue $backgroundQueue;
 
+	public function __construct(BackgroundQueue $backgroundQueue)
+	{
+		parent::__construct();
+		$this->backgroundQueue = $backgroundQueue;
+	}
+
 	/**
 	 * @throws \Exception
 	 */
 	protected function initialize(InputInterface $input, OutputInterface $output)
 	{
-		$this->backgroundQueue = $this->getHelper('container')->getByType(BackgroundQueue::class);
 		$this->commandLockPathProvider = new CommandLockPathProvider($this->backgroundQueue->getConfig()['tempDir']);
 	}
 }

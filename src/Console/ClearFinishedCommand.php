@@ -36,7 +36,7 @@ class ClearFinishedCommand extends Command
 			->setParameter('state', BackgroundJob::STATE_FINISHED);
 
 		if ($input->getArgument("days")) {
-			$qb->andWhere('e.created <= :ago')
+			$qb->andWhere('e.createdAt <= :ago')
 				->setParameter('ago', (new DateTime('midnight'))->modify('-' . $input->getArgument("days") . ' days'));
 		}
 

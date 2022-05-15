@@ -2,105 +2,81 @@
 
 namespace ADT\BackgroundQueue\DI;
 
+use ADT\BackgroundQueue\BackgroundQueue;
+use ADT\BackgroundQueue\Console\ClearFinishedCommand;
+use ADT\BackgroundQueue\Console\ProcessCommand;
+use Nette\DI\CompilerExtension;
 use Nette\DI\Container;
 use Nette\DI\Extensions\InjectExtension;
 use Nette\PhpGenerator\ClassType;
+use Nette\Schema\Expect;
+use Nette\Schema\Processor;
+use Nette\Schema\Schema;
 
-class BackgroundQueueExtension extends \Nette\DI\CompilerExtension {
-
-	public function loadConfiguration() {
-		$builder = $this->getContainerBuilder();
-		$config = $this->validateConfig([
-			'lazy' => TRUE,
-			'callbacks' => [],
-			'queueEntityClass' => \ADT\BackgroundQueue\Entity\QueueEntity::class,
-			'noopMessage' => 'noop',
-			'supervisor' => [
-				'numprocs' => 1,
-				'startsecs' => 1, // [sec]
-			],
-			'clearOlderThan' => '14 days', // čas jak staré záznamy ode dneška budou smazány
-			'notifyOnNumberOfAttempts' => 5, // počet pokusů zpracování fronty pro zaslání mailu
-			'useRabbitMq' => true,
+/** @noinspection PhpUnused */
+class BackgroundQueueExtension extends CompilerExtension
+{
+	public function getConfigSchema(): Schema
+	{
+		return Expect::structure([
+			'doctrineDbalConnection' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
+			'doctrineOrmConfiguration' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
+			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
+			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
+			'tempDir' => Expect::string()->required(),
+			'queue' => Expect::string('general'),
+			'amqpPublishCallback' => Expect::anyOf(null, Expect::type('callable')),
 		]);
+	}
 
-		if ($config['supervisor']['numprocs'] <= 0) {
-			throw new \Nette\Utils\AssertionException('Hodnota configu %supervisor.numprocs% musí být kladné číslo');
+	public function loadConfiguration()
+	{
+		// nette/di 2.4
+		$this->config = (new Processor)->process($this->getConfigSchema(), $this->config);
+
+		$builder = $this->getContainerBuilder();
+		$config = json_decode(json_encode($this->config), true);
+
+		if (class_exists(\Nette\DI\Definitions\Statement::class, false)) {
+			$statementClass = \Nette\DI\Definitions\Statement::class;
+		} else {
+			// nette/di 2.4
+			$statementClass = \Nette\DI\Statement::class;
+		}
+		$statementEntity = "function(){ return call_user_func_array(?, func_get_args()); }";
+		foreach ($config['callbacks'] as $callbackSlug => $callback) {
+			$config['callbacks'][$callbackSlug] = new $statementClass($statementEntity, [$callback]);
+		}
+		if ($config['amqpPublishCallback']) {
+			$config['amqpPublishCallback'] = new $statementClass($statementEntity, [$config['amqpPublishCallback']]);
 		}
 
-		if ($config['lazy']) {
-			foreach ($config['callbacks'] as $callbackSlug => $callback) {
-				if (
-					$config['lazy'] !== TRUE
-					&&
-					(
-						!isset($config['lazy'][$callbackSlug])
-						||
-						$config['lazy'][$callbackSlug] !== TRUE
-					)
-				) {
-					// Callback should not become lazy
-					continue;
-				}
+		// service registration
 
-				$config['callbacks'][$callbackSlug] = new \Nette\DI\Statement('function(){ return call_user_func_array(?, func_get_args()); }', [ $callback ]);
-			}
-		}
+		$builder->addDefinition($this->prefix('backgroundQueue'))
+			->setFactory(BackgroundQueue::class)
+			->setArguments(['config' => $config]);
 
-		// registrace queue service
-		$builder->addDefinition($this->prefix('queue'))
-			->setClass(\ADT\BackgroundQueue\Queue::class)
-			->addSetup('$service->setConfig(?)', [$config]);
-
-		// Z `callbacks` nepředáváme celé servisy ale pouze klíče, protože nic víc nepotřebujeme a měli bychom zbytečnou závislost.
-		$serviceConfig = $config;
-		unset($serviceConfig['callbacks']);
-		$serviceConfig['callbackKeys'] = array_keys($config["callbacks"]);
-
-		// registrace service
-		$builder->addDefinition($this->prefix('service'))
-			->setClass(\ADT\BackgroundQueue\Service::class)
-			->addSetup('$service->setConfig(?)', [$serviceConfig])
-			->addSetup('$service->setRabbitMq(?)', [$serviceConfig['useRabbitMq'] ? $this->getContainerBuilder()->getDefinitionByType('\Kdyby\RabbitMq\Connection') : null]);
-
-		// registrace commandů
-
-		$builder->addDefinition($this->prefix('processWaitingForManualQueuingCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ProcessWaitingForManualQueuingCommand::class)
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
-			->addTag('kdyby.console.command');
+		// command registration
 
 		$builder->addDefinition($this->prefix('processCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ProcessCommand::class)
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
+			->setFactory(ProcessCommand::class)
+			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
 
-		$builder->addDefinition($this->prefix('processTemporaryErrorsCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ProcessTemporaryErrorsCommand::class)
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
+		$builder->addDefinition($this->prefix('clearFinishedCommand'))
+			->setFactory(ClearFinishedCommand::class)
+			->addTag(InjectExtension::TAG_INJECT, false)
 			->addTag('kdyby.console.command');
-
-		$builder->addDefinition($this->prefix('reloadConsumerCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ReloadConsumerCommand::class)
-			->addSetup('$service->setConfig(?)', [$config])
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
-			->addTag('kdyby.console.command');
-
-		$builder->addDefinition($this->prefix('clearCommand'))
-			->setClass(\ADT\BackgroundQueue\Console\ClearCommand::class)
-			->addSetup('$service->setConfig(?)', [$config])
-			->addTag(InjectExtension::TAG_INJECT, FALSE)
-			->addTag('kdyby.console.command');
-
 	}
 
 	public function afterCompile(ClassType $class)
 	{
-		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('service')));
+		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('backgroundQueue')));
 
 		$serviceMethod->setBody('
 $service = (function () {
-	'. $serviceMethod->getBody() .'
+	' . $serviceMethod->getBody() . '
 })();
 
 $shutdownCallback = function () use ($service) {
@@ -121,5 +97,4 @@ if (php_sapi_name() === "cli") {
 return $service;
 		');
 	}
-
 }

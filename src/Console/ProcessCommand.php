@@ -2,39 +2,46 @@
 
 namespace ADT\BackgroundQueue\Console;
 
-use Symfony\Component\Console\Command\Command;
+use ADT\BackgroundQueue\Entity\BackgroundJob;
+use Exception;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Input\InputArgument;
 
-class ProcessCommand extends Command {
+class ProcessCommand extends Command
+{
+	protected static $defaultName = 'background-queue:process';
 
-	const PARAM_ID = "id";
-
-	/** @var \ADT\BackgroundQueue\Queue */
-	protected $queue;
-
-	protected function configure() {
-		$this->setName('adt:backgroundQueue:process');
-		$this->setDescription('Zavolá callback pro všechny nezpracované záznamy z DB a zpracuje jak kdyby to zpracoval consumer.');
-		$this->addArgument(self::PARAM_ID, InputArgument::OPTIONAL, "Param 1.");
+	protected function configure()
+	{
+		$this->setName('background-queue:process');
+		$this->setDescription('Processes all records in the READY or TEMPORARILY_FAILED state.');
 	}
 
 	/**
-	 * @param InputInterface $input
-	 * @param OutputInterface $output
+	 * @throws Exception
 	 */
-	protected function initialize(InputInterface $input, OutputInterface $output) {
-		$this->queue = $this->getHelper('container')->getByType(\ADT\BackgroundQueue\Queue::class);
-	}
+	protected function execute(InputInterface $input, OutputInterface $output)
+	{
+		if (!$this->tryLock(false)) {
+			return;
+		}
 
-	/**
-	 * @param InputInterface $input
-	 * @param OutputInterface $output
-	 * @throws \Exception
-	 */
-	protected function execute(InputInterface $input, OutputInterface $output) {
-		$this->queue->processUnprocessedEntities( $input->getArgument(self::PARAM_ID));
-	}
+		$qb = $this->backgroundQueue->createQueryBuilder();
 
+		if ($this->backgroundQueue->getConfig()['amqpPublishCallback']) {
+			$states = [BackgroundJob::STATE_TEMPORARILY_FAILED];
+		} else {
+			$states = BackgroundJob::READY_TO_PROCESS_STATES;
+		}
+
+		$qb->andWhere("e.state IN (:state)")
+			->setParameter("state", $states);
+
+		/** @var BackgroundJob $_entity */
+		foreach ($qb->getQuery()->getResult() as $_entity) {
+			$this->backgroundQueue->process($_entity);
+		}
+
+		$this->tryUnlock();
+	}
 }

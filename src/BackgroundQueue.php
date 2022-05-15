@@ -41,7 +41,7 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @Suppress("unused")
 	 */
-	public function publish(string $callbackName, array $parameters = [], ?string $serialGroup = null): void
+	public function publish(string $callbackName, array $parameters = [], ?string $serialGroup = null, ?string $identifier = null): void
 	{
 		if (!$callbackName) {
 			throw new Exception('The job does not have the required parameter "callbackName" set.');
@@ -56,6 +56,7 @@ class BackgroundQueue
 		$entity->setCallbackName($callbackName);
 		$entity->setParameters($parameters);
 		$entity->setSerialGroup($serialGroup);
+		$entity->setIdentifier($identifier);
 
 		$this->onShutdown[] = function () use ($entity) {
 			$this->save($entity);
@@ -162,10 +163,61 @@ class BackgroundQueue
 		}
 	}
 
+	public function getUnfinishedJobIdentifiers(array $identifiers = []): array
+	{
+		$qb = $this->createQueryBuilder();
+
+		$qb->andWhere('e.state != :state')
+			->setParameter('state', BackgroundJob::STATE_FINISHED);
+
+		if ($identifiers) {
+			$qb->andWhere('e.identifier IN (:identifier)')
+				->setParameter('identifier', $identifiers);
+		} else {
+			$qb->andWhere('e.identifier IS NOT NULL');
+		}
+
+		$qb->groupBy('e.identifier');
+
+		$unfinishedJobIdentifiers = [];
+		/** @var BackgroundJob $_entity */
+		foreach ($qb->getQuery()->getResult() as $_entity) {
+			$unfinishedJobIdentifiers[] = $_entity->getIdentifier();
+		}
+
+		return $unfinishedJobIdentifiers;
+	}
+
+	public function getConfig(): array
+	{
+		return $this->config;
+	}
+
+	/**
+	 * @internal
+	 */
+	public function createQueryBuilder(): QueryBuilder
+	{
+		return $this->getRepository()->createQueryBuilder('e')
+			->andWhere('e.queue = :queue')
+			->setParameter('queue', $this->config['queue']);
+	}
+
+	/**
+	 * @internal
+	 * @Suppress("unused")
+	 */
+	public function onShutdown(): void
+	{
+		foreach ($this->onShutdown as $_handler) {
+			$_handler->call($this);
+		}
+	}
+
 	/**
 	 * @throws NonUniqueResultException
 	 */
-	public function getPreviousUnfinishedJob(BackgroundJob $entity): ?BackgroundJob
+	private function getPreviousUnfinishedJob(BackgroundJob $entity): ?BackgroundJob
 	{
 		if (!$entity->getSerialGroup()) {
 			return null;
@@ -189,32 +241,6 @@ class BackgroundQueue
 		return $qb->getQuery()
 			->setMaxResults(1)
 			->getOneOrNullResult();
-	}
-
-	/**
-	 * @internal
-	 */
-	public function createQueryBuilder(): QueryBuilder
-	{
-		return $this->getRepository()->createQueryBuilder('e')
-			->andWhere('e.queue = :queue')
-			->setParameter('queue', $this->config['queue']);
-	}
-
-	public function getConfig(): array
-	{
-		return $this->config;
-	}
-
-	/**
-	 * @internal
-	 * @Suppress("unused")
-	 */
-	public function onShutdown(): void
-	{
-		foreach ($this->onShutdown as $_handler) {
-			$_handler->call($this);
-		}
 	}
 
 	private function getRepository(): EntityRepository

@@ -75,6 +75,10 @@ class BackgroundJob
 	 */
 	private ?string $serialGroup = null;
 
+	/**
+	 * @ORM\Column(type="string", nullable=true)
+	 */
+	private ?string $identifier = null;
 
 	final public function __construct()
 	{
@@ -202,6 +206,18 @@ class BackgroundJob
 		$this->errorMessage = $errorMessage;
 		return $this;
 	}
+
+	public function getIdentifier(): ?string
+	{
+		return $this->identifier;
+	}
+
+	public function setIdentifier(?string $identifier): self
+	{
+		$this->identifier = $identifier;
+		return $this;
+	}
+
 
 	/** @noinspection PhpUnused */
 	final public function isReadyForProcess(): bool

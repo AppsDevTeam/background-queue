@@ -24,7 +24,7 @@ backgroundQueue:
 		...
 	notifyOnNumberOfAttempts: 5 # počet pokusů o zpracování záznamu před zalogováním
 	tempDir: %tempDir% # cesta pro uložení zámku proti vícenásobnému spuštění commandu
-	queue: general # nepovinné, název fronty, do které se ukládají záznamy
+	queue: general # nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
 	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
 ```
 
@@ -57,15 +57,16 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
 
     public function actionEmailInvoice(Invoice $invoice) 
     {
-        $callbackname = 'sendEmail';
+        $callbackName = 'sendEmail';
         $parameters = [
             'to' => 'hello@appsdevteam.com,
             'subject' => 'Background queue test'
             'text' => 'Anything you want.'
         ];
         $serialGroup = 'invoice-' . $invoice->getId();
+        $identifier = 'sendEmail-' . $invoice->getId();
 
-        $this->backgroundQueue->publish($callbackName, $parameters, $serialGroup);
+        $this->backgroundQueue->publish($callbackName, $parameters, $serialGroup, $identifier);
     }
 }
 
@@ -74,6 +75,8 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
 Záznam se uloží ve stavu `READY`.
 
 Parametr `$serialGroup` je nepovinný - jeho zadáním zajistítě, že všechny joby se stejným serialGroup budou provedeny sériově.
+
+Parametr `$identifier` je nepovinný - pomocí něj si můžete označit joby vlastním identifikátorem a následně pomocí metody `getUnfinishedJobIdentifiers(array $identifiers = [])` zjistit, které z nich ještě nebyly provedeny.
 
 ### 2.2 Zprácování záznamu
 

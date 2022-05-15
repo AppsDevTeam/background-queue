@@ -13,6 +13,7 @@ use Doctrine\ORM\OptimisticLockException;
 use Doctrine\ORM\ORMException;
 use Doctrine\ORM\QueryBuilder;
 use Exception;
+use Throwable;
 use Tracy\Debugger;
 use Tracy\ILogger;
 
@@ -139,7 +140,7 @@ class BackgroundQueue
 		$e = null;
 		try {
 			$state = $callback($entity->getParameters()) === false ? BackgroundJob::STATE_TEMPORARILY_FAILED: BackgroundJob::STATE_FINISHED;
-		} catch (Exception $e) {
+		} catch (Throwable $e) {
 			$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
 		}
 

@@ -20,10 +20,10 @@ class ProcessCommand extends Command
 	/**
 	 * @throws Exception
 	 */
-	protected function execute(InputInterface $input, OutputInterface $output)
+	protected function execute(InputInterface $input, OutputInterface $output): int
 	{
 		if (!$this->tryLock(false)) {
-			return;
+			return 0;
 		}
 
 		$qb = $this->backgroundQueue->createQueryBuilder();
@@ -43,5 +43,7 @@ class ProcessCommand extends Command
 		}
 
 		$this->tryUnlock();
+
+		return 0;
 	}
 }

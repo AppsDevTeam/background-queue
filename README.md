@@ -11,14 +11,13 @@ Komponenta využívá vlastní doctrine entity manager pro ukládání záznamů
 composer require adt/background-queue
 ```
 
-### 1.2 Registrace a konfigurace extension
+### 1.2 Registrace a konfigurace
 ```
 extensions:
+    - ADT\BackgroundQueue\DI\BackgroundQueueMappingExtension # slouží pouze pro namapování entity
 	backgroundQueue: ADT\BackgroundQueue\DI\BackgroundQueueExtension
 
 backgroundQueue:
-	doctrineDbalConnection: @doctrine.dbal.connection
-	doctrineOrmConfiguration: @doctrine.orm.configuration
 	callbacks:
 		sendEmail: [@App\Model\Mailer, sendEmail]
 		...
@@ -28,21 +27,13 @@ backgroundQueue:
 	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
 ```
 
-## 1.3 Registrace entity
-```
-# pokud používáte PHP 8 atributy
-nettrine.orm.attributes:
-	mapping:
-		ADT\BackgroundQueue\Entity: %appDir%/../vendor/adt/background-queue/src/Entity
+Obě extensions musí být registrovány až po Doctrine extensions.
 
-# pokud používáte anotace
-nettrine.orm.annotations:
-	mapping:
-		ADT\BackgroundQueue\Entity: %appDir%/../vendor/adt/background-queue/src/Entity
+Následně je potřeba standardním způsobem vygenerovat doctrine migraci, např.:
 
 ```
-
-Následně je potřeba vygenerovat migraci.
+bin/console migrations:diff
+```
 
 ## 2 Použití
 

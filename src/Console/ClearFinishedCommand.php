@@ -24,10 +24,10 @@ class ClearFinishedCommand extends Command
 		$this->setDescription('Delete finished records.');
 	}
 
-	protected function execute(InputInterface $input, OutputInterface $output)
+	protected function execute(InputInterface $input, OutputInterface $output): int
 	{
 		if (!$this->tryLock(false)) {
-			return;
+			return 0;
 		}
 
 		$qb = $this->backgroundQueue->createQueryBuilder()
@@ -43,5 +43,7 @@ class ClearFinishedCommand extends Command
 		$qb->getQuery()->execute();
 
 		$this->tryUnlock();
+
+		return 0;
 	}
 }

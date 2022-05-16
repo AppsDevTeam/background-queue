@@ -5,9 +5,10 @@ namespace ADT\BackgroundQueue\DI;
 use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Console\ClearFinishedCommand;
 use ADT\BackgroundQueue\Console\ProcessCommand;
+use Doctrine\DBAL\Connection;
+use Doctrine\ORM\Configuration;
 use Nette\DI\CompilerExtension;
 use Nette\DI\Container;
-use Nette\DI\Extensions\InjectExtension;
 use Nette\PhpGenerator\ClassType;
 use Nette\Schema\Expect;
 use Nette\Schema\Processor;
@@ -19,8 +20,6 @@ class BackgroundQueueExtension extends CompilerExtension
 	public function getConfigSchema(): Schema
 	{
 		return Expect::structure([
-			'doctrineDbalConnection' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
-			'doctrineOrmConfiguration' => Expect::anyOf(Expect::string(), Expect::type(\Nette\DI\Statement::class), Expect::type(\Nette\DI\Definitions\Statement::class))->required(), // nette/di 2.4
 			'callbacks' => Expect::arrayOf('callable', 'string')->required(),
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
 			'tempDir' => Expect::string()->required(),
@@ -53,7 +52,10 @@ class BackgroundQueueExtension extends CompilerExtension
 
 		// service registration
 
-		$builder->addDefinition($this->prefix('backgroundQueue'))
+		$config['doctrineDbalConnection'] = $builder->getDefinitionByType(Connection::class);
+		$config['doctrineOrmConfiguration'] = $builder->getDefinitionByType(Configuration::class);
+
+		$builder->addDefinition($this->prefix('service'))
 			->setFactory(BackgroundQueue::class)
 			->setArguments(['config' => $config]);
 
@@ -61,18 +63,16 @@ class BackgroundQueueExtension extends CompilerExtension
 
 		$builder->addDefinition($this->prefix('processCommand'))
 			->setFactory(ProcessCommand::class)
-			->addTag(InjectExtension::TAG_INJECT, false)
-			->addTag('kdyby.console.command');
+			->setAutowired(false);
 
 		$builder->addDefinition($this->prefix('clearFinishedCommand'))
 			->setFactory(ClearFinishedCommand::class)
-			->addTag(InjectExtension::TAG_INJECT, false)
-			->addTag('kdyby.console.command');
+			->setAutowired(false);
 	}
 
 	public function afterCompile(ClassType $class)
 	{
-		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('backgroundQueue')));
+		$serviceMethod = $class->getMethod(Container::getMethodName($this->prefix('service')));
 
 		$serviceMethod->setBody('
 $service = (function () {

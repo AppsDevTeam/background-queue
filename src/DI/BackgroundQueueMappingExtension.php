@@ -4,7 +4,7 @@ namespace ADT\BackgroundQueue\DI;
 
 use Doctrine\Common\Annotations\Reader;
 use Doctrine\ORM\Mapping\Driver\AnnotationDriver;
-use Doctrine\Persistence\Mapping\Driver\MappingDriver;
+use Doctrine\Persistence\Mapping\Driver\MappingDriverChain;
 use Nette\DI\CompilerExtension;
 
 /** @noinspection PhpUnused */
@@ -16,13 +16,18 @@ class BackgroundQueueMappingExtension extends CompilerExtension
 
 		$builder = $this->getContainerBuilder();
 
-		$readerDef = $builder->getDefinitionByType(Reader::class);
+		foreach ($builder->getDefinitions() as $definition) {
+			if (is_a($definition->getType(), Reader::class, true)) {
+				$readerDef = $definition;
+			} elseif(is_a($definition->getType(), MappingDriverChain::class, true)) {
+				$mappingDriverDef = $definition;
+			}
+		}
 
-		$annotationDriver = $builder->addDefinition($this->prefix('annotationDriver'))
+		$annotationDriverDef = $builder->addDefinition($this->prefix('annotationDriver'))
 			->setFactory(AnnotationDriver::class, [$readerDef, [__DIR__ . '/../Entity']])
 			->setAutowired(false);
-		
-		$chainDriver = $builder->getDefinitionByType(MappingDriver::class);
-		$chainDriver->addSetup('addDriver', [$annotationDriver, 'ADT\BackgroundQueue\Entity']);
+
+		$mappingDriverDef->addSetup('addDriver', [$annotationDriverDef, 'ADT\BackgroundQueue\Entity']);
 	}
 }

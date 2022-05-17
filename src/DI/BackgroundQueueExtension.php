@@ -51,9 +51,14 @@ class BackgroundQueueExtension extends CompilerExtension
 		}
 
 		// service registration
-
-		$config['doctrineDbalConnection'] = $builder->getDefinitionByType(Connection::class);
-		$config['doctrineOrmConfiguration'] = $builder->getDefinitionByType(Configuration::class);
+		
+		foreach ($builder->getDefinitions() as $definition) {
+			if (is_a($definition->getType(), Connection::class, true)) {
+				$config['doctrineDbalConnection'] = $definition;
+			} elseif(is_a($definition->getType(), Configuration::class, true)) {
+				$config['doctrineOrmConfiguration'] = $definition;
+			}
+		}
 
 		$builder->addDefinition($this->prefix('service'))
 			->setFactory(BackgroundQueue::class)

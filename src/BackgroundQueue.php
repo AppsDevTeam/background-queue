@@ -32,7 +32,10 @@ class BackgroundQueue
 	public function __construct(array $config)
 	{
 		$this->config = $config;
-		$this->em = EntityManager::create($config['doctrineDbalConnection'], $config['doctrineOrmConfiguration']);
+
+		/** @var Connection $connection */
+		$connection = $config['doctrineDbalConnection'];
+		$this->em = EntityManager::create($connection->getParams(), $config['doctrineOrmConfiguration']);
 	}
 
 	/**

@@ -259,7 +259,7 @@ class BackgroundQueue
 		$this->em->flush();
 	}
 
-	private static function logException(string $errorMessage, ?BackgroundJob $entity = null, ?Exception $e = null): void
+	private static function logException(string $errorMessage, ?BackgroundJob $entity = null, ?Throwable $e = null): void
 	{
 		Debugger::log(new Exception('BackgroundQueue: ' . $errorMessage  . ($entity ? ' (ID: ' . $entity->getId() . '; State: ' . $entity->getState() . ')' : ''), 0, $e), ILogger::CRITICAL);
 	}

@@ -41,9 +41,10 @@ class BackgroundJob
 	private string $callbackName;
 
 	/**
-	 * @ORM\Column(type="json", nullable=true)
+	 * @ORM\Column(type="blob", nullable=true)
+	 * @var resource
 	 */
-	private ?array $parameters = null;
+	private $parameters = null;
 
 	/**
 	 * @ORM\Column(type="integer", length=1, nullable=false)
@@ -136,15 +137,43 @@ class BackgroundJob
 		return $this;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function getParameters(): ?array
+	/**
+	 * @noinspection PhpUnused
+	 * @return object|array|string|int|float|bool|null
+	 */
+	final public function getParameters()
 	{
-		return $this->parameters;
+		if ($this->parameters === null) {
+			return $this->parameters;
+		}
+		
+		$parameters = stream_get_contents($this->parameters);
+
+		return json_decode($parameters, true) ?: @unserialize($parameters) ?: $parameters;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function setParameters(?array $parameters): self
+	/**
+	 * @noinspection PhpUnused
+	 * @param $parameters object|array|string|int|float|bool|null
+	 */
+	final public function setParameters($parameters): self
 	{
+		if (is_array($parameters)) {
+			array_walk_recursive($parameters, function (&$value) {
+				// serialize obejcts
+				if (is_object($value)) {
+					$value = serialize($value);
+				}
+				// encode binary strings to base64
+				if (mb_detect_encoding((string)$value, null, true) === false) {
+					$value = base64_encode($value);
+				}
+			});
+			$parameters = json_encode($parameters, JSON_UNESCAPED_UNICODE);
+		} elseif (is_object($parameters)) {
+			$parameters = serialize($parameters);
+		}
+
 		$this->parameters = $parameters;
 		return $this;
 	}

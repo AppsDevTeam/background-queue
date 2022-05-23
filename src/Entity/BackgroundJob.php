@@ -29,7 +29,6 @@ class BackgroundJob
 	 */
 	private ?int $id = null;
 
-
 	/**
 	 * @ORM\Column(type="string", nullable=false)
 	 */
@@ -41,9 +40,10 @@ class BackgroundJob
 	private string $callbackName;
 
 	/**
-	 * @ORM\Column(type="json", nullable=true)
+	 * @ORM\Column(type="blob", nullable=false)
+	 * @var resource
 	 */
-	private ?array $parameters = null;
+	private $parameters;
 
 	/**
 	 * @ORM\Column(type="integer", length=1, nullable=false)
@@ -136,16 +136,22 @@ class BackgroundJob
 		return $this;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function getParameters(): ?array
+	/**
+	 * @noinspection PhpUnused
+	 * @return object|array|string|int|float|bool|null
+	 */
+	final public function getParameters()
 	{
-		return $this->parameters;
+		return unserialize(stream_get_contents($this->parameters));
 	}
 
-	/** @noinspection PhpUnused */
-	final public function setParameters(?array $parameters): self
+	/**
+	 * @noinspection PhpUnused
+	 * @param $parameters object|array|string|int|float|bool|null
+	 */
+	final public function setParameters($parameters): self
 	{
-		$this->parameters = $parameters;
+		$this->parameters = serialize($parameters);
 		return $this;
 	}
 
@@ -217,7 +223,6 @@ class BackgroundJob
 		$this->identifier = $identifier;
 		return $this;
 	}
-
 
 	/** @noinspection PhpUnused */
 	final public function isReadyForProcess(): bool

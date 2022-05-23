@@ -65,6 +65,8 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
 
 Záznam se uloží ve stavu `READY`.
 
+Parametr `$parameters` může přijímat jakýkoliv běžný typ (pole, objekt, string, ...) či jejich kombinace (pole objektů), a to dokonce i binární data.
+
 Parametr `$serialGroup` je nepovinný - jeho zadáním zajistítě, že všechny joby se stejným serialGroup budou provedeny sériově.
 
 Parametr `$identifier` je nepovinný - pomocí něj si můžete označit joby vlastním identifikátorem a následně pomocí metody `getUnfinishedJobIdentifiers(array $identifiers = [])` zjistit, které z nich ještě nebyly provedeny.
@@ -83,7 +85,7 @@ class Mailer
 }
 ```
 
-Pokud callback vrátí false, záznam se uloží ve stavu `TEMPORARILY_FAILED`. Pokud callback vyhodí výjimku, záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně. Ve všech ostatních případech se záznam uloží jako úspěšně dokončený ve stavu `STATE_FINISHED`.
+Pokud callback vyhodí `ADT\BackgroundQueue\Exception\TemporaryErrorException`, záznam se uloží ve stavu `TEMPORARILY_FAILED` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Pokud callback vyhodí jakýkoliv jiný error nebo exception implementující `Throwable`, záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně. Ve všech ostatních případech se záznam uloží jako úspěšně dokončený ve stavu `STATE_FINISHED`.
 
 ### 2.3 Commandy
 

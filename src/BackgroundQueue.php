@@ -3,6 +3,7 @@
 namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Entity\BackgroundJob;
+use ADT\BackgroundQueue\Exception\TemporaryErrorException;
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManager;
@@ -42,7 +43,7 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @Suppress("unused")
 	 */
-	public function publish(string $callbackName, array $parameters = [], ?string $serialGroup = null, ?string $identifier = null): void
+	public function publish(string $callbackName, mixed $parameters = null, ?string $serialGroup = null, ?string $identifier = null): void
 	{
 		if (!$callbackName) {
 			throw new Exception('The job does not have the required parameter "callbackName" set.');
@@ -135,13 +136,14 @@ class BackgroundQueue
 		}
 
 		// zpracování callbacku
-		// pokud metoda vrátí FALSE, zpráva nebyla zpracována, zpráva se znovu zpracuje pozdeji
-		// pokud metoda vrátí cokoliv jiného (nebo nevrátí nic), proběhla v pořádku, nastavit stav dokončeno
+		// pokud metoda vyhodí TemporaryErrorException, job nebyl zpracován a zpracuje se příště
+		// pokud se vyhodí jakákoliv jiný error nebo exception implementující Throwable, job nebyl zpracován a jeho zpracování se již nebude opakovat
+		// v ostsatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
 		$e = null;
 		try {
-			$state = $callback($entity->getParameters()) === false ? BackgroundJob::STATE_TEMPORARILY_FAILED: BackgroundJob::STATE_FINISHED;
+			$callback($entity->getParameters());
 		} catch (Throwable $e) {
-			$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
+			$state = $e instanceof TemporaryErrorException ? BackgroundJob::STATE_TEMPORARILY_FAILED : BackgroundJob::STATE_PERMANENTLY_FAILED;
 		}
 
 		// zpracování výsledku

@@ -147,7 +147,7 @@ class BackgroundJob
 
 	/**
 	 * @noinspection PhpUnused
-	 * @param $parameters object|array|string|int|float|bool|null
+	 * @param object|array|string|int|float|bool|null $parameters
 	 */
 	final public function setParameters($parameters): self
 	{

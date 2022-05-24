@@ -40,10 +40,11 @@ class BackgroundQueue
 	}
 
 	/**
+	 * @param object|array|string|int|float|bool|null $parameters
 	 * @throws Exception
 	 * @Suppress("unused")
 	 */
-	public function publish(string $callbackName, mixed $parameters = null, ?string $serialGroup = null, ?string $identifier = null): void
+	public function publish(string $callbackName, $parameters = null, ?string $serialGroup = null, ?string $identifier = null): void
 	{
 		if (!$callbackName) {
 			throw new Exception('The job does not have the required parameter "callbackName" set.');
@@ -142,6 +143,7 @@ class BackgroundQueue
 		$e = null;
 		try {
 			$callback($entity->getParameters());
+			$state = BackgroundJob::STATE_FINISHED;
 		} catch (Throwable $e) {
 			$state = $e instanceof TemporaryErrorException ? BackgroundJob::STATE_TEMPORARILY_FAILED : BackgroundJob::STATE_PERMANENTLY_FAILED;
 		}

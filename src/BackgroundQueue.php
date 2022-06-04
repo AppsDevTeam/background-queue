@@ -182,12 +182,11 @@ class BackgroundQueue
 			$qb->andWhere('e.identifier IS NOT NULL');
 		}
 
-		$qb->groupBy('e.identifier');
+		$qb->select('e.identifier')->groupBy('e.identifier');
 
 		$unfinishedJobIdentifiers = [];
-		/** @var BackgroundJob $_entity */
 		foreach ($qb->getQuery()->getResult() as $_entity) {
-			$unfinishedJobIdentifiers[] = $_entity->getIdentifier();
+			$unfinishedJobIdentifiers[] = $_entity['identifier'];
 		}
 
 		return $unfinishedJobIdentifiers;

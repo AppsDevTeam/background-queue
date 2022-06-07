@@ -114,8 +114,8 @@ class BackgroundQueue
 				$this->save($entity);
 			} catch (Exception $e) {
 				self::logException('Unexpected error occurred.', $entity, $e);
-				return;
 			}
+			return;
 		}
 
 		if (!isset($this->config['callbacks'][$entity->getCallbackName()])) {

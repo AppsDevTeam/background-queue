@@ -28,10 +28,9 @@ class ProcessCommand extends Command
 
 		$qb = $this->backgroundQueue->createQueryBuilder();
 
+		$states = BackgroundJob::READY_TO_PROCESS_STATES;
 		if ($this->backgroundQueue->getConfig()['amqpPublishCallback']) {
-			$states = [BackgroundJob::STATE_TEMPORARILY_FAILED];
-		} else {
-			$states = BackgroundJob::READY_TO_PROCESS_STATES;
+			unset ($states[BackgroundJob::STATE_READY]);
 		}
 
 		$qb->andWhere("e.state IN (:state)")
@@ -39,7 +38,11 @@ class ProcessCommand extends Command
 
 		/** @var BackgroundJob $_entity */
 		foreach ($qb->getQuery()->getResult() as $_entity) {
-			$this->backgroundQueue->process($_entity);
+			if ($this->backgroundQueue->getConfig()['amqpPublishCallback']) {
+				$this->backgroundQueue->doPublish($_entity);
+			} else {
+				$this->backgroundQueue->process($_entity);
+			}
 		}
 
 		$this->tryUnlock();

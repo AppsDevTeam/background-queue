@@ -85,7 +85,7 @@ class Mailer
 }
 ```
 
-Pokud callback vyhodí `ADT\BackgroundQueue\Exception\TemporaryErrorException`, záznam se uloží ve stavu `TEMPORARILY_FAILED` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). 
+Pokud callback vyhodí `ADT\BackgroundQueue\Exception\TemporaryErrorException`, záznam se uloží ve stavu `TEMPORARILY_FAILED` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Po `notifyOnNumberOfAttempts` je zaslána notifikace.
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, záznam se uloží ve stavu `WAITING` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Počítadlo pokusů se nezvyšuje.
 
@@ -95,7 +95,7 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 ### 2.3 Commandy
 
-`background-queue:process` Zpracuje všechny záznamy ve stavu `READY` a `TEMPORARILY_FAILED`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED`. Command je ideální spouštět cronem každou minutu.
+`background-queue:process` Zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED` a `WAITING`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED` a `WAITING`. Command je ideální spouštět cronem každou minutu. V případě použití AMQP brokeru je záznam ve stavu `TEMPORARILY_FAILED` a `WAITING` zařazen znovu do AMQP brokera.
 
 `background-queue:clear` Smaže všechny úspěšně zpracované záznamy.
 

@@ -149,7 +149,8 @@ class BackgroundQueue
 		// v ostsatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
 		$e = null;
 		try {
-			$callback($entity->getParameters());
+			$parameters = $entity->getParameters();
+			$callback(...$parameters);
 			$state = BackgroundJob::STATE_FINISHED;
 		} catch (Throwable $e) {
 			switch (get_class($e)) {

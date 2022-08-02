@@ -142,7 +142,8 @@ class BackgroundQueue
 		// v ostsatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
 		$e = null;
 		try {
-			$callback($entity->getParameters());
+			$parameters = $entity->getParameters();
+			$callback(...$parameters);
 			$state = BackgroundJob::STATE_FINISHED;
 		} catch (Throwable $e) {
 			$state = $e instanceof TemporaryErrorException ? BackgroundJob::STATE_TEMPORARILY_FAILED : BackgroundJob::STATE_PERMANENTLY_FAILED;

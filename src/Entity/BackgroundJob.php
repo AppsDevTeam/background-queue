@@ -15,10 +15,12 @@ class BackgroundJob
 	const STATE_FINISHED = 3; // dokončeno
 	const STATE_TEMPORARILY_FAILED = 4; // opakovatelná chyba (např. nedostupné API)
 	const STATE_PERMANENTLY_FAILED = 5; // kritická chyba (např. chyba v implementaci)
+	const STATE_WAITING = 6; // ceka na pristi zpracovani
 
 	const READY_TO_PROCESS_STATES = [
-		self::STATE_READY,
-		self::STATE_TEMPORARILY_FAILED,
+		self::STATE_READY => self::STATE_READY,
+		self::STATE_TEMPORARILY_FAILED => self::STATE_TEMPORARILY_FAILED,
+		self::STATE_WAITING => self::STATE_WAITING
 	];
 
 	/**
@@ -227,6 +229,6 @@ class BackgroundJob
 	/** @noinspection PhpUnused */
 	final public function isReadyForProcess(): bool
 	{
-		return in_array($this->state, self::READY_TO_PROCESS_STATES);
+		return isset(self::READY_TO_PROCESS_STATES[$this->state]);
 	}
 }

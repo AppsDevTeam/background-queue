@@ -4,6 +4,7 @@ namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use ADT\BackgroundQueue\Exception\TemporaryErrorException;
+use ADT\BackgroundQueue\Exception\WaitingException;
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManager;
@@ -65,17 +66,23 @@ class BackgroundQueue
 			$this->save($entity);
 
 			if ($this->config['amqpPublishCallback']) {
-				try {
-					$this->config['amqpPublishCallback']($entity->getId());
-				} catch (Exception $e) {
-					self::logException('Unexpected error occurred.', $entity, $e);
-					
-					$entity->setState(BackgroundJob::STATE_TEMPORARILY_FAILED)
-						->setErrorMessage($e->getMessage());
-					$this->save($entity);
-				}
+				$this->doPublish($entity);
 			}
 		};
+	}
+	
+	/** @internal */
+	public function doPublish(BackgroundJob $entity)
+	{
+		try {
+			$this->config['amqpPublishCallback']($entity->getId());
+		} catch (Exception $e) {
+			self::logException('Unexpected error occurred.', $entity, $e);
+
+			$entity->setState(BackgroundJob::STATE_TEMPORARILY_FAILED)
+				->setErrorMessage($e->getMessage());
+			$this->save($entity);
+		}
 	}
 
 	/**
@@ -146,7 +153,11 @@ class BackgroundQueue
 			$callback(...$parameters);
 			$state = BackgroundJob::STATE_FINISHED;
 		} catch (Throwable $e) {
-			$state = $e instanceof TemporaryErrorException ? BackgroundJob::STATE_TEMPORARILY_FAILED : BackgroundJob::STATE_PERMANENTLY_FAILED;
+			switch (get_class($e)) {
+				case TemporaryErrorException::class: $state = BackgroundJob::STATE_TEMPORARILY_FAILED; break;
+				case WaitingException::class: $state = BackgroundJob::STATE_WAITING; break;
+				default: $state = BackgroundJob::STATE_PERMANENTLY_FAILED;
+			}
 		}
 
 		// zpracování výsledku

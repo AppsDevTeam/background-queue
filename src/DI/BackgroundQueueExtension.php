@@ -42,7 +42,7 @@ class BackgroundQueueExtension extends CompilerExtension
 			// nette/di 2.4
 			$statementClass = \Nette\DI\Statement::class;
 		}
-		$statementEntity = "function(){ return call_user_func_array(?, func_get_args()); }";
+		$statementEntity = 'function(array $parameters){ return call_user_func(?, ...$parameters); }';
 		foreach ($config['callbacks'] as $callbackSlug => $callback) {
 			$config['callbacks'][$callbackSlug] = new $statementClass($statementEntity, [$callback]);
 		}

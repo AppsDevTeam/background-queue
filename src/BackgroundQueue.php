@@ -149,8 +149,8 @@ class BackgroundQueue
 		// v ostsatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
 		$e = null;
 		try {
-			$parameters = $entity->getParameters();
-			$callback(...$parameters);
+			// $callback is actually a Statement, that's why we must pass $entity->getParameters() as an array and unpack it inside the Statement
+			$callback($entity->getParameters());
 			$state = BackgroundJob::STATE_FINISHED;
 		} catch (Throwable $e) {
 			switch (get_class($e)) {

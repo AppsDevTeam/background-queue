@@ -102,3 +102,7 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 `background-queue:clear 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
 
 Všechny commandy jsou chráněny proti vícenásobnému spuštění.
+
+### 2.4 Napojení na AMQP brokera
+
+Pro odbavování pomocí RabbitMQ můžete využít knihovnu https://github.com/AppsDevTeam/background-queue-rabbitmq a nebo se touto knihovnou inspirovat pro vytvoření vlastního AMQP bridge.

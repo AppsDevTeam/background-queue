@@ -75,7 +75,7 @@ class BackgroundQueue
 	public function doPublish(BackgroundJob $entity)
 	{
 		try {
-			$this->config['amqpPublishCallback']($entity->getId());
+			$this->config['amqpPublishCallback']([$entity->getId()]);
 		} catch (Exception $e) {
 			self::logException('Unexpected error occurred.', $entity, $e);
 

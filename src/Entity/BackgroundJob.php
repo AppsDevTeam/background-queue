@@ -140,9 +140,9 @@ class BackgroundJob
 
 	/**
 	 * @noinspection PhpUnused
-	 * @return object|array|string|int|float|bool|null
+	 * @return array
 	 */
-	final public function getParameters()
+	final public function getParameters(): array
 	{
 		return unserialize(stream_get_contents($this->parameters));
 	}
@@ -153,7 +153,7 @@ class BackgroundJob
 	 */
 	final public function setParameters($parameters): self
 	{
-		$this->parameters = serialize($parameters);
+		$this->parameters = serialize(is_array($parameters) ? $parameters : [$parameters]);
 		return $this;
 	}
 

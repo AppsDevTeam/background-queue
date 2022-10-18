@@ -252,7 +252,7 @@ class BackgroundQueue
 				->setParameter('id', $entity->getId());
 		}
 
-		$qb->orderBy('e.createdAt');
+		$qb->orderBy('e.id');
 
 		return $qb->getQuery()
 			->setMaxResults(1)

@@ -7,7 +7,7 @@ use Doctrine\ORM\Mapping as ORM;
 
 /**
  * @ORM\Entity
- * @ORM\Table(indexes={@ORM\Index(name="identifier", columns={"identifier"})})
+ * @ORM\Table(indexes={@ORM\Index(name="IDX_BACKGROUNDJOB_IDENTIFIER", fields={"identifier"}), @ORM\Index(name="IDX_BACKGROUNDJOB_STATE", fields={"state"})})
  */
 class BackgroundJob
 {

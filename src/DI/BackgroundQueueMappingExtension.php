@@ -4,6 +4,8 @@ namespace ADT\BackgroundQueue\DI;
 
 use Doctrine\Common\Annotations\Reader;
 use Doctrine\ORM\Mapping\Driver\AnnotationDriver;
+use Doctrine\ORM\Mapping\Driver\AttributeDriver;
+use Doctrine\ORM\Mapping\Driver\AttributeReader;
 use Doctrine\Persistence\Mapping\Driver\MappingDriverChain;
 use Nette\DI\CompilerExtension;
 
@@ -16,18 +18,21 @@ class BackgroundQueueMappingExtension extends CompilerExtension
 
 		$builder = $this->getContainerBuilder();
 
-		foreach ($builder->getDefinitions() as $definition) {
-			if (is_a($definition->getType(), Reader::class, true)) {
-				$readerDef = $definition;
-			} elseif(is_a($definition->getType(), MappingDriverChain::class, true)) {
-				$mappingDriverDef = $definition;
-			}
+		$paths = [__DIR__ . '/../Entity'];
+
+		if (class_exists(AttributeDriver::class)) {
+			$driverDef = $builder->addDefinition($this->prefix('attributeDriver'))
+				->setFactory(AttributeDriver::class, [$paths]);
+		} else {
+			// definition must be saved to a variable before using in setFactory
+			// no idea why
+			$readerDef = $builder->getDefinitionByType(Reader::class);
+			$driverDef = $builder->addDefinition($this->prefix('annotationDriver'))
+				->setFactory(AnnotationDriver::class, [$readerDef, $paths]);
 		}
+		$driverDef->setAutowired(false);
 
-		$annotationDriverDef = $builder->addDefinition($this->prefix('annotationDriver'))
-			->setFactory(AnnotationDriver::class, [$readerDef, [__DIR__ . '/../Entity']])
-			->setAutowired(false);
-
-		$mappingDriverDef->addSetup('addDriver', [$annotationDriverDef, 'ADT\BackgroundQueue\Entity']);
+		$builder->getDefinitionByType(MappingDriverChain::class)
+			->addSetup('addDriver', [$driverDef, 'ADT\BackgroundQueue\Entity']);
 	}
 }

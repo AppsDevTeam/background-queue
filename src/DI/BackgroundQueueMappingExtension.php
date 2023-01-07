@@ -24,11 +24,8 @@ class BackgroundQueueMappingExtension extends CompilerExtension
 			$driverDef = $builder->addDefinition($this->prefix('attributeDriver'))
 				->setFactory(AttributeDriver::class, [$paths]);
 		} else {
-			// definition must be saved to a variable before using in setFactory
-			// no idea why
-			$readerDef = $builder->getDefinitionByType(Reader::class);
 			$driverDef = $builder->addDefinition($this->prefix('annotationDriver'))
-				->setFactory(AnnotationDriver::class, [$readerDef, $paths]);
+				->setFactory(AnnotationDriver::class, ['@' . Reader::class, $paths]);
 		}
 		$driverDef->setAutowired(false);
 

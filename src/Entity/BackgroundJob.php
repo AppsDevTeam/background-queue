@@ -9,6 +9,9 @@ use Doctrine\ORM\Mapping as ORM;
  * @ORM\Entity
  * @ORM\Table(indexes={@ORM\Index(name="IDX_BACKGROUNDJOB_IDENTIFIER", columns={"identifier"}), @ORM\Index(name="IDX_BACKGROUNDJOB_STATE", columns={"state"})})
  */
+#[ORM\Index(name: 'IDX_BACKGROUNDJOB_IDENTIFIER', columns: ['identifier'])]
+#[ORM\Index(name: 'IDX_BACKGROUNDJOB_STATE', columns: ['state'])]
+#[ORM\Entity]
 class BackgroundJob
 {
 	const STATE_READY = 1; // připraveno
@@ -30,57 +33,70 @@ class BackgroundJob
 	 * @ORM\GeneratedValue
 	 * @internal
 	 */
+	#[ORM\Id]
+	#[ORM\Column(type: 'integer')]
+	#[ORM\GeneratedValue]
 	private ?int $id = null;
 
 	/**
 	 * @ORM\Column(type="string", nullable=false)
 	 */
+	#[ORM\Column(type: 'string', nullable: false)]
 	private string $queue;
 
 	/**
 	 * @ORM\Column(type="string", length=255, nullable=false)
 	 */
+	#[ORM\Column(type: 'string', length: 255, nullable: false)]
 	private string $callbackName;
 
 	/**
 	 * @ORM\Column(type="blob", nullable=false)
 	 * @var resource
 	 */
+	#[ORM\Column(type: 'blob', nullable: false)]
 	private $parameters;
 
 	/**
 	 * @ORM\Column(type="integer", length=1, nullable=false)
 	 */
+	#[ORM\Column(type: 'integer', length: 1, nullable: false)]
 	private int $state = self::STATE_READY;
 
 	/**
 	 * @ORM\Column(type="datetime_immutable", nullable=false)
 	 */
+	#[ORM\Column(type: 'datetime_immutable', nullable: false)]
 	private DateTimeImmutable $createdAt;
 
 	/**
 	 * @ORM\Column(type="datetime_immutable", nullable=true)
 	 */
+	#[ORM\Column(type: 'datetime_immutable', nullable: true)]
 	private ?DateTimeImmutable $lastAttemptAt = null;
 
 	/**
 	 * @ORM\Column(type="integer", nullable=false, options={"default":0})
 	 */
+	#[ORM\Column(type: 'integer', nullable: false, options: ['default' => 0])]
 	private int $numberOfAttempts = 0;
 
 	/**
 	 * @ORM\Column(type="text", nullable=true)
 	 */
+	#[ORM\Column(type: 'text', nullable: true)]
 	private ?string $errorMessage = null;
 
 	/**
 	 * @ORM\Column(type="string", nullable=true)
 	 */
+	#[ORM\Column(type: 'string', nullable: true)]
 	private ?string $serialGroup = null;
 
 	/**
 	 * @ORM\Column(type="string", nullable=true)
 	 */
+	#[ORM\Column(type: 'string', nullable: true)]
 	private ?string $identifier = null;
 
 	final public function __construct()

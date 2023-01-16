@@ -62,8 +62,8 @@ class BackgroundQueue
 			throw new Exception('Callback "' . $callbackName . '" does not exist.');
 		}
 
-		if ($isUnique && !$serialGroup) {
-			throw new Exception('Parameter "serialGroup has to be set if "isUnique" is true.');
+		if ((!$serialGroup || !$identifier) && $isUnique) {
+			throw new Exception('Parameters "serialGroup" and "identifier" have to be set if "isUnique" is true.');
 		}
 
 		$entity = new BackgroundJob();

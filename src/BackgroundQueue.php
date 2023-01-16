@@ -250,7 +250,6 @@ class BackgroundQueue
 
 	/**
 	 * @throws NonUniqueResultException
-	 * @throws NoResultException
 	 */
 	private function isRedundant(BackgroundJob $entity): bool
 	{

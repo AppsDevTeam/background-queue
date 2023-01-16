@@ -12,7 +12,8 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Index(name: 'IDX_BACKGROUNDJOB_IDENTIFIER', columns: ['identifier'])]
 #[ORM\Index(name: 'IDX_BACKGROUNDJOB_STATE', columns: ['state'])]
 #[ORM\Entity]
-final class BackgroundJob
+// Cannot be final because of orm:generate-proxies command
+class BackgroundJob
 {
 	const STATE_READY = 1; // připraveno
 	const STATE_PROCESSING = 2; // zpracovává se

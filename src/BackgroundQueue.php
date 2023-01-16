@@ -11,6 +11,7 @@ use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\EntityRepository;
 use Doctrine\ORM\NonUniqueResultException;
+use Doctrine\ORM\NoResultException;
 use Doctrine\ORM\OptimisticLockException;
 use Doctrine\ORM\ORMException;
 use Doctrine\ORM\QueryBuilder;
@@ -45,7 +46,13 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @Suppress("unused")
 	 */
-	public function publish(string $callbackName, $parameters = null, ?string $serialGroup = null, ?string $identifier = null): void
+	public function publish(
+		string $callbackName,
+		$parameters = null,
+		?string $serialGroup = null,
+		?string $identifier = null,
+		bool $isUnique = false
+	): void
 	{
 		if (!$callbackName) {
 			throw new Exception('The job does not have the required parameter "callbackName" set.');
@@ -55,12 +62,17 @@ class BackgroundQueue
 			throw new Exception('Callback "' . $callbackName . '" does not exist.');
 		}
 
+		if ($isUnique && !$serialGroup) {
+			throw new Exception('Parameter "serialGroup has to be set if "isUnique" is true.');
+		}
+
 		$entity = new BackgroundJob();
 		$entity->setQueue($this->config['queue']);
 		$entity->setCallbackName($callbackName);
 		$entity->setParameters($parameters);
 		$entity->setSerialGroup($serialGroup);
 		$entity->setIdentifier($identifier);
+		$entity->setIsUnique($isUnique);
 
 		$this->onShutdown[] = function () use ($entity) {
 			$this->save($entity);
@@ -111,6 +123,12 @@ class BackgroundQueue
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
 			self::logException('Unexpected state', $entity);
+			return;
+		}
+
+		if ($this->isRedundant($entity)) {
+			$entity->setState(BackgroundJob::STATE_REDUNDANT);
+			$this->save($entity);
 			return;
 		}
 
@@ -228,6 +246,28 @@ class BackgroundQueue
 		foreach ($this->onShutdown as $_handler) {
 			$_handler->call($this);
 		}
+	}
+
+	/**
+	 * @throws NonUniqueResultException
+	 * @throws NoResultException
+	 */
+	private function isRedundant(BackgroundJob $entity): bool
+	{
+		if (!$entity->isUnique()) {
+			return false;
+		}
+
+		$qb = $this->createQueryBuilder()
+			->select('COUNT(e)');
+
+		$qb->andWhere('e.identifier = :identifier')
+			->setParameter('identifier', $entity->getIdentifier());
+
+		$qb->andWhere('e.id < :id')
+			->setParameter('id', $entity->getId());
+
+		return (bool) $qb->getQuery()->getSingleScalarResult();
 	}
 
 	/**

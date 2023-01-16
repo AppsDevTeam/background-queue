@@ -12,7 +12,7 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Index(name: 'IDX_BACKGROUNDJOB_IDENTIFIER', columns: ['identifier'])]
 #[ORM\Index(name: 'IDX_BACKGROUNDJOB_STATE', columns: ['state'])]
 #[ORM\Entity]
-class BackgroundJob
+final class BackgroundJob
 {
 	const STATE_READY = 1; // připraveno
 	const STATE_PROCESSING = 2; // zpracovává se
@@ -20,6 +20,7 @@ class BackgroundJob
 	const STATE_TEMPORARILY_FAILED = 4; // opakovatelná chyba (např. nedostupné API)
 	const STATE_PERMANENTLY_FAILED = 5; // kritická chyba (např. chyba v implementaci)
 	const STATE_WAITING = 6; // ceka na pristi zpracovani
+	const STATE_REDUNDANT = 7; // je nadbytecny (kdyz isUnique = true)
 
 	const READY_TO_PROCESS_STATES = [
 		self::STATE_READY => self::STATE_READY,
@@ -98,6 +99,12 @@ class BackgroundJob
 	 */
 	#[ORM\Column(type: 'string', nullable: true)]
 	private ?string $identifier = null;
+
+	/**
+	 * @ORM\Column(type="boolean", options={"default":0})
+	 */
+	#[ORM\Column(type: 'boolean', options: ['default' => 0])]
+	private bool $isUnique = false;
 
 	final public function __construct()
 	{
@@ -240,6 +247,17 @@ class BackgroundJob
 	public function setIdentifier(?string $identifier): self
 	{
 		$this->identifier = $identifier;
+		return $this;
+	}
+
+	public function isUnique(): bool
+	{
+		return $this->isUnique;
+	}
+
+	public function setIsUnique(bool $isUnique): self
+	{
+		$this->isUnique = $isUnique;
 		return $this;
 	}
 

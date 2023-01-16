@@ -56,8 +56,9 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
         ];
         $serialGroup = 'invoice-' . $invoice->getId();
         $identifier = 'sendEmail-' . $invoice->getId();
+	$isUnique = true; // always set to true if a callback on an entity should be performed only once, regardless of how it can happen that it is added to your queue twice
 
-        $this->backgroundQueue->publish($callbackName, $parameters, $serialGroup, $identifier);
+        $this->backgroundQueue->publish($callbackName, $parameters, $serialGroup, $identifier, $isUnique);
     }
 }
 

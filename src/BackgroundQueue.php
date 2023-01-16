@@ -259,7 +259,7 @@ class BackgroundQueue
 		}
 
 		$qb = $this->createQueryBuilder()
-			->select('COUNT(e)');
+			->select('e.id');
 
 		$qb->andWhere('e.identifier = :identifier')
 			->setParameter('identifier', $entity->getIdentifier());
@@ -267,7 +267,7 @@ class BackgroundQueue
 		$qb->andWhere('e.id < :id')
 			->setParameter('id', $entity->getId());
 
-		return (bool) $qb->getQuery()->getSingleScalarResult();
+		return (bool) $qb->getQuery()->setMaxResults(1)->getOneOrNullResult();
 	}
 
 	/**

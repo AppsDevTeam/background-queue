@@ -11,7 +11,6 @@ use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\EntityRepository;
 use Doctrine\ORM\NonUniqueResultException;
-use Doctrine\ORM\NoResultException;
 use Doctrine\ORM\OptimisticLockException;
 use Doctrine\ORM\ORMException;
 use Doctrine\ORM\QueryBuilder;
@@ -202,8 +201,8 @@ class BackgroundQueue
 	{
 		$qb = $this->createQueryBuilder();
 
-		$qb->andWhere('e.state != :state')
-			->setParameter('state', BackgroundJob::STATE_FINISHED);
+		$qb->andWhere('e.state NOT IN (:state)')
+			->setParameter('state', BackgroundJob::FINISHED_STATES);
 
 		if ($identifiers) {
 			$qb->andWhere('e.identifier IN (:identifier)')
@@ -280,8 +279,8 @@ class BackgroundQueue
 
 		$qb = $this->createQueryBuilder();
 
-		$qb->andWhere('e.state != :state')
-			->setParameter('state', BackgroundJob::STATE_FINISHED);
+		$qb->andWhere('e.state NOT IN (:state)')
+			->setParameter('state', BackgroundJob::FINISHED_STATES);
 
 		$qb->andWhere('e.serialGroup = :serialGroup')
 			->setParameter('serialGroup', $entity->getSerialGroup());

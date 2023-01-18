@@ -29,6 +29,11 @@ class BackgroundJob
 		self::STATE_WAITING => self::STATE_WAITING
 	];
 
+	const FINISHED_STATES = [
+		self::STATE_FINISHED => self::STATE_FINISHED,
+		self::STATE_REDUNDANT => self::STATE_REDUNDANT,
+	];
+
 	/**
 	 * @ORM\Id
 	 * @ORM\Column(type="integer")

@@ -12,6 +12,8 @@ use Nette\DI\CompilerExtension;
 /** @noinspection PhpUnused */
 class BackgroundQueueMappingExtension extends CompilerExtension
 {
+	private $driverDef;
+
 	public function loadConfiguration()
 	{
 		// mapping of BackgroundJob entity
@@ -21,15 +23,20 @@ class BackgroundQueueMappingExtension extends CompilerExtension
 		$paths = [__DIR__ . '/../Entity'];
 
 		if (class_exists(AttributeDriver::class)) {
-			$driverDef = $builder->addDefinition($this->prefix('attributeDriver'))
+			$this->driverDef = $builder->addDefinition($this->prefix('attributeDriver'))
 				->setFactory(AttributeDriver::class, [$paths]);
 		} else {
-			$driverDef = $builder->addDefinition($this->prefix('annotationDriver'))
+			$this->driverDef = $builder->addDefinition($this->prefix('annotationDriver'))
 				->setFactory(AnnotationDriver::class, ['@' . Reader::class, $paths]);
 		}
-		$driverDef->setAutowired(false);
+		$this->driverDef->setAutowired(false);
+	}
 
+	public function beforeCompile()	
+	{
+		$builder = $this->getContainerBuilder();	
+		
 		$builder->getDefinitionByType(MappingDriverChain::class)
-			->addSetup('addDriver', [$driverDef, 'ADT\BackgroundQueue\Entity']);
+			->addSetup('addDriver', [$this->driverDef, 'ADT\BackgroundQueue\Entity']);
 	}
 }

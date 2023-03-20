@@ -197,12 +197,17 @@ class BackgroundQueue
 		}
 	}
 
-	public function getUnfinishedJobIdentifiers(array $identifiers = []): array
+	public function getUnfinishedJobIdentifiers(array $identifiers = [], bool $excludeProcessing = false): array
 	{
 		$qb = $this->createQueryBuilder();
 
+		$states = BackgroundJob::FINISHED_STATES;
+		if ($excludeProcessing) {
+			$states[BackgroundJob::STATE_PROCESSING] = BackgroundJob::STATE_PROCESSING;
+		}
+
 		$qb->andWhere('e.state NOT IN (:state)')
-			->setParameter('state', BackgroundJob::FINISHED_STATES);
+			->setParameter('state', $states);
 
 		if ($identifiers) {
 			$qb->andWhere('e.identifier IN (:identifier)')

@@ -109,9 +109,21 @@ class BackgroundQueue
 			/** @var BackgroundJob $entity */
 			$entity = $this->getRepository()->find($id);
 
-			// zalogovat (a smazat z RabbitMQ DB)
 			if (!$entity) {
-				self::logException('No job found for ID "' . $id . '"');
+				if ($this->config['amqpPublishCallback']) {
+					try {
+						// pokud je to redis fungujici v clusteru na vice serverech, tak jeste nemusi byt
+						// syncnuta master master databaze
+						// odlozime o 1 vterinu
+						$this->config['amqpPublishCallback']([$id, 'waiting']);
+					} catch(\Exception $e) {
+						// zalogovat (a smazat z RabbitMQ DB)
+						self::logException('Unexpected error occurred for ID "' . $id . '".', null, $e);
+					}
+				} else {
+					// zalogovat (a smazat z RabbitMQ DB)
+					self::logException('No job found for ID "' . $id . '."');
+				}
 				return;
 			}
 		}

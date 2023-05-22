@@ -112,7 +112,7 @@ class BackgroundQueue
 			if (!$entity) {
 				if ($this->config['amqpPublishCallback']) {
 					try {
-						// pokud je to redis fungujici v clusteru na vice serverech, tak jeste nemusi byt
+						// pokud je to rabbit fungujici v clusteru na vice serverech, tak jeste nemusi byt
 						// syncnuta master master databaze
 						// odlozime o 1 vterinu
 						$this->config['amqpPublishCallback']([$id, 'waiting']);

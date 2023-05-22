@@ -74,10 +74,16 @@ class BackgroundQueue
 		$entity->setIsUnique($isUnique);
 
 		$this->onShutdown[] = function () use ($entity) {
-			$this->save($entity);
+			try {
+				$this->save($entity);
 
-			if ($this->config['amqpPublishCallback']) {
-				$this->doPublish($entity);
+				if ($this->config['amqpPublishCallback']) {
+					$this->doPublish($entity);
+				}
+			} catch (\Exception $e) {
+				// V onShutdown není Nette schopné exception vypsat, tak ji aspoň zalogujeme.
+				Debugger::log($e, ILogger::EXCEPTION);
+				throw $e;
 			}
 		};
 	}

@@ -79,28 +79,28 @@ namespace App\Model;
 
 class Mailer
 {
-	public function send(array $parameters) 
+	public function send(string $to, string $subject, string $text) 
 	{
 	    ...
 	}
 }
 ```
 
-Pokud callback vyhodí `ADT\BackgroundQueue\Exception\TemporaryErrorException`, záznam se uloží ve stavu `TEMPORARILY_FAILED` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Po `notifyOnNumberOfAttempts` je zaslána notifikace.
+Pokud callback vyhodí `ADT\BackgroundQueue\Exception\PermanentErrorException`, záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně.
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, záznam se uloží ve stavu `WAITING` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Počítadlo pokusů se nezvyšuje.
 
-Pokud callback vyhodí jakýkoliv jiný error nebo exception implementující `Throwable`, záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně. 
+Pokud callback vyhodí jakýkoliv jiný error nebo exception implementující `Throwable`, záznam se uloží ve stavu `TEMPORARILY_FAILED` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Po `notifyOnNumberOfAttempts` je zaslána notifikace. Prodleva mezi každým dalším opakováním je prodloužena o dvojnásobek času, maximálně však na dobu 16 minut.
 
 Ve všech ostatních případech se záznam uloží jako úspěšně dokončený ve stavu `STATE_FINISHED`.
 
 ### 2.3 Commandy
 
-`background-queue:process` Zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED` a `WAITING`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED` a `WAITING`. Command je ideální spouštět cronem každou minutu. V případě použití AMQP brokeru je záznam ve stavu `TEMPORARILY_FAILED` a `WAITING` zařazen znovu do AMQP brokera.
+`background-queue:process` Zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `AMQP_FAILED`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED` a `WAITING`. Command je ideální spouštět cronem každou minutu. V případě použití AMQP brokeru je záznam ve stavu `TEMPORARILY_FAILED` a `WAITING` zařazen znovu do AMQP brokera.
 
-`background-queue:clear` Smaže všechny úspěšně zpracované záznamy.
+`background-queue:clear-finished` Smaže všechny úspěšně zpracované záznamy.
 
-`background-queue:clear 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
+`background-queue:clear-finished 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
 
 Všechny commandy jsou chráněny proti vícenásobnému spuštění.
 

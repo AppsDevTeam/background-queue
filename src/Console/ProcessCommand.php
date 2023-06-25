@@ -29,7 +29,7 @@ class ProcessCommand extends Command
 		$states = BackgroundJob::READY_TO_PROCESS_STATES;
 		if ($this->backgroundQueue->getConfig()['amqpPublishCallback']) {
 			unset ($states[BackgroundJob::STATE_READY]);
-			if ($this->backgroundQueue->getConfig()['amqpWaitingQueueName']) {
+			if ($this->backgroundQueue->getConfig()['amqpWaitingProducerName']) {
 				unset ($states[BackgroundJob::STATE_WAITING]);
 			}
 		}

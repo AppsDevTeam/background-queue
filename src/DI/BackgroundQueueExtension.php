@@ -25,7 +25,7 @@ class BackgroundQueueExtension extends CompilerExtension
 			'tempDir' => Expect::string()->required(),
 			'queue' => Expect::string('general'),
 			'amqpPublishCallback' => Expect::anyOf(null, Expect::type('callable')),
-			'amqpWaitingQueueName' => Expect::string(),
+			'amqpWaitingProducerName' => Expect::string()->nullable(),
 		]);
 	}
 

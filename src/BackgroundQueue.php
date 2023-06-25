@@ -94,15 +94,15 @@ class BackgroundQueue
 	 * @internal
 	 *
 	 * @param int|BackgroundJob $entity
-	 * @param string|null $queue
+	 * @param string|null $producer
 	 * @return void
 	 * @throws ORMException
 	 * @throws OptimisticLockException
 	 */
-	public function doPublish($entity, ?string $queue = null)
+	public function doPublish($entity, ?string $producer = null)
 	{
 		try {
-			$this->config['amqpPublishCallback']([is_int($entity) ? $entity : $entity->getId(), $queue]);
+			$this->config['amqpPublishCallback']([is_int($entity) ? $entity : $entity->getId(), $producer]);
 		} catch (Exception $e) {
 			self::logException('Unexpected error occurred.', $entity, $e);
 
@@ -131,7 +131,7 @@ class BackgroundQueue
 					// tak jeste nemusi byt syncnuta master master databaze
 
 					// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
-					$this->doPublish($id, $this->config['amqpWaitingQueueName']);
+					$this->doPublish($id, $this->config['amqpWaitingProducerName']);
 				} else {
 					// zalogovat
 					self::logException('No job found for ID "' . $id . '."');
@@ -221,8 +221,8 @@ class BackgroundQueue
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
 					self::logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
 				}
-			} elseif ($state === BackgroundJob::STATE_WAITING && $this->config['amqpPublishCallback'] && $this->config['amqpWaitingQueueName']) {
-				$this->doPublish($entity, $this->config['amqpWaitingQueueName']);
+			} elseif ($state === BackgroundJob::STATE_WAITING && $this->config['amqpPublishCallback'] && $this->config['amqpWaitingProducerName']) {
+				$this->doPublish($entity, $this->config['amqpWaitingProducerName']);
 			}
 		} catch (Exception $innerEx) {
 			self::logException('Unexpected error occurred', $entity, $innerEx);

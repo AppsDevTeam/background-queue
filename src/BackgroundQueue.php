@@ -3,6 +3,7 @@
 namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Entity\BackgroundJob;
+use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\TemporaryErrorException;
 use ADT\BackgroundQueue\Exception\WaitingException;
 use DateTimeImmutable;
@@ -189,9 +190,9 @@ class BackgroundQueue
 			$state = BackgroundJob::STATE_FINISHED;
 		} catch (Throwable $e) {
 			switch (get_class($e)) {
-				case TemporaryErrorException::class: $state = BackgroundJob::STATE_TEMPORARILY_FAILED; break;
+				case PermanentErrorException::class: $state = BackgroundJob::STATE_PERMANENTLY_FAILED; break;
 				case WaitingException::class: $state = BackgroundJob::STATE_WAITING; break;
-				default: $state = BackgroundJob::STATE_PERMANENTLY_FAILED;
+				default: $state = BackgroundJob::STATE_TEMPORARILY_FAILED;
 			}
 		}
 

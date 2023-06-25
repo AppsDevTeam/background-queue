@@ -6,6 +6,7 @@ use ADT\BackgroundQueue\Entity\BackgroundJob;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\TemporaryErrorException;
 use ADT\BackgroundQueue\Exception\WaitingException;
+use DateTime;
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManager;
@@ -97,7 +98,7 @@ class BackgroundQueue
 		} catch (Exception $e) {
 			self::logException('Unexpected error occurred.', $entity, $e);
 
-			$entity->setState(BackgroundJob::STATE_TEMPORARILY_FAILED)
+			$entity->setState(BackgroundJob::STATE_AMQP_FAILED)
 				->setErrorMessage($e->getMessage());
 			$this->save($entity);
 		}
@@ -131,6 +132,12 @@ class BackgroundQueue
 					// zalogovat (a smazat z RabbitMQ DB)
 					self::logException('No job found for ID "' . $id . '."');
 				}
+				return;
+			} elseif (
+				$entity->getState() === BackgroundJob::STATE_TEMPORARILY_FAILED
+				&&
+				new DateTime('-' . min(16, ($entity->getNumberOfAttempts() - 1) * 2) . ' minutes') < $entity->getLastAttemptAt()
+			) {
 				return;
 			}
 		}

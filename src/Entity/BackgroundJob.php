@@ -22,11 +22,13 @@ class BackgroundJob
 	const STATE_PERMANENTLY_FAILED = 5; // kritická chyba (např. chyba v implementaci)
 	const STATE_WAITING = 6; // ceka na pristi zpracovani
 	const STATE_REDUNDANT = 7; // je nadbytecny (kdyz isUnique = true)
+	const STATE_AMQP_FAILED = 8; // nepodarilo se zpracovat pomoci AMQP
 
 	const READY_TO_PROCESS_STATES = [
 		self::STATE_READY => self::STATE_READY,
 		self::STATE_TEMPORARILY_FAILED => self::STATE_TEMPORARILY_FAILED,
-		self::STATE_WAITING => self::STATE_WAITING
+		self::STATE_WAITING => self::STATE_WAITING,
+		self::STATE_AMQP_FAILED => self::STATE_AMQP_FAILED
 	];
 
 	const FINISHED_STATES = [

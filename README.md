@@ -25,6 +25,7 @@ backgroundQueue:
 	tempDir: %tempDir% # cesta pro uložení zámku proti vícenásobnému spuštění commandu
 	queue: general # nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
 	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
+	amqpWaitingQueueName: 'waiting' # nepovinné, název queue, kam ukládat záznamy, které ještě nelze zpracovat
 ```
 
 Obě extensions musí být registrovány až po Doctrine extensions.

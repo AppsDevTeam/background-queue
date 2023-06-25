@@ -82,19 +82,27 @@ class BackgroundQueue
 				if ($this->config['amqpPublishCallback']) {
 					$this->doPublish($entity);
 				}
-			} catch (\Exception $e) {
+			} catch (Exception $e) {
 				// V onShutdown není Nette schopné exception vypsat, tak ji aspoň zalogujeme.
 				Debugger::log($e, ILogger::EXCEPTION);
 				throw $e;
 			}
 		};
 	}
-	
-	/** @internal */
-	public function doPublish(BackgroundJob $entity)
+
+	/**
+	 * @internal
+	 *
+	 * @param int|BackgroundJob $entity
+	 * @param string|null $queue
+	 * @return void
+	 * @throws ORMException
+	 * @throws OptimisticLockException
+	 */
+	public function doPublish($entity, ?string $queue = null)
 	{
 		try {
-			$this->config['amqpPublishCallback']([$entity->getId()]);
+			$this->config['amqpPublishCallback']([is_int($entity) ? $entity : $entity->getId(), $queue]);
 		} catch (Exception $e) {
 			self::logException('Unexpected error occurred.', $entity, $e);
 
@@ -119,17 +127,13 @@ class BackgroundQueue
 
 			if (!$entity) {
 				if ($this->config['amqpPublishCallback']) {
-					try {
-						// pokud je to rabbit fungujici v clusteru na vice serverech, tak jeste nemusi byt
-						// syncnuta master master databaze
-						// odlozime o 1 vterinu
-						$this->config['amqpPublishCallback']([$id, 'waiting']);
-					} catch(\Exception $e) {
-						// zalogovat (a smazat z RabbitMQ DB)
-						self::logException('Unexpected error occurred for ID "' . $id . '".', null, $e);
-					}
+					// pokud je to rabbit fungujici v clusteru na vice serverech,
+					// tak jeste nemusi byt syncnuta master master databaze
+
+					// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
+					$this->doPublish($id, $this->config['amqpWaitingQueueName']);
 				} else {
-					// zalogovat (a smazat z RabbitMQ DB)
+					// zalogovat
 					self::logException('No job found for ID "' . $id . '."');
 				}
 				return;
@@ -217,6 +221,8 @@ class BackgroundQueue
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
 					self::logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
 				}
+			} elseif ($state === BackgroundJob::STATE_WAITING && $this->config['amqpPublishCallback'] && $this->config['amqpWaitingQueueName']) {
+				$this->doPublish($entity, $this->config['amqpWaitingQueueName']);
 			}
 		} catch (Exception $innerEx) {
 			self::logException('Unexpected error occurred', $entity, $innerEx);

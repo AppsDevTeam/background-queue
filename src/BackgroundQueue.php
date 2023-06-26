@@ -27,8 +27,15 @@ class BackgroundQueue
 
 	private EntityManagerInterface $em;
 
-	/** @var Closure[]  */
-	private array $onShutdown = [];
+	/**
+	 * @var callable[]
+	 */
+	public $onAfterProcess = [];
+
+	/**
+	 * @var callable[]
+	 */
+	public $onBeforeProcess = [];
 
 	/**
 	 * @throws ORMException
@@ -75,19 +82,11 @@ class BackgroundQueue
 		$entity->setIdentifier($identifier);
 		$entity->setIsUnique($isUnique);
 
-		$this->onShutdown[] = function () use ($entity) {
-			try {
-				$this->save($entity);
+		$this->save($entity);
 
-				if ($this->config['amqpPublishCallback']) {
-					$this->doPublish($entity);
-				}
-			} catch (Exception $e) {
-				// V onShutdown není Nette schopné exception vypsat, tak ji aspoň zalogujeme.
-				Debugger::log($e, ILogger::EXCEPTION);
-				throw $e;
-			}
-		};
+		if ($this->config['amqpPublishCallback']) {
+			$this->doPublish($entity);
+		}
 	}
 
 	/**
@@ -190,6 +189,10 @@ class BackgroundQueue
 			return;
 		}
 
+		foreach ($this->onBeforeProcess as $cb) {
+			$cb($entity->getParameters());
+		}
+
 		// zpracování callbacku
 		// pokud metoda vyhodí TemporaryErrorException, job nebyl zpracován a zpracuje se příště
 		// pokud se vyhodí jakákoliv jiný error nebo exception implementující Throwable, job nebyl zpracován a jeho zpracování se již nebude opakovat
@@ -205,6 +208,10 @@ class BackgroundQueue
 				case WaitingException::class: $state = BackgroundJob::STATE_WAITING; break;
 				default: $state = BackgroundJob::STATE_TEMPORARILY_FAILED;
 			}
+		}
+
+		foreach ($this->onAfterProcess as $cb) {
+			$cb($entity->getParameters());
 		}
 
 		// zpracování výsledku
@@ -271,17 +278,6 @@ class BackgroundQueue
 		return $this->getRepository()->createQueryBuilder('e')
 			->andWhere('e.queue = :queue')
 			->setParameter('queue', $this->config['queue']);
-	}
-
-	/**
-	 * @internal
-	 * @Suppress("unused")
-	 */
-	public function onShutdown(): void
-	{
-		foreach ($this->onShutdown as $_handler) {
-			$_handler->call($this);
-		}
 	}
 
 	/**

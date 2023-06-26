@@ -176,6 +176,7 @@ class BackgroundJob
 	 */
 	final public function getParameters(): array
 	{
+		rewind($this->parameters);
 		return unserialize(stream_get_contents($this->parameters));
 	}
 

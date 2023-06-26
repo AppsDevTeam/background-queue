@@ -24,6 +24,8 @@ class BackgroundQueueExtension extends CompilerExtension
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
 			'tempDir' => Expect::string()->required(),
 			'queue' => Expect::string('general'),
+			'doctrineDbalConnection' => Expect::type('callable')->required(),
+			'doctrineOrmConfiguration' => Expect::type('callable')->required(),
 			'amqpPublishCallback' => Expect::anyOf(null, Expect::type('callable')),
 			'amqpWaitingProducerName' => Expect::string()->nullable(),
 		]);
@@ -57,14 +59,6 @@ class BackgroundQueueExtension extends CompilerExtension
 		}
 
 		// service registration
-		
-		foreach ($builder->getDefinitions() as $definition) {
-			if (is_a($definition->getType(), Connection::class, true)) {
-				$config['doctrineDbalConnection'] = $definition;
-			} elseif(is_a($definition->getType(), Configuration::class, true)) {
-				$config['doctrineOrmConfiguration'] = $definition;
-			}
-		}
 
 		$builder->addDefinition($this->prefix('service'))
 			->setFactory(BackgroundQueue::class)

@@ -14,7 +14,6 @@ composer require adt/background-queue
 ### 1.2 Registrace a konfigurace
 ```
 extensions:
-    - ADT\BackgroundQueue\DI\BackgroundQueueMappingExtension # slouží pouze pro namapování entity
 	backgroundQueue: ADT\BackgroundQueue\DI\BackgroundQueueExtension
 
 backgroundQueue:
@@ -24,11 +23,13 @@ backgroundQueue:
 	notifyOnNumberOfAttempts: 5 # počet pokusů o zpracování záznamu před zalogováním
 	tempDir: %tempDir% # cesta pro uložení zámku proti vícenásobnému spuštění commandu
 	queue: general # nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
+	doctrineDbalConnection: @doctrine.default.connection
+	doctrineOrmConfiguration: @doctrine.default.ormConfiguration
 	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
 	amqpWaitingQueueName: 'waiting' # nepovinné, název queue, kam ukládat záznamy, které ještě nelze zpracovat
 ```
 
-Obě extensions musí být registrovány až po Doctrine extensions.
+Extension musí být registrována až po Doctrine extension.
 
 Následně je potřeba standardním způsobem vygenerovat doctrine migraci, např.:
 

@@ -28,6 +28,16 @@ class BackgroundQueue
 	private EntityManagerInterface $em;
 
 	/**
+	 * @var callable[]
+	 */
+	public $onAfterProcess = [];
+
+	/**
+	 * @var callable[]
+	 */
+	public $onBeforeProcess = [];
+
+	/**
 	 * @throws ORMException
 	 */
 	public function __construct(array $config)
@@ -179,6 +189,10 @@ class BackgroundQueue
 			return;
 		}
 
+		foreach ($this->onBeforeProcess as $cb) {
+			$cb($entity->getParameters());
+		}
+
 		// zpracování callbacku
 		// pokud metoda vyhodí TemporaryErrorException, job nebyl zpracován a zpracuje se příště
 		// pokud se vyhodí jakákoliv jiný error nebo exception implementující Throwable, job nebyl zpracován a jeho zpracování se již nebude opakovat
@@ -194,6 +208,10 @@ class BackgroundQueue
 				case WaitingException::class: $state = BackgroundJob::STATE_WAITING; break;
 				default: $state = BackgroundJob::STATE_TEMPORARILY_FAILED;
 			}
+		}
+
+		foreach ($this->onAfterProcess as $cb) {
+			$cb($entity->getParameters());
 		}
 
 		// zpracování výsledku

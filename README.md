@@ -23,10 +23,21 @@ backgroundQueue:
 	notifyOnNumberOfAttempts: 5 # počet pokusů o zpracování záznamu před zalogováním
 	tempDir: %tempDir% # cesta pro uložení zámku proti vícenásobnému spuštění commandu
 	queue: general # nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
-	doctrineDbalConnection: @doctrine.default.connection
-	doctrineOrmConfiguration: @doctrine.default.ormConfiguration
+	doctrineDbalConnection: @doctrine.default.connection # doctrine conneciton
+	doctrineOrmConfiguration: @doctrine.default.ormConfiguration # doctrine configuration
 	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
 	amqpWaitingQueueName: 'waiting' # nepovinné, název queue, kam ukládat záznamy, které ještě nelze zpracovat
+
+# priklad namapovani entity s Nettrine
+nettrine.orm.attributes:
+	mapping:
+		ADT\BackgroundQueue\Entity: %appDir%/../vendor/adt/background-queue/src/Entity
+
+# priklad namapovani entity s Kdyby
+doctrine:
+	metadata:
+		ADT\BackgroundQueue\Entity: %appDir%/../vendor/adt/background-queue/src/Entity
+
 ```
 
 Extension musí být registrována až po Doctrine extension.

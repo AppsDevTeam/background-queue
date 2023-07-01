@@ -129,8 +129,14 @@ class BackgroundQueue
 					// pokud je to rabbit fungujici v clusteru na vice serverech,
 					// tak jeste nemusi byt syncnuta master master databaze
 
-					// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
-					$this->doPublish($id, $this->config['amqpWaitingProducerName']);
+					// coz si overime tak, ze v db neexistuje vetsi id
+					if ($this->createQueryBuilder()->select('COUNT(e)')->andWhere('e.id > :id')->setParameter('id', $id)->getQuery()->getSingleScalarResult() === 0) {
+						// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
+						$this->doPublish($id, $this->config['amqpWaitingProducerName']);
+					} else {
+						// zalogovat
+						self::logException('No job found for ID "' . $id . '."');
+					}
 				} else {
 					// zalogovat
 					self::logException('No job found for ID "' . $id . '."');

@@ -24,8 +24,7 @@ class BackgroundQueueExtension extends CompilerExtension
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
 			'tempDir' => Expect::string()->required(),
 			'queue' => Expect::string('general'),
-			'doctrineDbalConnection' => Expect::type('callable')->required(),
-			'doctrineOrmConfiguration' => Expect::type('callable')->required(),
+			'connection' => Expect::arrayOf('int|string', 'string'),
 			'amqpPublishCallback' => Expect::anyOf(null, Expect::type('callable')),
 			'amqpWaitingProducerName' => Expect::string()->nullable(),
 		]);

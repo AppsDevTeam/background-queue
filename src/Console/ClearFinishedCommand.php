@@ -32,15 +32,15 @@ class ClearFinishedCommand extends Command
 
 		$qb = $this->backgroundQueue->createQueryBuilder()
 			->delete()
-			->andWhere('e.state = :state')
+			->andWhere('state = :state')
 			->setParameter('state', BackgroundJob::STATE_FINISHED);
 
 		if ($input->getArgument("days")) {
-			$qb->andWhere('e.createdAt <= :ago')
+			$qb->andWhere('createdAt <= :ago')
 				->setParameter('ago', (new DateTime('midnight'))->modify('-' . $input->getArgument("days") . ' days'));
 		}
 
-		$qb->getQuery()->execute();
+		$qb->executeQuery();
 
 		$this->tryUnlock();
 

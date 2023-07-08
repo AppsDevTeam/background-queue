@@ -39,7 +39,7 @@ class ProcessCommand extends Command
 			->setParameter("state", $states);
 
 		/** @var BackgroundJob $_entity */
-		foreach ($qb->getQuery()->getResult() as $_entity) {
+		foreach ($this->backgroundQueue->fetchAll($qb) as $_entity) {
 			if (
 				$this->backgroundQueue->getConfig()['amqpPublishCallback']
 				&&

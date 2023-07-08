@@ -10,6 +10,11 @@ use DateTimeInterface;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Query\QueryBuilder;
+use Doctrine\DBAL\Schema\AbstractSchemaManager;
+use Doctrine\DBAL\Schema\Comparator;
+use Doctrine\DBAL\Schema\Schema;
+use Doctrine\DBAL\Schema\SchemaException;
+use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\NonUniqueResultException;
 use Exception;
 use Throwable;
@@ -24,12 +29,12 @@ class BackgroundQueue
 	/**
 	 * @var callable[]
 	 */
-	public array $onAfterProcess = [];
+	public $onBeforeProcess = [];
 
 	/**
 	 * @var callable[]
 	 */
-	public array $onBeforeProcess = [];
+	public $onAfterProcess = [];
 
 	/**
 	 * @throws \Doctrine\DBAL\Exception
@@ -38,6 +43,7 @@ class BackgroundQueue
 	{
 		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);
+		$this->updateSchema();
 	}
 
 	/**
@@ -279,7 +285,7 @@ class BackgroundQueue
 	{
 		return $this->connection->createQueryBuilder()
 			->select('*')
-			->from('background_job')
+			->from($this->config['tableName'])
 			->andWhere('queue = :queue')
 			->setParameter('queue', $this->config['queue']);
 	}
@@ -301,9 +307,7 @@ class BackgroundQueue
 		}
 
 		$entities = [];
-		// Doctrine/DBAL 2 BC
-		$callback = method_exists($this->connection, 'fetchAll') ? [$this->connection, 'fetchAll'] : [$this->connection, 'fetchAllAssociative'];
-		foreach ($callback($sql, $parameters) as $_row) {
+		foreach ($this->fetchAllAssociative($sql, $parameters) as $_row) {
 			$entities[] = BackgroundJob::fromArray($_row);
 		}
 
@@ -372,9 +376,9 @@ class BackgroundQueue
 	private function save(BackgroundJob $entity): void
 	{
 		if (!$entity->getId()) {
-			$this->connection->insert('background_job', $entity->getDatabaseValues());
+			$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
 		} else {
-			$this->connection->update('background_job', $entity->getDatabaseValues(), ['id' => $entity->getId()]);
+			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
 		}
 	}
 
@@ -392,5 +396,78 @@ class BackgroundQueue
 		}
 		unset ($bindArray[$prefix]);
 		return rtrim($str,",");
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws SchemaException
+	 */
+	private function updateSchema()
+	{
+		if (file_exists($this->config['tempDir'] . '/background_queue_schema_generated')) {
+			return;
+		}
+		
+		$schema = new Schema([], [], $this->createSchemaManager()->createSchemaConfig());
+
+		$table = $schema->createTable($this->config['tableName']);
+
+		$table->addColumn('id', Types::BIGINT, ['unsigned' => true])->setAutoincrement(true)->setNotnull(true);
+		$table->addColumn('queue', Types::STRING)->setNotnull(true);
+		$table->addColumn('callback_name', Types::STRING)->setNotnull(true);
+		$table->addColumn('parameters', Types::BLOB)->setNotnull(true);
+		$table->addColumn('state', Types::SMALLINT)->setNotnull(true);
+		$table->addColumn('created_at', Types::DATETIME_IMMUTABLE)->setNotnull(true);
+		$table->addColumn('last_attempt_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
+		$table->addColumn('number_of_attempts', Types::INTEGER)->setNotnull(true)->setDefault(0);
+		$table->addColumn('error_message', Types::TEXT)->setNotnull(false);
+		$table->addColumn('serial_group', Types::STRING)->setNotnull(false);
+		$table->addColumn('identifier', Types::STRING)->setNotnull(false);
+		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
+
+		$table->setPrimaryKey(['id']);
+		$table->addIndex(['identifier']);
+		$table->addIndex(['state']);
+
+		$schemaDiff = (new Comparator())->compare($this->createSchemaManager()->createSchema(), $schema);
+		foreach ($schemaDiff->toSaveSql($this->connection->getDatabasePlatform()) as $_sql) {
+			if (strstr($_sql, ' ' . $this->config['tableName'] . ' ') === false) {
+				continue;
+			}
+
+			$this->executeStatement($_sql);
+		}
+
+		file_put_contents($this->config['tempDir'] . '/background_queue_schema_generated', '');
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function createSchemaManager(): AbstractSchemaManager
+	{
+		return method_exists($this->connection, 'createSchemaManager')
+			? $this->connection->createSchemaManager()
+			: $this->connection->getSchemaManager();
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function executeStatement(string $sql): void
+	{
+		method_exists($this->connection, 'executeStatement')
+			? $this->connection->executeStatement($sql)
+			: $this->connection->exec($sql);
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function fetchAllAssociative(string $sql, array $parameters): array
+	{
+		return method_exists($this->connection, 'fetchAllAssociative')
+			? $this->connection->fetchAllAssociative($sql, $parameters)
+			: $this->connection->fetchAll($sql, $parameters);
 	}
 }

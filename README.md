@@ -26,54 +26,35 @@ backgroundQueue:
 	connection: %database% # parametry predavane do Doctrine\Dbal\Connection
 	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
 	amqpWaitingQueueName: 'waiting' # nepovinné, název queue, kam ukládat záznamy, které ještě nelze zpracovat
-
-# priklad namapovani entity s Nettrine
-nettrine.orm.attributes:
-	mapping:
-		ADT\BackgroundQueue\Entity: %appDir%/../vendor/adt/background-queue/src/Entity
-
-# priklad namapovani entity s Kdyby
-doctrine:
-	metadata:
-		ADT\BackgroundQueue\Entity: %appDir%/../vendor/adt/background-queue/src/Entity
-
-```
-
-Extension musí být registrována až po Doctrine extension.
-
-Následně je potřeba standardním způsobem vygenerovat doctrine migraci, např.:
-
-```
-bin/console migrations:diff
 ```
 
 ## 2 Použití
 
 ### 2.1 Přidání záznamu do fronty
-```
+
+```php
 namespace App\Presenters;
 
 class DefaultPresenter extends \Nette\Application\UI\Presenter 
 {
-    /** @var \ADT\BackgroundQueue\BackgroundQueue @autowire */
-    protected $backgroundQueue;
+	/** @var \ADT\BackgroundQueue\BackgroundQueue @autowire */
+	protected $backgroundQueue;
 
-    public function actionEmailInvoice(Invoice $invoice) 
-    {
-        $callbackName = 'sendEmail';
-        $parameters = [
-            'to' => 'hello@appsdevteam.com,
-            'subject' => 'Background queue test'
-            'text' => 'Anything you want.'
-        ];
-        $serialGroup = 'invoice-' . $invoice->getId();
-        $identifier = 'sendEmail-' . $invoice->getId();
-	$isUnique = true; // always set to true if a callback on an entity should be performed only once, regardless of how it can happen that it is added to your queue twice
+	public function actionEmailInvoice(Invoice $invoice) 
+	{
+		$callbackName = 'sendEmail';
+		$parameters = [
+			'to' => 'hello@appsdevteam.com,
+			'subject' => 'Background queue test'
+			'text' => 'Anything you want.'
+		];
+		$serialGroup = 'invoice-' . $invoice->getId();
+		$identifier = 'sendEmail-' . $invoice->getId();
+		$isUnique = true; // always set to true if a callback on an entity should be performed only once, regardless of how it can happen that it is added to your queue twice
 
-        $this->backgroundQueue->publish($callbackName, $parameters, $serialGroup, $identifier, $isUnique);
-    }
+		$this->backgroundQueue->publish($callbackName, $parameters, $serialGroup, $identifier, $isUnique);
+	}
 }
-
 ```
 
 Záznam se uloží ve stavu `READY`.
@@ -86,7 +67,7 @@ Parametr `$identifier` je nepovinný - pomocí něj si můžete označit joby vl
 
 ### 2.2 Zprácování záznamu
 
-```
+```php
 namespace App\Model;
 
 class Mailer
@@ -122,4 +103,4 @@ Pro odbavování pomocí RabbitMQ můžete využít knihovnu https://github.com/
 
 ### 2.5 Callbacky
 
-Využivát můžete také 2 callbacky onBeforeProcess a onAfterProcess, v nichž například můžete provést přepinání databází.
+Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v nichž například můžete provést přepinání databází.

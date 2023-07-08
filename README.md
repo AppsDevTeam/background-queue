@@ -124,3 +124,13 @@ Pro odbavování pomocí RabbitMQ můžete využít knihovnu https://github.com/
 ### 2.5 Callbacky
 
 Využivát můžete také 2 callbacky onBeforeProcess a onAfterProcess, v nichž například můžete provést přepinání databází.
+
+### 2.6 Vlastní název entity
+
+Název entity si můžete změnit v bootstrapu následovně:
+
+```php
+/** @var \Doctrine\ORM\EntityManager $em */
+$em = $container->getByType(\Doctrine\ORM\EntityManager::class);
+$em->getClassMetadata(\ADT\BackgroundQueue\Entity\BackgroundJob::class)->setPrimaryTable(['name' => 'your_name']);
+```

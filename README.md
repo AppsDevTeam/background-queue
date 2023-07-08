@@ -120,3 +120,7 @@ Všechny commandy jsou chráněny proti vícenásobnému spuštění.
 ### 2.4 Napojení na AMQP brokera
 
 Pro odbavování pomocí RabbitMQ můžete využít knihovnu https://github.com/AppsDevTeam/background-queue-rabbitmq a nebo se touto knihovnou inspirovat pro vytvoření vlastního AMQP bridge.
+
+### 2.5 Callbacky
+
+Využivát můžete také 2 callbacky onBeforeProcess a onAfterProcess, v nichž například můžete provést přepinání databází.

@@ -35,7 +35,7 @@ class ProcessCommand extends Command
 		}
 
 		$qb = $this->backgroundQueue->createQueryBuilder()
-			->andWhere("e.state IN (:state)")
+			->andWhere("state IN (:state)")
 			->setParameter("state", $states);
 
 		/** @var BackgroundJob $_entity */

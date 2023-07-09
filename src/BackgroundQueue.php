@@ -43,7 +43,6 @@ class BackgroundQueue
 	{
 		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);
-		$this->updateSchema();
 	}
 
 	/**
@@ -283,6 +282,8 @@ class BackgroundQueue
 	 */
 	public function createQueryBuilder(): QueryBuilder
 	{
+		$this->updateSchema();
+
 		return $this->connection->createQueryBuilder()
 			->select('*')
 			->from($this->config['tableName'])
@@ -375,6 +376,8 @@ class BackgroundQueue
 	 */
 	private function save(BackgroundJob $entity): void
 	{
+		$this->updateSchema();
+		
 		if (!$entity->getId()) {
 			$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
 		} else {
@@ -402,10 +405,16 @@ class BackgroundQueue
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws SchemaException
 	 */
-	private function updateSchema()
+	private function updateSchema(): void
 	{
-		if (file_exists($this->config['tempDir'] . '/background_queue_schema_generated')) {
-			return;
+		$dir = $this->config['tempDir'] . '/background_queue_schema_generated';
+		@mkdir($dir, 0770);
+		if ($lastError = error_get_last()) {
+			if (!is_dir($dir)) {
+				throw new \Exception($lastError['message']);
+			} else {
+				return;
+			}
 		}
 		
 		$schema = new Schema([], [], $this->createSchemaManager()->createSchemaConfig());
@@ -437,8 +446,6 @@ class BackgroundQueue
 
 			$this->executeStatement($_sql);
 		}
-
-		file_put_contents($this->config['tempDir'] . '/background_queue_schema_generated', '');
 	}
 
 	/**

@@ -266,7 +266,7 @@ class BackgroundQueue
 		$qb->select('identifier')->groupBy('identifier');
 
 		$unfinishedJobIdentifiers = [];
-		foreach ($this->fetchAll($qb) as $_entity) {
+		foreach ($this->fetchAll($qb, null, false) as $_entity) {
 			$unfinishedJobIdentifiers[] = $_entity['identifier'];
 		}
 
@@ -294,7 +294,7 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @internal
 	 */
-	public function fetchAll(QueryBuilder $qb, int $maxResults = null): array
+	public function fetchAll(QueryBuilder $qb, int $maxResults = null, $toEntity = true): array
 	{
 		$sql = $qb->setMaxResults($maxResults)->getSQL();
 		$parameters = $qb->getParameters();
@@ -308,7 +308,7 @@ class BackgroundQueue
 
 		$entities = [];
 		foreach ($this->fetchAllAssociative($sql, $parameters) as $_row) {
-			$entities[] = BackgroundJob::fromArray($_row);
+			$entities[] = $toEntity ? BackgroundJob::fromArray($_row) : $_row;
 		}
 
 		return $entities;

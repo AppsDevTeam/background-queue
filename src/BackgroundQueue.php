@@ -4,18 +4,18 @@ namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
-use ADT\BackgroundQueue\Exception\TemporaryErrorException;
 use ADT\BackgroundQueue\Exception\WaitingException;
 use DateTime;
-use DateTimeImmutable;
+use DateTimeInterface;
 use Doctrine\DBAL\Connection;
-use Doctrine\ORM\EntityManager;
-use Doctrine\ORM\EntityManagerInterface;
-use Doctrine\ORM\EntityRepository;
+use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Query\QueryBuilder;
+use Doctrine\DBAL\Schema\AbstractSchemaManager;
+use Doctrine\DBAL\Schema\Comparator;
+use Doctrine\DBAL\Schema\Schema;
+use Doctrine\DBAL\Schema\SchemaException;
+use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\NonUniqueResultException;
-use Doctrine\ORM\OptimisticLockException;
-use Doctrine\ORM\ORMException;
-use Doctrine\ORM\QueryBuilder;
 use Exception;
 use Throwable;
 use Tracy\Debugger;
@@ -24,13 +24,7 @@ use Tracy\ILogger;
 class BackgroundQueue
 {
 	private array $config;
-
-	private EntityManagerInterface $em;
-
-	/**
-	 * @var callable[]
-	 */
-	public $onAfterProcess = [];
+	private Connection $connection;
 
 	/**
 	 * @var callable[]
@@ -38,21 +32,23 @@ class BackgroundQueue
 	public $onBeforeProcess = [];
 
 	/**
-	 * @throws ORMException
+	 * @var callable[]
+	 */
+	public $onAfterProcess = [];
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
 	 */
 	public function __construct(array $config)
 	{
 		$this->config = $config;
-
-		/** @var Connection $connection */
-		$connection = $config['doctrineDbalConnection'];
-		$this->em = EntityManager::create($connection->getParams(), $config['doctrineOrmConfiguration']);
+		$this->connection = DriverManager::getConnection($config['connection']);
+		$this->updateSchema();
 	}
 
 	/**
 	 * @param object|array|string|int|float|bool|null $parameters
 	 * @throws Exception
-	 * @Suppress("unused")
 	 */
 	public function publish(
 		string $callbackName,
@@ -90,13 +86,11 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @internal
-	 *
 	 * @param int|BackgroundJob $entity
 	 * @param string|null $producer
 	 * @return void
-	 * @throws ORMException
-	 * @throws OptimisticLockException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @internal
 	 */
 	public function doPublish($entity, ?string $producer = null)
 	{
@@ -112,6 +106,8 @@ class BackgroundQueue
 	}
 
 	/**
+	 * @internal
+	 * 
 	 * @param int|BackgroundJob $entity
 	 * @return void
 	 * @throws Exception
@@ -120,9 +116,12 @@ class BackgroundQueue
 	{
 		if (is_int($entity)) {
 			$id = $entity;
-
-			/** @var BackgroundJob $entity */
-			$entity = $this->getRepository()->find($id);
+			
+			$entity = $this->fetch(
+				$this->createQueryBuilder()
+					->andWhere('id = :id')
+					->setParameter('id',  $id)
+			);
 
 			if (!$entity) {
 				if ($this->config['amqpPublishCallback']) {
@@ -130,7 +129,7 @@ class BackgroundQueue
 					// tak jeste nemusi byt syncnuta master master databaze
 
 					// coz si overime tak, ze v db neexistuje vetsi id
-					if ($this->createQueryBuilder()->select('COUNT(e)')->andWhere('e.id > :id')->setParameter('id', $id)->getQuery()->getSingleScalarResult() === 0) {
+					if (!$this->fetch($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
 						// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
 						$this->doPublish($id, $this->config['amqpWaitingProducerName']);
 					} else {
@@ -187,7 +186,7 @@ class BackgroundQueue
 		// změna stavu na zpracovává se
 		try {
 			$entity->setState(BackgroundJob::STATE_PROCESSING);
-			$entity->setLastAttemptAt(new DateTimeImmutable());
+			$entity->updateLastAttemptAt();
 			$entity->increaseNumberOfAttempts();
 			$this->save($entity);
 		} catch (Exception $e) {
@@ -242,6 +241,9 @@ class BackgroundQueue
 		}
 	}
 
+	/**
+	 * @throws Exception
+	 */
 	public function getUnfinishedJobIdentifiers(array $identifiers = [], bool $excludeProcessing = false): array
 	{
 		$qb = $this->createQueryBuilder();
@@ -251,20 +253,20 @@ class BackgroundQueue
 			$states[BackgroundJob::STATE_PROCESSING] = BackgroundJob::STATE_PROCESSING;
 		}
 
-		$qb->andWhere('e.state NOT IN (:state)')
+		$qb->andWhere('state NOT IN (:state)')
 			->setParameter('state', $states);
 
 		if ($identifiers) {
-			$qb->andWhere('e.identifier IN (:identifier)')
+			$qb->andWhere('identifier IN (:identifier)')
 				->setParameter('identifier', $identifiers);
 		} else {
-			$qb->andWhere('e.identifier IS NOT NULL');
+			$qb->andWhere('identifier IS NOT NULL');
 		}
 
-		$qb->select('e.identifier')->groupBy('e.identifier');
+		$qb->select('identifier')->groupBy('identifier');
 
 		$unfinishedJobIdentifiers = [];
-		foreach ($qb->getQuery()->getResult() as $_entity) {
+		foreach ($this->fetchAll($qb) as $_entity) {
 			$unfinishedJobIdentifiers[] = $_entity['identifier'];
 		}
 
@@ -281,13 +283,47 @@ class BackgroundQueue
 	 */
 	public function createQueryBuilder(): QueryBuilder
 	{
-		return $this->getRepository()->createQueryBuilder('e')
-			->andWhere('e.queue = :queue')
+		return $this->connection->createQueryBuilder()
+			->select('*')
+			->from($this->config['tableName'])
+			->andWhere('queue = :queue')
 			->setParameter('queue', $this->config['queue']);
 	}
 
 	/**
-	 * @throws NonUniqueResultException
+	 * @throws Exception
+	 * @internal
+	 */
+	public function fetchAll(QueryBuilder $qb, int $maxResults = null): array
+	{
+		$sql = $qb->setMaxResults($maxResults)->getSQL();
+		$parameters = $qb->getParameters();
+		foreach ($parameters as $key => &$_value) {
+			if (is_array($_value)) {
+				$sql = str_replace(':' . $key, self::bindParamArray($key, $_value, $parameters), $sql);
+			} elseif ($_value instanceof DateTimeInterface) {
+				$_value->format('Y-m-d H:i:s');
+			}
+		}
+
+		$entities = [];
+		foreach ($this->fetchAllAssociative($sql, $parameters) as $_row) {
+			$entities[] = BackgroundJob::fromArray($_row);
+		}
+
+		return $entities;
+	}
+
+	/**
+	 * @throws Exception
+	 */
+	private function fetch(QueryBuilder $qb): ?BackgroundJob
+	{
+		return ($entities = $this->fetchAll($qb, 1)) ? $entities[0]: null;
+	}
+
+	/**
+	 * @throws Exception
 	 */
 	private function isRedundant(BackgroundJob $entity): bool
 	{
@@ -296,19 +332,19 @@ class BackgroundQueue
 		}
 
 		$qb = $this->createQueryBuilder()
-			->select('e.id');
+			->select('id');
 
-		$qb->andWhere('e.identifier = :identifier')
+		$qb->andWhere('identifier = :identifier')
 			->setParameter('identifier', $entity->getIdentifier());
 
-		$qb->andWhere('e.id < :id')
+		$qb->andWhere('id < :id')
 			->setParameter('id', $entity->getId());
 
-		return (bool) $qb->getQuery()->setMaxResults(1)->getOneOrNullResult();
+		return (bool) $this->fetch($qb);
 	}
 
 	/**
-	 * @throws NonUniqueResultException
+	 * @throws NonUniqueResultException|Exception
 	 */
 	private function getPreviousUnfinishedJob(BackgroundJob $entity): ?BackgroundJob
 	{
@@ -318,44 +354,120 @@ class BackgroundQueue
 
 		$qb = $this->createQueryBuilder();
 
-		$qb->andWhere('e.state NOT IN (:state)')
+		$qb->andWhere('state NOT IN (:state)')
 			->setParameter('state', BackgroundJob::FINISHED_STATES);
 
-		$qb->andWhere('e.serialGroup = :serialGroup')
-			->setParameter('serialGroup', $entity->getSerialGroup());
+		$qb->andWhere('serial_group = :serial_group')
+			->setParameter('serial_group', $entity->getSerialGroup());
 
 		if ($entity->getId()) {
-			$qb->andWhere('e.id < :id')
+			$qb->andWhere('id < :id')
 				->setParameter('id', $entity->getId());
 		}
 
-		$qb->orderBy('e.id');
+		$qb->orderBy('id');
 
-		return $qb->getQuery()
-			->setMaxResults(1)
-			->getOneOrNullResult();
-	}
-
-	private function getRepository(): EntityRepository
-	{
-		return $this->em->getRepository(BackgroundJob::class);
+		return $this->fetch($qb);
 	}
 
 	/**
-	 * @throws OptimisticLockException
-	 * @throws ORMException
+	 * @throws \Doctrine\DBAL\Exception
 	 */
 	private function save(BackgroundJob $entity): void
 	{
 		if (!$entity->getId()) {
-			$this->em->persist($entity);
+			$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
+		} else {
+			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
 		}
-
-		$this->em->flush();
 	}
 
 	private static function logException(string $errorMessage, ?BackgroundJob $entity = null, ?Throwable $e = null): void
 	{
 		Debugger::log(new Exception('BackgroundQueue: ' . $errorMessage  . ($entity ? ' (ID: ' . $entity->getId() . '; State: ' . $entity->getState() . ')' : ''), 0, $e), ILogger::CRITICAL);
+	}
+
+	private static function bindParamArray(string $prefix, array $values, array &$bindArray): string
+	{
+		$str = "";
+		foreach(array_values($values) as $index => $value){
+			$str .= ":".$prefix.$index.",";
+			$bindArray[$prefix.$index] = $value;
+		}
+		unset ($bindArray[$prefix]);
+		return rtrim($str,",");
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws SchemaException
+	 */
+	private function updateSchema()
+	{
+		if (file_exists($this->config['tempDir'] . '/background_queue_schema_generated')) {
+			return;
+		}
+		
+		$schema = new Schema([], [], $this->createSchemaManager()->createSchemaConfig());
+
+		$table = $schema->createTable($this->config['tableName']);
+
+		$table->addColumn('id', Types::BIGINT, ['unsigned' => true])->setAutoincrement(true)->setNotnull(true);
+		$table->addColumn('queue', Types::STRING)->setNotnull(true);
+		$table->addColumn('callback_name', Types::STRING)->setNotnull(true);
+		$table->addColumn('parameters', Types::BLOB)->setNotnull(true);
+		$table->addColumn('state', Types::SMALLINT)->setNotnull(true);
+		$table->addColumn('created_at', Types::DATETIME_IMMUTABLE)->setNotnull(true);
+		$table->addColumn('last_attempt_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
+		$table->addColumn('number_of_attempts', Types::INTEGER)->setNotnull(true)->setDefault(0);
+		$table->addColumn('error_message', Types::TEXT)->setNotnull(false);
+		$table->addColumn('serial_group', Types::STRING)->setNotnull(false);
+		$table->addColumn('identifier', Types::STRING)->setNotnull(false);
+		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
+
+		$table->setPrimaryKey(['id']);
+		$table->addIndex(['identifier']);
+		$table->addIndex(['state']);
+
+		$schemaDiff = (new Comparator())->compare($this->createSchemaManager()->createSchema(), $schema);
+		foreach ($schemaDiff->toSaveSql($this->connection->getDatabasePlatform()) as $_sql) {
+			if (strstr($_sql, ' ' . $this->config['tableName'] . ' ') === false) {
+				continue;
+			}
+
+			$this->executeStatement($_sql);
+		}
+
+		file_put_contents($this->config['tempDir'] . '/background_queue_schema_generated', '');
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function createSchemaManager(): AbstractSchemaManager
+	{
+		return method_exists($this->connection, 'createSchemaManager')
+			? $this->connection->createSchemaManager()
+			: $this->connection->getSchemaManager();
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function executeStatement(string $sql): void
+	{
+		method_exists($this->connection, 'executeStatement')
+			? $this->connection->executeStatement($sql)
+			: $this->connection->exec($sql);
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function fetchAllAssociative(string $sql, array $parameters): array
+	{
+		return method_exists($this->connection, 'fetchAllAssociative')
+			? $this->connection->fetchAllAssociative($sql, $parameters)
+			: $this->connection->fetchAll($sql, $parameters);
 	}
 }

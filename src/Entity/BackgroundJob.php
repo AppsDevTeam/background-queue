@@ -3,17 +3,9 @@
 namespace ADT\BackgroundQueue\Entity;
 
 use DateTimeImmutable;
-use Doctrine\ORM\Mapping as ORM;
+use Exception;
 
-/**
- * @ORM\Entity
- * @ORM\Table(indexes={@ORM\Index(name="IDX_BACKGROUNDJOB_IDENTIFIER", columns={"identifier"}), @ORM\Index(name="IDX_BACKGROUNDJOB_STATE", columns={"state"})})
- */
-#[ORM\Index(name: 'IDX_BACKGROUNDJOB_IDENTIFIER', columns: ['identifier'])]
-#[ORM\Index(name: 'IDX_BACKGROUNDJOB_STATE', columns: ['state'])]
-#[ORM\Entity]
-// Cannot be final because of orm:generate-proxies command
-class BackgroundJob
+final class BackgroundJob
 {
 	const STATE_READY = 1; // připraveno
 	const STATE_PROCESSING = 2; // zpracovává se
@@ -36,213 +28,110 @@ class BackgroundJob
 		self::STATE_REDUNDANT => self::STATE_REDUNDANT,
 	];
 
-	/**
-	 * @ORM\Id
-	 * @ORM\Column(type="integer")
-	 * @ORM\GeneratedValue
-	 * @internal
-	 */
-	#[ORM\Id]
-	#[ORM\Column(type: 'integer')]
-	#[ORM\GeneratedValue]
 	private ?int $id = null;
-
-	/**
-	 * @ORM\Column(type="string", nullable=false)
-	 */
-	#[ORM\Column(type: 'string', nullable: false)]
 	private string $queue;
-
-	/**
-	 * @ORM\Column(type="string", length=255, nullable=false)
-	 */
-	#[ORM\Column(type: 'string', length: 255, nullable: false)]
 	private string $callbackName;
-
-	/**
-	 * @ORM\Column(type="blob", nullable=false)
-	 * @var resource
-	 */
-	#[ORM\Column(type: 'blob', nullable: false)]
 	private $parameters;
-
-	/**
-	 * @ORM\Column(type="integer", length=1, nullable=false)
-	 */
-	#[ORM\Column(type: 'integer', length: 1, nullable: false)]
 	private int $state = self::STATE_READY;
-
-	/**
-	 * @ORM\Column(type="datetime_immutable", nullable=false)
-	 */
-	#[ORM\Column(type: 'datetime_immutable', nullable: false)]
 	private DateTimeImmutable $createdAt;
-
-	/**
-	 * @ORM\Column(type="datetime_immutable", nullable=true)
-	 */
-	#[ORM\Column(type: 'datetime_immutable', nullable: true)]
 	private ?DateTimeImmutable $lastAttemptAt = null;
-
-	/**
-	 * @ORM\Column(type="integer", nullable=false, options={"default":0})
-	 */
-	#[ORM\Column(type: 'integer', nullable: false, options: ['default' => 0])]
 	private int $numberOfAttempts = 0;
-
-	/**
-	 * @ORM\Column(type="text", nullable=true)
-	 */
-	#[ORM\Column(type: 'text', nullable: true)]
 	private ?string $errorMessage = null;
-
-	/**
-	 * @ORM\Column(type="string", nullable=true)
-	 */
-	#[ORM\Column(type: 'string', nullable: true)]
 	private ?string $serialGroup = null;
-
-	/**
-	 * @ORM\Column(type="string", nullable=true)
-	 */
-	#[ORM\Column(type: 'string', nullable: true)]
 	private ?string $identifier = null;
-
-	/**
-	 * @ORM\Column(type="boolean", options={"default":0})
-	 */
-	#[ORM\Column(type: 'boolean', options: ['default' => 0])]
 	private bool $isUnique = false;
 
-	final public function __construct()
+	public function __construct()
 	{
 		$this->createdAt = new DateTimeImmutable();
-
 	}
 
-	final public function __clone()
+	public function __clone()
 	{
 		$this->id = null;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function getId(): ?int
+	public function getId(): ?int
 	{
 		return $this->id;
 	}
 
-	/** @noinspection PhpUnused */
-	public function getQueue(): string
-	{
-		return $this->queue;
-	}
-
-	/** @noinspection PhpUnused */
 	public function setQueue(string $queue): self
 	{
 		$this->queue = $queue;
 		return $this;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function getCallbackName(): string
+	public function getCallbackName(): string
 	{
 		return $this->callbackName;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function setCallbackName(string $callbackName): self
+	public function setCallbackName(string $callbackName): self
 	{
 		$this->callbackName = $callbackName;
 		return $this;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function getSerialGroup(): ?string
+	public function getSerialGroup(): ?string
 	{
 		return $this->serialGroup;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function setSerialGroup(?string $serialGroup): self
+	public function setSerialGroup(?string $serialGroup): self
 	{
 		$this->serialGroup = $serialGroup;
 		return $this;
 	}
 
-	/**
-	 * @noinspection PhpUnused
-	 * @return array
-	 */
-	final public function getParameters(): array
+	public function getParameters(): array
 	{
-		rewind($this->parameters);
-		return unserialize(stream_get_contents($this->parameters));
+		return unserialize($this->parameters);
 	}
 
 	/**
-	 * @noinspection PhpUnused
 	 * @param object|array|string|int|float|bool|null $parameters
 	 */
-	final public function setParameters($parameters): self
+	public function setParameters($parameters): self
 	{
 		$this->parameters = serialize(is_array($parameters) ? $parameters : [$parameters]);
 		return $this;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function getState(): int
+	public function getState(): int
 	{
 		return $this->state;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function setState(int $state): self
+	public function setState(int $state): self
 	{
 		$this->state = $state;
 		return $this;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function getCreatedAt(): DateTimeImmutable
-	{
-		return $this->createdAt;
-	}
-
-	/** @noinspection PhpUnused */
-	final public function getLastAttemptAt(): ?DateTimeImmutable
+	public function getLastAttemptAt(): ?DateTimeImmutable
 	{
 		return $this->lastAttemptAt;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function setLastAttemptAt(DateTimeImmutable $lastAttemptAt): self
+	public function updateLastAttemptAt(): self
 	{
-		$this->lastAttemptAt = $lastAttemptAt;
+		$this->lastAttemptAt = new DateTimeImmutable();
 		return $this;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function getNumberOfAttempts(): int
+	public function getNumberOfAttempts(): int
 	{
 		return $this->numberOfAttempts;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function increaseNumberOfAttempts(): self
+	public function increaseNumberOfAttempts(): self
 	{
 		$this->numberOfAttempts++;
 		return $this;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function getErrorMessage(): ?string
-	{
-		return $this->errorMessage;
-	}
-
-	/** @noinspection PhpUnused */
-	final public function setErrorMessage(?string $errorMessage): self
+	public function setErrorMessage(?string $errorMessage): self
 	{
 		$this->errorMessage = $errorMessage;
 		return $this;
@@ -270,9 +159,46 @@ class BackgroundJob
 		return $this;
 	}
 
-	/** @noinspection PhpUnused */
-	final public function isReadyForProcess(): bool
+	public function isReadyForProcess(): bool
 	{
 		return isset(self::READY_TO_PROCESS_STATES[$this->state]);
+	}
+
+	/**
+	 * @throws Exception
+	 */
+	public static function fromArray(array $values): BackgroundJob
+	{
+		$entity = new self;
+		$entity->id = $values['id'];
+		$entity->queue = $values['queue'];
+		$entity->callbackName = $values['callback_name'];
+		$entity->parameters = $values['parameters'];
+		$entity->state = $values['state'];
+		$entity->lastAttemptAt = $values['last_attempt_at'] ? new DateTimeImmutable($values['last_attempt_at']) : null;
+		$entity->numberOfAttempts = $values['number_of_attempts'];
+		$entity->errorMessage = $values['error_message'];
+		$entity->serialGroup = $values['serial_group'];
+		$entity->identifier = $values['identifier'];
+		$entity->isUnique = $values['is_unique'];
+		
+		return $entity;
+	}
+
+	public function getDatabaseValues(): array
+	{
+		return [
+			'queue' => $this->queue,
+			'callback_name' => $this->callbackName,
+			'parameters' => $this->parameters,
+			'state' => $this->state,
+			'created_at' => $this->createdAt->format('Y-m-d H:i:s'),
+			'last_attempt_at' => $this->lastAttemptAt ? $this->lastAttemptAt->format('Y-m-d H:i:s') : null,
+			'number_of_attempts' => $this->numberOfAttempts,
+			'error_message' => $this->errorMessage,
+			'serial_group' => $this->serialGroup,
+			'identifier' => $this->identifier,
+			'is_unique' => $this->isUnique,
+		];
 	}
 }

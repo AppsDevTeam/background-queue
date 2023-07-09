@@ -5,11 +5,7 @@ namespace ADT\BackgroundQueue\DI;
 use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Console\ClearFinishedCommand;
 use ADT\BackgroundQueue\Console\ProcessCommand;
-use Doctrine\DBAL\Connection;
-use Doctrine\ORM\Configuration;
 use Nette\DI\CompilerExtension;
-use Nette\DI\Container;
-use Nette\PhpGenerator\ClassType;
 use Nette\Schema\Expect;
 use Nette\Schema\Processor;
 use Nette\Schema\Schema;
@@ -24,8 +20,8 @@ class BackgroundQueueExtension extends CompilerExtension
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
 			'tempDir' => Expect::string()->required(),
 			'queue' => Expect::string('general'),
-			'doctrineDbalConnection' => Expect::type('callable')->required(),
-			'doctrineOrmConfiguration' => Expect::type('callable')->required(),
+			'connection' => Expect::arrayOf('int|string', 'string'),
+			'tableName' => Expect::string('background_job'),
 			'amqpPublishCallback' => Expect::anyOf(null, Expect::type('callable')),
 			'amqpWaitingProducerName' => Expect::string()->nullable(),
 		]);

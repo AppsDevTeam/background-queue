@@ -402,10 +402,11 @@ class BackgroundQueue
 	}
 
 	/**
+	 * @internal
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws SchemaException
 	 */
-	private function updateSchema(): void
+	public function updateSchema(): void
 	{
 		$dir = $this->config['tempDir'] . '/background_queue_schema_generated';
 		error_clear_last();

@@ -5,6 +5,7 @@ namespace ADT\BackgroundQueue\DI;
 use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Console\ClearFinishedCommand;
 use ADT\BackgroundQueue\Console\ProcessCommand;
+use ADT\BackgroundQueue\Console\UpdateSchemaCommand;
 use Nette\DI\CompilerExtension;
 use Nette\Schema\Expect;
 use Nette\Schema\Processor;
@@ -67,6 +68,10 @@ class BackgroundQueueExtension extends CompilerExtension
 
 		$builder->addDefinition($this->prefix('clearFinishedCommand'))
 			->setFactory(ClearFinishedCommand::class)
+			->setAutowired(false);
+
+		$builder->addDefinition($this->prefix('updateSchemaCommand'))
+			->setFactory(UpdateSchemaCommand::class)
 			->setAutowired(false);
 	}
 

@@ -408,6 +408,7 @@ class BackgroundQueue
 	private function updateSchema(): void
 	{
 		$dir = $this->config['tempDir'] . '/background_queue_schema_generated';
+		error_clear_last();
 		@mkdir($dir, 0770);
 		if ($lastError = error_get_last()) {
 			if (!is_dir($dir)) {

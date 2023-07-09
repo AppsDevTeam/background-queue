@@ -20,7 +20,7 @@ class BackgroundQueueExtension extends CompilerExtension
 			'notifyOnNumberOfAttempts' => Expect::int()->min(1)->required(),
 			'tempDir' => Expect::string()->required(),
 			'queue' => Expect::string('general'),
-			'connection' => Expect::arrayOf('int|string', 'string'),
+			'connection' => Expect::arrayOf('int|string|object', 'string'),
 			'tableName' => Expect::string('background_job'),
 			'amqpPublishCallback' => Expect::anyOf(null, Expect::type('callable')),
 			'amqpWaitingProducerName' => Expect::string()->nullable(),
@@ -31,9 +31,8 @@ class BackgroundQueueExtension extends CompilerExtension
 	{
 		// nette/di 2.4
 		$this->config = (new Processor)->process($this->getConfigSchema(), $this->config);
-
 		$builder = $this->getContainerBuilder();
-		$config = json_decode(json_encode($this->config), true);
+		$config = $this->objectToArray($this->config);
 
 		if (class_exists(\Nette\DI\Definitions\Statement::class, false)) {
 			$statementClass = \Nette\DI\Definitions\Statement::class;
@@ -69,5 +68,23 @@ class BackgroundQueueExtension extends CompilerExtension
 		$builder->addDefinition($this->prefix('clearFinishedCommand'))
 			->setFactory(ClearFinishedCommand::class)
 			->setAutowired(false);
+	}
+
+	private function objectToArray($array)
+	{
+		if (is_array($array)) {
+			foreach ($array as $key => $value) {
+				if (is_array($value)) {
+					$array[$key] = $this->objectToArray($value);
+				}
+				if ($value instanceof \stdClass) {
+					$array[$key] = $this->objectToArray((array)$value);
+				}
+			}
+		}
+		if ($array instanceof \stdClass) {
+			return $this->objectToArray((array)$array);
+		}
+		return $array;
 	}
 }

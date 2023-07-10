@@ -45,7 +45,7 @@ class ProcessCommand extends Command
 				&&
 				$_entity->getState() !== BackgroundJob::STATE_AMQP_FAILED
 			) {
-				$_entity->setState(BackgroundJob::STATE_WAITING);
+				$_entity->setState(BackgroundJob::STATE_READY);
 				$this->backgroundQueue->save($_entity);
 				$this->backgroundQueue->doPublish($_entity);
 			} else {

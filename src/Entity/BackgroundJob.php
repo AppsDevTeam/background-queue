@@ -198,7 +198,7 @@ final class BackgroundJob
 			'error_message' => $this->errorMessage,
 			'serial_group' => $this->serialGroup,
 			'identifier' => $this->identifier,
-			'is_unique' => $this->isUnique,
+			'is_unique' => (int) $this->isUnique,
 		];
 	}
 }

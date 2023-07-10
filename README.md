@@ -28,6 +28,8 @@ backgroundQueue:
 	amqpWaitingQueueName: 'waiting' # nepovinné, název queue, kam ukládat záznamy, které ještě nelze zpracovat
 ```
 
+Potřebné databázové schéma se vytvoři při prvním použití fronty automaticky a také se automaticky aktualizuje, je-li třeba.
+
 ## 2 Použití
 
 ### 2.1 Přidání záznamu do fronty
@@ -94,6 +96,8 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 `background-queue:clear-finished` Smaže všechny úspěšně zpracované záznamy.
 
 `background-queue:clear-finished 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
+
+`background-queue:update-schema` Aktualizuje databázové schéma, pokud je potřeba.
 
 Všechny commandy jsou chráněny proti vícenásobnému spuštění.
 

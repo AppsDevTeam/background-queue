@@ -372,9 +372,10 @@ class BackgroundQueue
 	}
 
 	/**
+	 * @internal
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private function save(BackgroundJob $entity): void
+	public function save(BackgroundJob $entity): void
 	{
 		$this->updateSchema();
 		

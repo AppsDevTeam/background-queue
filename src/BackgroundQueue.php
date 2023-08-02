@@ -442,6 +442,7 @@ class BackgroundQueue
 		$table->addColumn('serial_group', Types::STRING)->setNotnull(false);
 		$table->addColumn('identifier', Types::STRING)->setNotnull(false);
 		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
+		$table->addColumn('available_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);

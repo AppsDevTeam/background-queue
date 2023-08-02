@@ -6,6 +6,7 @@ use ADT\BackgroundQueue\Entity\BackgroundJob;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\WaitingException;
 use DateTime;
+use DateTimeImmutable;
 use DateTimeInterface;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
@@ -51,10 +52,11 @@ class BackgroundQueue
 	 */
 	public function publish(
 		string $callbackName,
-		$parameters = null,
+			   $parameters = null,
 		?string $serialGroup = null,
 		?string $identifier = null,
-		bool $isUnique = false
+		bool $isUnique = false,
+		?DateTimeImmutable $availableAt = null
 	): void
 	{
 		if (!$callbackName) {
@@ -76,11 +78,12 @@ class BackgroundQueue
 		$entity->setSerialGroup($serialGroup);
 		$entity->setIdentifier($identifier);
 		$entity->setIsUnique($isUnique);
+		$entity->setAvailableAt($availableAt);
 
 		$this->save($entity);
 
 		if ($this->config['amqpPublishCallback']) {
-			$this->doPublish($entity);
+			$this->doPublish($entity, $entity->getAvailableAt() ? $this->config['amqpWaitingProducerName'] : null);
 		}
 	}
 
@@ -106,7 +109,7 @@ class BackgroundQueue
 
 	/**
 	 * @internal
-	 * 
+	 *
 	 * @param int|BackgroundJob $entity
 	 * @return void
 	 * @throws Exception
@@ -115,7 +118,7 @@ class BackgroundQueue
 	{
 		if (is_int($entity)) {
 			$id = $entity;
-			
+
 			$entity = $this->fetch(
 				$this->createQueryBuilder()
 					->andWhere('id = :id')
@@ -141,9 +144,7 @@ class BackgroundQueue
 				}
 				return;
 			} elseif (
-				$entity->getState() === BackgroundJob::STATE_TEMPORARILY_FAILED
-				&&
-				new DateTime('-' . min(16, ($entity->getNumberOfAttempts() - 1) * 2) . ' minutes') < $entity->getLastAttemptAt()
+				$entity->getAvailableAt() > new DateTime()
 			) {
 				return;
 			}
@@ -208,7 +209,10 @@ class BackgroundQueue
 			$state = BackgroundJob::STATE_FINISHED;
 		} catch (Throwable $e) {
 			switch (get_class($e)) {
-				case PermanentErrorException::class: $state = BackgroundJob::STATE_PERMANENTLY_FAILED; break;
+				case PermanentErrorException::class:
+					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
+					$entity->setAvailableAt(new DateTimeImmutable('+' . $this->getPostponenement($entity->getNumberOfAttempts()) . ' minutes'));
+					break;
 				case WaitingException::class: $state = BackgroundJob::STATE_WAITING; break;
 				default: $state = BackgroundJob::STATE_TEMPORARILY_FAILED;
 			}
@@ -378,7 +382,7 @@ class BackgroundQueue
 	public function save(BackgroundJob $entity): void
 	{
 		$this->updateSchema();
-		
+
 		if (!$entity->getId()) {
 			$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
 		} else {
@@ -403,9 +407,10 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @internal
 	 * @throws \Doctrine\DBAL\Exception
-	 * @throws SchemaException
+	 * @throws SchemaException*
+	 * @throws Exception
+	 * @internal
 	 */
 	public function updateSchema(): void
 	{
@@ -414,12 +419,12 @@ class BackgroundQueue
 		@mkdir($dir, 0770);
 		if ($lastError = error_get_last()) {
 			if (!is_dir($dir)) {
-				throw new \Exception($lastError['message']);
+				throw new Exception($lastError['message']);
 			} else {
 				return;
 			}
 		}
-		
+
 		$schema = new Schema([], [], $this->createSchemaManager()->createSchemaConfig());
 
 		$table = $schema->createTable($this->config['tableName']);
@@ -479,5 +484,10 @@ class BackgroundQueue
 		return method_exists($this->connection, 'fetchAllAssociative')
 			? $this->connection->fetchAllAssociative($sql, $parameters)
 			: $this->connection->fetchAll($sql, $parameters);
+	}
+
+	private function getPostponenement(int $numberOfAttempts): int
+	{
+		return min(16, (($numberOfAttempts - 1) * 2) ?: 1);
 	}
 }

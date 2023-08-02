@@ -40,6 +40,7 @@ final class BackgroundJob
 	private ?string $serialGroup = null;
 	private ?string $identifier = null;
 	private bool $isUnique = false;
+	private ?DateTimeImmutable $availableAt = null;
 
 	public function __construct()
 	{
@@ -159,6 +160,17 @@ final class BackgroundJob
 		return $this;
 	}
 
+	public function getAvailableAt(): ?DateTimeImmutable
+	{
+		return $this->availableAt;
+	}
+
+	public function setAvailableAt(?DateTimeImmutable $availableAt): self
+	{
+		$this->availableAt = $availableAt;
+		return $this;
+	}
+
 	public function isReadyForProcess(): bool
 	{
 		return isset(self::READY_TO_PROCESS_STATES[$this->state]);
@@ -181,6 +193,7 @@ final class BackgroundJob
 		$entity->serialGroup = $values['serial_group'];
 		$entity->identifier = $values['identifier'];
 		$entity->isUnique = $values['is_unique'];
+		$entity->availableAt = $values['available_at'];
 		
 		return $entity;
 	}
@@ -199,6 +212,7 @@ final class BackgroundJob
 			'serial_group' => $this->serialGroup,
 			'identifier' => $this->identifier,
 			'is_unique' => (int) $this->isUnique,
+			'available_at' => $this->availableAt
 		];
 	}
 }

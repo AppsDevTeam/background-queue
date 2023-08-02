@@ -385,6 +385,7 @@ class BackgroundQueue
 
 		if (!$entity->getId()) {
 			$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
+			$entity->setId($this->connection->lastInsertId());
 		} else {
 			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
 		}

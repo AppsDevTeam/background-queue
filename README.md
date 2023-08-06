@@ -22,8 +22,9 @@ backgroundQueue:
 		...
 	notifyOnNumberOfAttempts: 5 # počet pokusů o zpracování záznamu před zalogováním
 	tempDir: %tempDir% # cesta pro uložení zámku proti vícenásobnému spuštění commandu
-	queue: general # nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
 	connection: %database% # parametry predavane do Doctrine\Dbal\Connection
+	queue: general # nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
+	tableName: background_job # nepovinné
 	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
 	amqpWaitingProducerName: 'waiting' # nepovinné, název queue, kam ukládat záznamy, které ještě nelze zpracovat
 ```

@@ -43,11 +43,11 @@ class BackgroundQueue
 	 */
 	public function __construct(array $config)
 	{
-		$this->config = $config;
-
 		if (is_string($config['connection'])) {
 			$config['connection'] = $this->parseDsn($config['connection']);
 		}
+
+		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);
 	}
 
@@ -102,7 +102,7 @@ class BackgroundQueue
 	public function doPublish($entity, ?string $producer = null)
 	{
 		try {
-			$this->config['amqpPublishCallback']([is_int($entity) ? $entity : $entity->getId(), $producer]);
+			$this->config['amqpPublishCallback'](is_int($entity) ? $entity : $entity->getId(), $producer);
 		} catch (Exception $e) {
 			self::logException('Unexpected error occurred.', $entity, $e);
 
@@ -209,8 +209,11 @@ class BackgroundQueue
 		// v ostsatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
 		$e = null;
 		try {
-			// $callback is actually a Statement, that's why we must pass $entity->getParameters() as an array and unpack it inside the Statement
-			$callback($entity->getParameters());
+			if (PHP_VERSION_ID < 80000) {
+				$callback(...array_values($entity->getParameters()));
+			} else {
+				$callback(...$entity->getParameters());
+			}
 			$state = BackgroundJob::STATE_FINISHED;
 		} catch (Throwable $e) {
 			switch (get_class($e)) {

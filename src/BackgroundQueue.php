@@ -19,6 +19,8 @@ use Doctrine\DBAL\Schema\SchemaException;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\NonUniqueResultException;
 use Exception;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use Throwable;
 use Tracy\Debugger;
 use Tracy\ILogger;
@@ -27,6 +29,7 @@ class BackgroundQueue
 {
 	private array $config;
 	private Connection $connection;
+	private LoggerInterface $logger;
 
 	/**
 	 * @var callable[]
@@ -49,6 +52,7 @@ class BackgroundQueue
 
 		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);
+		$this->logger = $config['logger'] ?: new NullLogger();
 	}
 
 	/**
@@ -104,7 +108,7 @@ class BackgroundQueue
 		try {
 			$this->config['amqpPublishCallback'](is_int($entity) ? $entity : $entity->getId(), $producer);
 		} catch (Exception $e) {
-			self::logException('Unexpected error occurred.', $entity, $e);
+			$this->logException('Unexpected error occurred.', $entity, $e);
 
 			$entity->setState(BackgroundJob::STATE_AMQP_FAILED)
 				->setErrorMessage($e->getMessage());
@@ -141,11 +145,11 @@ class BackgroundQueue
 						$this->doPublish($id, $this->config['amqpWaitingProducerName']);
 					} else {
 						// zalogovat
-						self::logException('No job found for ID "' . $id . '."');
+						$this->logException('No job found for ID "' . $id . '."');
 					}
 				} else {
 					// zalogovat
-					self::logException('No job found for ID "' . $id . '."');
+					$this->logException('No job found for ID "' . $id . '."');
 				}
 				return;
 			} elseif (
@@ -160,7 +164,7 @@ class BackgroundQueue
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			self::logException('Unexpected state', $entity);
+			$this->logException('Unexpected state', $entity);
 			return;
 		}
 
@@ -176,13 +180,13 @@ class BackgroundQueue
 				$entity->setErrorMessage('Waiting for job ID ' . $previousEntity->getId());
 				$this->save($entity);
 			} catch (Exception $e) {
-				self::logException('Unexpected error occurred.', $entity, $e);
+				$this->logException('Unexpected error occurred.', $entity, $e);
 			}
 			return;
 		}
 
 		if (!isset($this->config['callbacks'][$entity->getCallbackName()])) {
-			self::logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity);
+			$this->logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity);
 			return;
 		}
 
@@ -195,7 +199,7 @@ class BackgroundQueue
 			$entity->increaseNumberOfAttempts();
 			$this->save($entity);
 		} catch (Exception $e) {
-			self::logException('Unexpected error occurred', $entity, $e);
+			$this->logException('Unexpected error occurred', $entity, $e);
 			return;
 		}
 
@@ -238,17 +242,17 @@ class BackgroundQueue
 
 			if ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
 				// odeslání emailu o chybě v callbacku
-				self::logException('Permanent error occured', $entity, $e);
+				$this->logException('Permanent error occured', $entity, $e);
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
-					self::logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
+					$this->logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
 				}
 			} elseif ($state === BackgroundJob::STATE_WAITING && $this->config['amqpPublishCallback'] && $this->config['amqpWaitingProducerName']) {
 				$this->doPublish($entity, $this->config['amqpWaitingProducerName']);
 			}
 		} catch (Exception $innerEx) {
-			self::logException('Unexpected error occurred', $entity, $innerEx);
+			$this->logException('Unexpected error occurred', $entity, $innerEx);
 		}
 	}
 
@@ -399,9 +403,9 @@ class BackgroundQueue
 		}
 	}
 
-	private static function logException(string $errorMessage, ?BackgroundJob $entity = null, ?Throwable $e = null): void
+	private function logException(string $errorMessage, ?BackgroundJob $entity = null, ?Throwable $e = null): void
 	{
-		Debugger::log(new Exception('BackgroundQueue: ' . $errorMessage  . ($entity ? ' (ID: ' . $entity->getId() . '; State: ' . $entity->getState() . ')' : ''), 0, $e), ILogger::CRITICAL);
+		$this->logger->log('critical', new Exception('BackgroundQueue: ' . $errorMessage  . ($entity ? ' (ID: ' . $entity->getId() . '; State: ' . $entity->getState() . ')' : ''), 0, $e));
 	}
 
 	private static function bindParamArray(string $prefix, array $values, array &$bindArray): string

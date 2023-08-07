@@ -43,6 +43,10 @@ class BackgroundQueue
 	public function __construct(array $config)
 	{
 		$this->config = $config;
+
+		if (is_string($config['connection'])) {
+			$config['connection'] = $this->parseDsn($config['connection']);
+		}
 		$this->connection = DriverManager::getConnection($config['connection']);
 	}
 
@@ -491,5 +495,41 @@ class BackgroundQueue
 	private function getPostponenement(int $numberOfAttempts): int
 	{
 		return min(16, (($numberOfAttempts - 1) * 2) ?: 1);
+	}
+
+	private function parseDsn($dsn)
+	{
+		// Parse the DSN string
+		$parsedDsn = parse_url($dsn);
+
+		if ($parsedDsn === false || !isset($parsedDsn['scheme'], $parsedDsn['host'], $parsedDsn['path'])) {
+			throw new \RuntimeException("Invalid DSN: " . $dsn);
+		}
+
+		// Convert DSN scheme to Doctrine DBAL driver name
+		$driversMap = [
+			'mysql' => 'pdo_mysql',
+			'pgsql' => 'pdo_pgsql',
+			'sqlsrv' => 'pdo_sqlsrv',
+		];
+
+		if (!isset($driversMap[$parsedDsn['scheme']])) {
+			throw new \RuntimeException("Unknown DSN scheme: " . $parsedDsn['scheme']);
+		}
+
+		// Convert DSN components to Doctrine DBAL connection parameters
+		$dbParams = [
+			'driver'   => $driversMap[$parsedDsn['scheme']],
+			'user'     => $parsedDsn['user'] ?? null,
+			'password' => $parsedDsn['pass'] ?? null,
+			'host'     => $parsedDsn['host'],
+			'dbname'   => ltrim($parsedDsn['path'], '/'),
+		];
+
+		if (isset($parsedDsn['port'])) {
+			$dbParams['port'] = $parsedDsn['port'];
+		}
+
+		return $dbParams;
 	}
 }

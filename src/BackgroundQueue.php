@@ -5,6 +5,7 @@ namespace ADT\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\WaitingException;
+use ADT\Utils\FileSystem;
 use DateTime;
 use DateTimeImmutable;
 use DateTimeInterface;
@@ -419,15 +420,8 @@ class BackgroundQueue
 	 */
 	public function updateSchema(): void
 	{
-		$dir = $this->config['tempDir'] . '/background_queue_schema_generated';
-		error_clear_last();
-		@mkdir($dir, 0770);
-		if ($lastError = error_get_last()) {
-			if (!is_dir($dir)) {
-				throw new Exception($lastError['message']);
-			} else {
-				return;
-			}
+		if (!FileSystem::createDirAtomically($this->config['tempDir'] . '/background_queue_schema_generated')) {
+			return;
 		}
 
 		$schema = new Schema([], [], $this->createSchemaManager()->createSchemaConfig());

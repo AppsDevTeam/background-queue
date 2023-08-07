@@ -14,11 +14,10 @@
 		"php": "^7.4|^8.0",
 		"ext-json": "*",
 		"doctrine/dbal": "^2.0|^3.0",
-		"doctrine/annotations": "^1.0",
 		"symfony/console": "^4.0|^5.0|^6.0",
 		"tracy/tracy": "^2.0",
-		"nette/schema": "^1.2",
-		"adt/utils": "^1.0|^2.0"
+		"adt/utils": "^2.10",
+		"adt/command-lock": "^1.0"
 	},
 	"autoload": {
 		"psr-4": { "ADT\\BackgroundQueue\\": "src/" }

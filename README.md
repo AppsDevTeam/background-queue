@@ -54,7 +54,7 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
 		$serialGroup = 'invoice-' . $invoice->getId();
 		$identifier = 'sendEmail-' . $invoice->getId();
 		$isUnique = true; // always set to true if a callback on an entity should be performed only once, regardless of how it can happen that it is added to your queue twice
-		$availableAt = new \DateTime('+1 hour'); // earliest time when the record should be processed
+		$availableAt = new \DateTimeImmutable('+1 hour'); // earliest time when the record should be processed
 
 		$this->backgroundQueue->publish($callbackName, $parameters, $serialGroup, $identifier, $isUnique, $availableAt);
 	}

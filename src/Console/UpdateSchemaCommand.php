@@ -2,11 +2,10 @@
 
 namespace ADT\BackgroundQueue\Console;
 
-use ADT\BackgroundQueue\Entity\BackgroundJob;
-use DateTime;
+use Doctrine\DBAL\Schema\SchemaException;
+use Exception;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Input\InputArgument;
 
 class UpdateSchemaCommand extends Command
 {
@@ -18,9 +17,13 @@ class UpdateSchemaCommand extends Command
 		$this->setDescription('Update table schema if needed.');
 	}
 
+	/**
+	 * @throws SchemaException
+	 * @throws Exception
+	 */
 	protected function execute(InputInterface $input, OutputInterface $output): int
 	{
-		if (!$this->tryLock(false)) {
+		if (!$this->tryLock()) {
 			return 0;
 		}
 

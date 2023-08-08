@@ -22,7 +22,7 @@ class ProcessCommand extends Command
 	 */
 	protected function execute(InputInterface $input, OutputInterface $output): int
 	{
-		if (!$this->tryLock(false)) {
+		if (!$this->tryLock()) {
 			return 0;
 		}
 

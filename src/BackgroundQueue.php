@@ -17,19 +17,17 @@ use Doctrine\DBAL\Schema\Comparator;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\SchemaException;
 use Doctrine\DBAL\Types\Types;
-use Doctrine\ORM\NonUniqueResultException;
 use Exception;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Throwable;
-use Tracy\Debugger;
-use Tracy\ILogger;
 
 class BackgroundQueue
 {
 	private array $config;
 	private Connection $connection;
 	private LoggerInterface $logger;
+	private ?Broker $broker = null;
 
 	/**
 	 * @var callable[]
@@ -53,6 +51,9 @@ class BackgroundQueue
 		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);
 		$this->logger = $config['logger'] ?: new NullLogger();
+		if ($config['broker']) {
+			$this->broker = $config['broker'];
+		}
 	}
 
 	/**
@@ -91,7 +92,7 @@ class BackgroundQueue
 
 		$this->save($entity);
 
-		if ($this->config['amqpPublishCallback']) {
+		if ($this->broker) {
 			$this->doPublish($entity, $entity->getAvailableAt() ? $this->config['amqpWaitingProducerName'] : null);
 		}
 	}
@@ -106,7 +107,7 @@ class BackgroundQueue
 	public function doPublish($entity, ?string $producer = null)
 	{
 		try {
-			$this->config['amqpPublishCallback'](is_int($entity) ? $entity : $entity->getId(), $producer);
+			$this->broker->publish(is_int($entity) ? $entity : $entity->getId(), $producer);
 		} catch (Exception $e) {
 			$this->logException('Unexpected error occurred.', $entity, $e);
 
@@ -135,7 +136,7 @@ class BackgroundQueue
 			);
 
 			if (!$entity) {
-				if ($this->config['amqpPublishCallback']) {
+				if ($this->broker) {
 					// pokud je to rabbit fungujici v clusteru na vice serverech,
 					// tak jeste nemusi byt syncnuta master master databaze
 
@@ -248,7 +249,7 @@ class BackgroundQueue
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
 					$this->logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
 				}
-			} elseif ($state === BackgroundJob::STATE_WAITING && $this->config['amqpPublishCallback'] && $this->config['amqpWaitingProducerName']) {
+			} elseif ($state === BackgroundJob::STATE_WAITING && $this->broker && $this->config['amqpWaitingProducerName']) {
 				$this->doPublish($entity, $this->config['amqpWaitingProducerName']);
 			}
 		} catch (Exception $innerEx) {
@@ -293,8 +294,11 @@ class BackgroundQueue
 		return $this->config;
 	}
 
+
 	/**
 	 * @internal
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws SchemaException
 	 */
 	public function createQueryBuilder(): QueryBuilder
 	{
@@ -325,7 +329,7 @@ class BackgroundQueue
 
 		$entities = [];
 		foreach ($this->fetchAllAssociative($sql, $parameters) as $_row) {
-			$entities[] = $toEntity ? BackgroundJob::fromArray($_row) : $_row;
+			$entities[] = $toEntity ? BackgroundJob::createEntity($_row) : $_row;
 		}
 
 		return $entities;
@@ -361,7 +365,7 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @throws NonUniqueResultException|Exception
+	 * @throws Exception
 	 */
 	private function getPreviousUnfinishedJob(BackgroundJob $entity): ?BackgroundJob
 	{

@@ -185,14 +185,15 @@ final class BackgroundJob
 	/**
 	 * @throws Exception
 	 */
-	public static function fromArray(array $values): BackgroundJob
+	public static function createEntity(array $values): BackgroundJob
 	{
-		$entity = new self;
+		$entity = (new \ReflectionClass(self::class))->newInstanceWithoutConstructor();
 		$entity->id = $values['id'];
 		$entity->queue = $values['queue'];
 		$entity->callbackName = $values['callback_name'];
 		$entity->parameters = $values['parameters'];
 		$entity->state = $values['state'];
+		$entity->createdAt = $values['created_at'];
 		$entity->lastAttemptAt = $values['last_attempt_at'] ? new DateTimeImmutable($values['last_attempt_at']) : null;
 		$entity->numberOfAttempts = $values['number_of_attempts'];
 		$entity->errorMessage = $values['error_message'];

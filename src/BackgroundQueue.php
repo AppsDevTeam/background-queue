@@ -105,10 +105,10 @@ class BackgroundQueue
 	 * @throws \Doctrine\DBAL\Exception
 	 * @internal
 	 */
-	public function doPublish($entity, ?string $producer = null)
+	public function doPublish($entity, ?string $queue = null)
 	{
 		try {
-			$this->producer->publish(is_int($entity) ? $entity : $entity->getId(), $producer);
+			$this->producer->publish(is_int($entity) ? $entity : $entity->getId(), $queue);
 		} catch (Exception $e) {
 			$this->logException('Unexpected error occurred.', $entity, $e);
 

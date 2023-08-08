@@ -219,7 +219,7 @@ final class BackgroundJob
 			'serial_group' => $this->serialGroup,
 			'identifier' => $this->identifier,
 			'is_unique' => (int) $this->isUnique,
-			'available_at' => $this->availableAt
+			'available_at' => $this->availableAt ? $this->availableAt->format('Y-m-d H:i:s') : null,
 		];
 	}
 }

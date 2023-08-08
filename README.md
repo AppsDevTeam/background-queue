@@ -25,8 +25,8 @@ backgroundQueue:
 	connection: %database% # parametry predavane do Doctrine\Dbal\Connection
 	queue: general # nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
 	tableName: background_job # nepovinné
-	amqpPublishCallback: [@rabbitMq, 'publish'] # nepovinné, callback, který publishne zprávu do brokera
-	amqpWaitingProducerName: 'waiting' # nepovinné, název queue, kam ukládat záznamy, které ještě nelze zpracovat
+	broker: @rabbitMq # nepovinné, broker implementující ADT\BackgroundQueue\Broker
+	amqpWaitingProducerName: 'waiting' # nepovinné, název producera, který publishne záznamy do waiting queue
 ```
 
 Potřebné databázové schéma se vytvoři při prvním použití fronty automaticky a také se automaticky aktualizuje, je-li třeba.

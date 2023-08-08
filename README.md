@@ -13,7 +13,7 @@ composer require adt/background-queue
 
 ### 1.2 Registrace a konfigurace
 
-BackgroundQueue prebira pole nasledujicich parametru:
+BackgroundQueue přebírá pole následujících parametrů:
 
 ```php
 
@@ -27,7 +27,8 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'queue' => 'general', // nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
 	'tableName' => 'background_job', // nepovinné, název tabulky, do které se budou ukládat jednotlivé joby
 	'producer' => $producer, // nepovinné, producer implementující ADT\BackgroundQueue\Broker\Producer
-	'waitingQueue' => 'waiting' // nepovinné, název fronty, do které se má uložit záznam pro pozdější zpracování
+	'waitingQueue' => 'waiting', // nepovinné, název fronty, do které se má uložit záznam pro pozdější zpracování
+	'logger' => $logger // nepovinné
 ]);
 
 backgroundQueue:

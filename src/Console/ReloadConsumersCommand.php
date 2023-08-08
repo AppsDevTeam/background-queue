@@ -2,7 +2,7 @@
 
 namespace ADT\BackgroundQueue\Console;
 
-use ADT\BackgroundQueue\Broker;
+use ADT\BackgroundQueue\Broker\Producer;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -12,12 +12,12 @@ class ReloadConsumersCommand extends Command
 {
 	protected static $defaultName = 'background-queue:reload-consumers';
 
-	protected Broker $broker;
+	protected Producer $producer;
 	
-	public function __construct(Broker $broker)
+	public function __construct(Producer $broker)
 	{
 		parent::__construct();
-		$this->broker = $broker;
+		$this->producer = $broker;
 	}
 
 	protected function configure()
@@ -33,7 +33,7 @@ class ReloadConsumersCommand extends Command
 	protected function execute(InputInterface $input, OutputInterface $output): int
 	{
 		for ($i = 0; $i < $input->getArgument("number"); $i++) {
-			$this->broker->publishNoop();
+			$this->producer->publishNoop();
 		}
 
 		return 0;

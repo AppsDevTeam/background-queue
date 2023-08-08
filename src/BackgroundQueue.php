@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue;
 
+use ADT\BackgroundQueue\Broker\Producer;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\WaitingException;
@@ -27,7 +28,7 @@ class BackgroundQueue
 	private array $config;
 	private Connection $connection;
 	private LoggerInterface $logger;
-	private ?Broker $broker = null;
+	private ?Producer $producer = null;
 
 	/**
 	 * @var callable[]
@@ -51,8 +52,8 @@ class BackgroundQueue
 		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);
 		$this->logger = $config['logger'] ?: new NullLogger();
-		if ($config['broker']) {
-			$this->broker = $config['broker'];
+		if ($config['producer']) {
+			$this->producer = $config['producer'];
 		}
 	}
 
@@ -92,8 +93,8 @@ class BackgroundQueue
 
 		$this->save($entity);
 
-		if ($this->broker) {
-			$this->doPublish($entity, $entity->getAvailableAt() ? $this->config['amqpWaitingProducerName'] : null);
+		if ($this->producer) {
+			$this->doPublish($entity, $entity->getAvailableAt() ? $this->config['waitingQueue'] : null);
 		}
 	}
 
@@ -107,7 +108,7 @@ class BackgroundQueue
 	public function doPublish($entity, ?string $producer = null)
 	{
 		try {
-			$this->broker->publish(is_int($entity) ? $entity : $entity->getId(), $producer);
+			$this->producer->publish(is_int($entity) ? $entity : $entity->getId(), $producer);
 		} catch (Exception $e) {
 			$this->logException('Unexpected error occurred.', $entity, $e);
 
@@ -136,14 +137,14 @@ class BackgroundQueue
 			);
 
 			if (!$entity) {
-				if ($this->broker) {
+				if ($this->producer) {
 					// pokud je to rabbit fungujici v clusteru na vice serverech,
 					// tak jeste nemusi byt syncnuta master master databaze
 
 					// coz si overime tak, ze v db neexistuje vetsi id
 					if (!$this->fetch($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
 						// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
-						$this->doPublish($id, $this->config['amqpWaitingProducerName']);
+						$this->doPublish($id, $this->config['waitingQueue']);
 					} else {
 						// zalogovat
 						$this->logException('No job found for ID "' . $id . '."');
@@ -249,8 +250,8 @@ class BackgroundQueue
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
 					$this->logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
 				}
-			} elseif ($state === BackgroundJob::STATE_WAITING && $this->broker && $this->config['amqpWaitingProducerName']) {
-				$this->doPublish($entity, $this->config['amqpWaitingProducerName']);
+			} elseif ($state === BackgroundJob::STATE_WAITING && $this->producer && $this->config['waitingQueue']) {
+				$this->doPublish($entity, $this->config['waitingQueue']);
 			}
 		} catch (Exception $innerEx) {
 			$this->logException('Unexpected error occurred', $entity, $innerEx);

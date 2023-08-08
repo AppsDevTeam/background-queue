@@ -12,42 +12,53 @@ composer require adt/background-queue
 ```
 
 ### 1.2 Registrace a konfigurace
-```
-extensions:
-	backgroundQueue: ADT\BackgroundQueue\DI\BackgroundQueueExtension
+
+BackgroundQueue prebira pole nasledujicich parametru:
+
+```php
+
+$backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
+    'callbacks' => [
+		'processEmail' => [$mailer, 'process']
+	]
+	'notifyOnNumberOfAttempts' => 5 // počet pokusů o zpracování záznamu před zalogováním
+	'tempDir' => $tempDir, // cesta pro uložení zámku proti vícenásobnému spuštění commandu
+	'connection' => $database, // pole parametru predavane do Doctrine\Dbal\Connection nebo DSN
+	'queue' => 'general', // nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
+	'tableName' => 'background_job', // nepovinné, název tabulky, do které se budou ukládat jednotlivé joby
+	'producer' => $producer, // nepovinné, producer implementující ADT\BackgroundQueue\Broker\Producer
+	'waitingQueue' => 'waiting' // nepovinné, název fronty, do které se má uložit záznam pro pozdější zpracování
+]);
 
 backgroundQueue:
-	callbacks:
-		sendEmail: [@App\Model\Mailer, sendEmail]
-		...
-	notifyOnNumberOfAttempts: 5 # počet pokusů o zpracování záznamu před zalogováním
-	tempDir: %tempDir% # cesta pro uložení zámku proti vícenásobnému spuštění commandu
-	connection: %database% # parametry predavane do Doctrine\Dbal\Connection
-	queue: general # nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
-	tableName: background_job # nepovinné
-	broker: @rabbitMq # nepovinné, broker implementující ADT\BackgroundQueue\Broker
-	amqpWaitingProducerName: 'waiting' # nepovinné, název producera, který publishne záznamy do waiting queue
+	
 ```
 
 Potřebné databázové schéma se vytvoři při prvním použití fronty automaticky a také se automaticky aktualizuje, je-li třeba.
 
 ## 2 Použití
 
-### 2.1 Přidání záznamu do fronty
+### 2.1 Přidání záznamu do fronty a jeho zpracování
 
 ```php
 namespace App\Presenters;
 
-class DefaultPresenter extends \Nette\Application\UI\Presenter 
-{
-	/** @var \ADT\BackgroundQueue\BackgroundQueue @autowire */
-	protected $backgroundQueue;
+use ADT\BackgroundQueue\BackgroundQueue;
 
-	public function actionEmailInvoice(Invoice $invoice) 
+class Mailer
+{
+    private BackgroundQueue $backgroundQueue
+
+    public function __construct(BackgroundQueue $backgroundQueue)
+    {
+        $this->backgroundQueue = $backgroundQueue;
+    }
+
+	public function send(Invoice $invoice) 
 	{
-		$callbackName = 'sendEmail';
+		$callbackName = 'processEmail';
 		$parameters = [
-			'to' => 'hello@appsdevteam.com,
+			'to' => 'hello@appsdevteam.com',
 			'subject' => 'Background queue test'
 			'text' => 'Anything you want.'
 		];
@@ -57,6 +68,11 @@ class DefaultPresenter extends \Nette\Application\UI\Presenter
 		$availableAt = new \DateTimeImmutable('+1 hour'); // earliest time when the record should be processed
 
 		$this->backgroundQueue->publish($callbackName, $parameters, $serialGroup, $identifier, $isUnique, $availableAt);
+	}
+	
+	public function process(string $to, string $subject, string $text) 
+	{
+	    // own implementation
 	}
 }
 ```
@@ -69,20 +85,6 @@ Parametr `$serialGroup` je nepovinný - jeho zadáním zajistítě, že všechny
 
 Parametr `$identifier` je nepovinný - pomocí něj si můžete označit joby vlastním identifikátorem a následně pomocí metody `getUnfinishedJobIdentifiers(array $identifiers = [])` zjistit, které z nich ještě nebyly provedeny.
 
-### 2.2 Zprácování záznamu
-
-```php
-namespace App\Model;
-
-class Mailer
-{
-	public function send(string $to, string $subject, string $text) 
-	{
-	    ...
-	}
-}
-```
-
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\PermanentErrorException`, záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně.
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, záznam se uloží ve stavu `WAITING` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Počítadlo pokusů se nezvyšuje.
@@ -91,7 +93,7 @@ Pokud callback vyhodí jakýkoliv jiný error nebo exception implementující `T
 
 Ve všech ostatních případech se záznam uloží jako úspěšně dokončený ve stavu `STATE_FINISHED`.
 
-### 2.3 Commandy
+### 2.2 Commandy
 
 `background-queue:process` Zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `AMQP_FAILED`, v případě využití AMQP brokera pouze záznamy ve stavu `TEMPORARILY_FAILED` a `WAITING`. Command je ideální spouštět cronem každou minutu. V případě použití AMQP brokeru je záznam ve stavu `TEMPORARILY_FAILED` a `WAITING` zařazen znovu do AMQP brokera.
 
@@ -103,10 +105,15 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 Všechny commandy jsou chráněny proti vícenásobnému spuštění.
 
-### 2.4 Napojení na AMQP brokera
+### 2.3 Napojení na message brokera
 
-Pro odbavování pomocí RabbitMQ můžete využít knihovnu https://github.com/AppsDevTeam/background-queue-rabbitmq a nebo se touto knihovnou inspirovat pro vytvoření vlastního AMQP bridge.
+Kromě odbavování cronem můžete zprávy odbavovat i pomocí message brokera (např. RabbitMQ).
 
-### 2.5 Callbacky
+### 2.4 Callbacky
 
 Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v nichž například můžete provést přepinání databází.
+
+### 3 Integrace do frameworků
+
+- Nette - https://github.com/AppsDevTeam/background-queue-nette
+- Symfony - https://github.com/AppsDevTeam/background-queue-symfony

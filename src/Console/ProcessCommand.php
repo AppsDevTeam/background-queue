@@ -27,9 +27,9 @@ class ProcessCommand extends Command
 		}
 
 		$states = BackgroundJob::READY_TO_PROCESS_STATES;
-		if ($this->backgroundQueue->getConfig()['amqpPublishCallback']) {
+		if ($this->backgroundQueue->getConfig()['producer']) {
 			unset ($states[BackgroundJob::STATE_READY]);
-			if ($this->backgroundQueue->getConfig()['amqpWaitingProducerName']) {
+			if ($this->backgroundQueue->getConfig()['waitingQueue']) {
 				unset ($states[BackgroundJob::STATE_WAITING]);
 			}
 		}
@@ -41,7 +41,7 @@ class ProcessCommand extends Command
 		/** @var BackgroundJob $_entity */
 		foreach ($this->backgroundQueue->fetchAll($qb) as $_entity) {
 			if (
-				$this->backgroundQueue->getConfig()['amqpPublishCallback']
+				$this->backgroundQueue->getConfig()['producer']
 				&&
 				$_entity->getState() !== BackgroundJob::STATE_AMQP_FAILED
 			) {

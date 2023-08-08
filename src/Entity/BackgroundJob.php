@@ -193,14 +193,14 @@ final class BackgroundJob
 		$entity->callbackName = $values['callback_name'];
 		$entity->parameters = $values['parameters'];
 		$entity->state = $values['state'];
-		$entity->createdAt = $values['created_at'];
+		$entity->createdAt = new DateTimeImmutable($values['created_at']);
 		$entity->lastAttemptAt = $values['last_attempt_at'] ? new DateTimeImmutable($values['last_attempt_at']) : null;
 		$entity->numberOfAttempts = $values['number_of_attempts'];
 		$entity->errorMessage = $values['error_message'];
 		$entity->serialGroup = $values['serial_group'];
 		$entity->identifier = $values['identifier'];
 		$entity->isUnique = $values['is_unique'];
-		$entity->availableAt = $values['available_at'];
+		$entity->availableAt = $values['available_at'] ? new DateTimeImmutable($values['available_at']) : null;
 		
 		return $entity;
 	}

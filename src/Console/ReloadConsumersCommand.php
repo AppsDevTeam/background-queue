@@ -14,10 +14,10 @@ class ReloadConsumersCommand extends Command
 
 	protected Producer $producer;
 	
-	public function __construct(Producer $broker)
+	public function __construct(Producer $producer)
 	{
 		parent::__construct();
-		$this->producer = $broker;
+		$this->producer = $producer;
 	}
 
 	protected function configure()

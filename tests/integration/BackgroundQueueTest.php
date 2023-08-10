@@ -79,11 +79,15 @@ class BackgroundQueueTest extends Unit
 
 		// default values
 		$connection->executeStatement('SET FOREIGN_KEY_CHECKS=0;');
-		$connection->executeStatement('TRUNCATE TABLE ' . $tableName);
+		$connection->executeStatement('DROP TABLE IF EXISTS ' . $tableName);
 		$connection->executeStatement('SET FOREIGN_KEY_CHECKS=1;');
 		if ($producer) {
-			self::$producer->channel->queue_purge($expectedQueue);
+			try {
+				//self::$producer->channel->queue_declare($expectedQueue, true);
+				self::$producer->channel->queue_purge($expectedQueue);
+			} catch (\PhpAmqpLib\Exception\AMQPProtocolChannelException $e) {}
 		}
+		rmdir($_ENV['PROJECT_TMP_FOLDER'] . '/background_queue_schema_generated');
 
 		$config = [
 			'callbacks' => [
@@ -109,12 +113,9 @@ class BackgroundQueueTest extends Unit
 		$this->tester->assertEquals($expectedState, $backgroundJobs[0]->getState(), 'state');
 
 		if ($producer) {
-			list(, $messageCount,) = self::$producer->channel->queue_declare($expectedQueue);
+			list(, $messageCount,) = self::$producer->channel->queue_declare($expectedQueue, false, true, false, false);
 
 			$this->tester->assertEquals(1, $messageCount, 'queue');
-
-			self::$producer->channel->close();
-			self::$producer->connection->close();
 		}
 	}
 	

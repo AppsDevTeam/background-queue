@@ -22,8 +22,8 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		$queue = $queue ?: 'general';
 		$exchange = 'router';
 
-		$this->channel->queue_declare($queue);
-		$this->channel->exchange_declare($exchange, 'direct');
+		$this->channel->queue_declare($queue, false, true, false, false);
+		$this->channel->exchange_declare($exchange, 'direct', false, true, false);
 		$this->channel->queue_bind($queue, $exchange);
 
 		$message = new AMQPMessage($id);

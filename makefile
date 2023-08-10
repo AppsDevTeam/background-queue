@@ -6,7 +6,7 @@ export
 RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 SHELL=/bin/bash
 
-CODECEPT=bin/php vendor/bin/codecept
+CODECEPT=php vendor/bin/codecept
 
 
 # aplikace

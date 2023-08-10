@@ -90,11 +90,14 @@ class BackgroundQueue
 		$entity->setIdentifier($identifier);
 		$entity->setIsUnique($isUnique);
 		$entity->setAvailableAt($availableAt);
+		if ($availableAt) {
+			$entity->setState(BackgroundJob::STATE_WAITING);
+		}
 
 		$this->save($entity);
 
 		if ($this->producer) {
-			$this->doPublish($entity, $entity->getAvailableAt() ? $this->config['waitingQueue'] : null);
+			$this->doPublish($entity, $availableAt ? $this->config['waitingQueue'] : null);
 		}
 	}
 
@@ -503,7 +506,7 @@ class BackgroundQueue
 		return min(16, (($numberOfAttempts - 1) * 2) ?: 1);
 	}
 
-	private function parseDsn($dsn)
+	public static function parseDsn($dsn): array
 	{
 		// Parse the DSN string
 		$parsedDsn = parse_url($dsn);

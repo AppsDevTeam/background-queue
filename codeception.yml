@@ -4,7 +4,22 @@ paths:
     data: tests/_data
     support: tests/_support
     envs: tests/_envs
+
+settings:
+    shuffle: true
+    suite_class: \PHPUnit_Framework_TestSuite
+    colors: true
+    memory_limit: 1024M
+    log: true
+    lint: false
+    be_strict_about_changes_to_global_state: false
+    report_useless_tests: true
+
 actor_suffix: Tester
+
+coverage:
+    enabled: false
+
 extensions:
     enabled:
         - Codeception\Extension\RunFailed

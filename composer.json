@@ -40,6 +40,11 @@
         "codeception/module-asserts": "^2.0",
         "adt/docker-binaries": "^3.6"
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\Integration\\": "tests/integration/"
+        }
+    },
     "repositories": [
         {
             "type": "git",

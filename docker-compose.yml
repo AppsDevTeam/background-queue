@@ -29,6 +29,3 @@ services:
       - 127.0.0.1:15672:15672
     env_file:
       - .env
-    environment:
-      - RABBITMQ_DEFAULT_USER=admin
-      - RABBITMQ_DEFAULT_PASS=RltF63U0TZ4W

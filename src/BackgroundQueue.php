@@ -97,21 +97,18 @@ class BackgroundQueue
 		$this->save($entity);
 
 		if ($this->producer) {
-			$this->doPublish($entity, $availableAt ? $this->config['waitingQueue'] : null);
+			$this->publishToBroker($entity, $availableAt ? $this->config['waitingQueue'] : null);
 		}
 	}
 
 	/**
-	 * @param int|BackgroundJob $entity
-	 * @param string|null $producer
-	 * @return void
 	 * @throws \Doctrine\DBAL\Exception
 	 * @internal
 	 */
-	public function doPublish($entity, ?string $queue = null)
+	public function publishToBroker(BackgroundJob $entity, ?string $queue = null): void
 	{
 		try {
-			$this->producer->publish(is_int($entity) ? $entity : $entity->getId(), $queue);
+			$this->producer->publish($entity->getId(), $queue, $entity->getExpiration());
 		} catch (Exception $e) {
 			$this->logException('Unexpected error occurred.', $entity, $e);
 
@@ -130,38 +127,14 @@ class BackgroundQueue
 	 */
 	public function process($entity): void
 	{
-		if (is_int($entity)) {
-			$id = $entity;
-
-			$entity = $this->fetch(
-				$this->createQueryBuilder()
-					->andWhere('id = :id')
-					->setParameter('id',  $id)
-			);
-
-			if (!$entity) {
-				if ($this->producer) {
-					// pokud je to rabbit fungujici v clusteru na vice serverech,
-					// tak jeste nemusi byt syncnuta master master databaze
-
-					// coz si overime tak, ze v db neexistuje vetsi id
-					if (!$this->fetch($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
-						// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
-						$this->doPublish($id, $this->config['waitingQueue']);
-					} else {
-						// zalogovat
-						$this->logException('No job found for ID "' . $id . '."');
-					}
-				} else {
-					// zalogovat
-					$this->logException('No job found for ID "' . $id . '."');
-				}
-				return;
-			} elseif (
-				$entity->getAvailableAt() > new DateTime()
-			) {
+		if (!$entity instanceof BackgroundJob) {
+			if (!$entity = $this->getEntity($entity)) {
 				return;
 			}
+		}
+
+		if ($entity->getAvailableAt() > new DateTime()) {
+			return;
 		}
 
 		// Zpráva není ke zpracování v případě, že nemá stav READY nebo ERROR_REPEATABLE
@@ -179,14 +152,7 @@ class BackgroundQueue
 			return;
 		}
 
-		if ($previousEntity = $this->getPreviousUnfinishedJob($entity)) {
-			try {
-				$entity->setState(BackgroundJob::STATE_TEMPORARILY_FAILED);
-				$entity->setErrorMessage('Waiting for job ID ' . $previousEntity->getId());
-				$this->save($entity);
-			} catch (Exception $e) {
-				$this->logException('Unexpected error occurred.', $entity, $e);
-			}
+		if (!$this->checkUnfinishedJobs($entity)) {
 			return;
 		}
 
@@ -215,7 +181,7 @@ class BackgroundQueue
 		// zpracování callbacku
 		// pokud metoda vyhodí TemporaryErrorException, job nebyl zpracován a zpracuje se příště
 		// pokud se vyhodí jakákoliv jiný error nebo exception implementující Throwable, job nebyl zpracován a jeho zpracování se již nebude opakovat
-		// v ostsatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
+		// v ostatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
 		$e = null;
 		try {
 			if (PHP_VERSION_ID < 80000) {
@@ -228,10 +194,13 @@ class BackgroundQueue
 			switch (get_class($e)) {
 				case PermanentErrorException::class:
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
-					$entity->setAvailableAt(new DateTimeImmutable('+' . $this->getPostponenement($entity->getNumberOfAttempts()) . ' minutes'));
 					break;
-				case WaitingException::class: $state = BackgroundJob::STATE_WAITING; break;
-				default: $state = BackgroundJob::STATE_TEMPORARILY_FAILED;
+				case WaitingException::class:
+					$state = BackgroundJob::STATE_WAITING; break;
+				default:
+					$state = BackgroundJob::STATE_TEMPORARILY_FAILED;
+					$entity->setAvailableAt(new DateTimeImmutable('+' . $this->getPostponement($entity->getNumberOfAttempts()) . ' minutes'));
+					break;
 			}
 		}
 
@@ -254,7 +223,7 @@ class BackgroundQueue
 					$this->logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
 				}
 			} elseif ($state === BackgroundJob::STATE_WAITING && $this->producer && $this->config['waitingQueue']) {
-				$this->doPublish($entity, $this->config['waitingQueue']);
+				$this->publishToBroker($entity, $this->config['waitingQueue']);
 			}
 		} catch (Exception $innerEx) {
 			$this->logException('Unexpected error occurred', $entity, $innerEx);
@@ -501,7 +470,7 @@ class BackgroundQueue
 			: $this->connection->fetchAll($sql, $parameters);
 	}
 
-	private function getPostponenement(int $numberOfAttempts): int
+	private function getPostponement(int $numberOfAttempts): int
 	{
 		return min(16, (($numberOfAttempts - 1) * 2) ?: 1);
 	}
@@ -540,5 +509,69 @@ class BackgroundQueue
 		}
 
 		return $dbParams;
+	}
+
+	/**
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	private function getEntity(int $id): ?BackgroundJob
+	{
+		$entity = $this->fetch(
+			$this->createQueryBuilder()
+				->andWhere('id = :id')
+				->setParameter('id',  $id)
+		);
+
+		if (!$entity) {
+			if ($this->producer) {
+				// pokud je to rabbit fungujici v clusteru na vice serverech,
+				// tak jeste nemusi byt syncnuta master master databaze
+
+				// coz si overime tak, ze v db neexistuje vetsi id
+				if (!$this->fetch($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
+					// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
+					try {
+						$this->producer->publish($id, $this->config['waitingQueue'], $this->config['waitingJobExpiration']);
+					} catch (Exception $e) {
+						$this->logException('Error for job ID "' . $id . '."', null, $e);
+					}
+				} else {
+					// zalogovat
+					$this->logException('No job found for ID "' . $id . '."');
+				}
+			} else {
+				// zalogovat
+				$this->logException('No job found for ID "' . $id . '."');
+			}
+			return null;
+		}
+
+		return $entity;
+	}
+
+	/**
+	 * @throws Exception
+	 */
+	private function checkUnfinishedJobs(BackgroundJob $entity): bool
+	{
+		if ($previousEntity = $this->getPreviousUnfinishedJob($entity)) {
+			try {
+				$entity->setAvailableAt(new DateTimeImmutable('+' . $this->config['waitingJobExpiration'] . ' milliseconds'));
+				$entity->setState(BackgroundJob::STATE_WAITING);
+				$entity->setErrorMessage('Waiting for job ID ' . $previousEntity->getId());
+				$this->save($entity);
+
+				if ($this->producer && $this->config['waitingQueue']) {
+					$this->publishToBroker($entity, $this->config['waitingQueue']);
+				}
+			} catch (Exception $e) {
+				$this->logException('Unexpected error occurred.', $entity, $e);
+			}
+			return false;
+		}
+
+		return true;
 	}
 }

@@ -30,6 +30,7 @@ class ProcessCommand extends Command
 		if ($this->backgroundQueue->getConfig()['producer']) {
 			unset ($states[BackgroundJob::STATE_READY]);
 			if ($this->backgroundQueue->getConfig()['waitingQueue']) {
+				unset ($states[BackgroundJob::STATE_TEMPORARILY_FAILED]);
 				unset ($states[BackgroundJob::STATE_WAITING]);
 			}
 		}
@@ -47,7 +48,7 @@ class ProcessCommand extends Command
 			) {
 				$_entity->setState(BackgroundJob::STATE_READY);
 				$this->backgroundQueue->save($_entity);
-				$this->backgroundQueue->doPublish($_entity);
+				$this->backgroundQueue->publishToBroker($_entity);
 			} else {
 				$this->backgroundQueue->process($_entity);
 			}

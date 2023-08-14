@@ -2,6 +2,7 @@
 
 namespace Tests\Integration;
 
+use Doctrine\DBAL\Schema\SchemaException;
 use Helper\Mailer;
 use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
@@ -11,6 +12,7 @@ use Doctrine\DBAL\DriverManager;
 use Exception;
 use Helper\Producer;
 use IntegrationTester;
+use ReflectionException;
 
 class BackgroundQueueTest extends Unit
 {
@@ -87,10 +89,157 @@ class BackgroundQueueTest extends Unit
 		}
 	}
 
-//	public function testProcess()
-//	{
-//
-//	}
+	public function getEntityProvider(): array
+	{
+		return [
+			'no delay; no producer; no waiting queue' => [
+				'availableAt' => false,
+				'producer' => false,
+				'waitingQueue' => false,
+				'expectedState' => BackgroundJob::STATE_READY,
+				'expectedQueue' => null
+			],
+			'no delay; producer; no waiting queue' => [
+				'availableAt' => false,
+				'producer' => true,
+				'waitingQueue' => false,
+				'expectedState' => BackgroundJob::STATE_READY,
+				'expectedQueue' => 'general'
+			],
+			'no delay; producer; waiting queue' => [
+				'availableAt' => false,
+				'producer' => true,
+				'waitingQueue' => true,
+				'expectedState' => BackgroundJob::STATE_READY,
+				'expectedQueue' => 'general'
+			],
+			'delay; no producer; no waiting queue' => [
+				'availableAt' => true,
+				'producer' => false,
+				'waitingQueue' => false,
+				'expectedState' => BackgroundJob::STATE_WAITING,
+				'expectedQueue' => null
+			],
+			'delay; producer; no waiting queue' => [
+				'availableAt' => true,
+				'producer' => true,
+				'waitingQueue' => false,
+				'expectedState' => BackgroundJob::STATE_WAITING,
+				'expectedQueue' => 'general'
+			],
+			'delay; producer; waiting queue' => [
+				'availableAt' => true,
+				'producer' => true,
+				'waitingQueue' => true,
+				'expectedState' => BackgroundJob::STATE_WAITING,
+				'expectedQueue' => 'waiting'
+			],
+		];
+	}
+
+	/**
+	 * @throws ReflectionException
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	public function testGetEntity()
+	{
+		$reflectionClass = new \ReflectionClass(BackgroundQueue::class);
+		$method = $reflectionClass->getMethod('getEntity');
+		$method->setAccessible(true);
+
+		$backgroundQueue = self::getBackgroundQueue();
+		$backgroundQueue->publish('processEmail');
+
+		/** @var BackgroundJob[] $backgroundJobs */
+		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
+		$this->tester->assertEquals($backgroundJobs[0], $method->invoke($backgroundQueue, $backgroundJobs[0]->getId()));
+	}
+
+	public function processProvider(): array
+	{
+		return [
+			'process' => [
+				'callback' => 'process',
+				'expectedState' => BackgroundJob::STATE_FINISHED,
+			],
+			'process with error' => [
+				'callback' => 'processWithError',
+				'expectedState' => BackgroundJob::STATE_TEMPORARILY_FAILED,
+			],
+		];
+	}
+
+	/**
+	 * @dataProvider processProvider
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	public function testProcess($callback, $expectedState)
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$backgroundQueue->publish($callback);
+
+		/** @var BackgroundJob[] $backgroundJobs */
+		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
+		$this->tester->assertEquals($expectedState, $backgroundJobs[0]->getState());
+	}
+
+	public function checkUnfinishedJobsProvider(): array
+	{
+		return [
+			'no producer; no waiting queue' => [
+				'producer' => false,
+				'waitingQueue' => false,
+			],
+			'producer, no waiting queue' => [
+				'producer' => true,
+				'waitingQueue' => false,
+			],
+			'producer, waiting queue' => [
+				'producer' => true,
+				'waitingQueue' => true,
+			],
+		];
+	}
+
+	/**
+	 * @dataProvider checkUnfinishedJobsProvider
+	 * @throws SchemaException
+	 * @throws ReflectionException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	public function testCheckUnfinishedJobs(bool $producer, bool $waitingQueue)
+	{
+		self::clear();
+
+		$reflectionClass = new \ReflectionClass(BackgroundQueue::class);
+		$method = $reflectionClass->getMethod('checkUnfinishedJobs');
+		$method->setAccessible(true);
+
+		$backgroundQueue = self::getBackgroundQueue($producer, $waitingQueue);
+		$backgroundQueue->publish('process', null, 'checkUnfinishedJobs');
+		$backgroundQueue->publish('process', null, 'checkUnfinishedJobs');
+
+		/** @var BackgroundJob[] $backgroundJobs */
+		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
+		$this->tester->assertEquals(true, $method->invoke($backgroundQueue, $backgroundJobs[0]));
+		$this->tester->assertEquals(false, $method->invoke($backgroundQueue, $backgroundJobs[1]));
+		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, $backgroundJobs[1]->getState());
+		if ($producer) {
+			self::getProducer()->consume();
+			self::getProducer()->consume();
+			$this->tester->assertEquals(0, self::$producer->getMessageCount('general'), 'general');
+			$this->tester->assertEquals((int) $waitingQueue, self::$producer->getMessageCount('waiting'), 'waiting');
+			if ($waitingQueue) {
+				sleep(1);
+				$this->tester->assertEquals(1, self::$producer->getMessageCount('general'), 'general after 1s');
+				$this->tester->assertEquals(0, self::$producer->getMessageCount('waiting'), 'waiting after 1s');
+			}
+		}
+	}
 	
 	private static function getProducer(): Producer
 	{
@@ -104,11 +253,11 @@ class BackgroundQueueTest extends Unit
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private static function getBackgroundQueue(bool $producer, bool $waitingQueue): BackgroundQueue
+	private static function getBackgroundQueue(bool $producer = false, bool $waitingQueue = false): BackgroundQueue
 	{
 		return new BackgroundQueue([
 			'callbacks' => [
-				'processEmail' => [new Mailer(), 'processEmail']
+				'process' => [new Mailer(), 'process']
 			],
 			'notifyOnNumberOfAttempts' => 5,
 			'tempDir' => $_ENV['PROJECT_TMP_FOLDER'],
@@ -117,6 +266,7 @@ class BackgroundQueueTest extends Unit
 			'tableName' => $_ENV['PROJECT_DB_TABLENAME'],
 			'producer' => $producer ? self::getProducer() : null,
 			'waitingQueue' => $waitingQueue ? 'waiting' : null,
+			'waitingJobExpiration' => 1000,
 			'logger' => null
 		]);
 	}

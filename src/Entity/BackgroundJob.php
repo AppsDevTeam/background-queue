@@ -222,4 +222,13 @@ final class BackgroundJob
 			'available_at' => $this->availableAt ? $this->availableAt->format('Y-m-d H:i:s') : null,
 		];
 	}
+
+	public function getExpiration()
+	{
+		if (!$this->availableAt) {
+			return null;
+		}
+
+		return max(0, ($this->availableAt->format('Uv') - (new \DateTime())->format('Uv')));
+	}
 }

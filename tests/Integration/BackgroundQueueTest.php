@@ -22,6 +22,12 @@ class BackgroundQueueTest extends Unit
 
 	private static ?Producer $producer = null;
 
+	protected function _before()
+	{
+		parent::_before();
+		self::clear();
+	}
+
 	public function publishProvider(): array
 	{
 		return [
@@ -58,7 +64,7 @@ class BackgroundQueueTest extends Unit
 				'producer' => true,
 				'waitingQueue' => false,
 				'expectedState' => BackgroundJob::STATE_WAITING,
-				'expectedQueue' => 'general'
+				'expectedQueue' => null,
 			],
 			'delay; producer; waiting queue' => [
 				'availableAt' => true,
@@ -76,15 +82,13 @@ class BackgroundQueueTest extends Unit
 	 */
 	public function testPublish(bool $availableAt, bool $producer, bool $waitingQueue, $expectedState, ?string $expectedQueue)
 	{
-		self::clear();
-
 		$backgroundQueue = self::getBackgroundQueue($producer, $waitingQueue);
-		$backgroundQueue->publish('processEmail', null, null, null, false, $availableAt ?  new DateTimeImmutable('+1 hour') : null);
+		$backgroundQueue->publish('process', null, null, null, false, $availableAt ?  new DateTimeImmutable('+1 hour') : null);
 
 		/** @var BackgroundJob[] $backgroundJobs */
 		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
 		$this->tester->assertEquals($expectedState, $backgroundJobs[0]->getState(), 'state');
-		if ($producer) {
+		if ($expectedQueue) {
 			$this->tester->assertEquals(1, self::$producer->getMessageCount($expectedQueue), 'queue');
 		}
 	}
@@ -149,7 +153,7 @@ class BackgroundQueueTest extends Unit
 		$method->setAccessible(true);
 
 		$backgroundQueue = self::getBackgroundQueue();
-		$backgroundQueue->publish('processEmail');
+		$backgroundQueue->publish('process');
 
 		/** @var BackgroundJob[] $backgroundJobs */
 		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
@@ -163,9 +167,21 @@ class BackgroundQueueTest extends Unit
 				'callback' => 'process',
 				'expectedState' => BackgroundJob::STATE_FINISHED,
 			],
-			'process with error' => [
-				'callback' => 'processWithError',
+			'process with temporary error' => [
+				'callback' => 'processWithTemporaryError',
 				'expectedState' => BackgroundJob::STATE_TEMPORARILY_FAILED,
+			],
+			'process with permanent error' => [
+				'callback' => 'processWithPermanentError',
+				'expectedState' => BackgroundJob::STATE_PERMANENTLY_FAILED,
+			],
+			'process with waiting exception' => [
+				'callback' => 'processWithWaitingException',
+				'expectedState' => BackgroundJob::STATE_WAITING,
+			],
+			'process with type error' => [
+				'callback' => 'processWithTypeError',
+				'expectedState' => BackgroundJob::STATE_PERMANENTLY_FAILED,
 			],
 		];
 	}
@@ -183,6 +199,7 @@ class BackgroundQueueTest extends Unit
 
 		/** @var BackgroundJob[] $backgroundJobs */
 		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
+		$backgroundQueue->process($backgroundJobs[0]);
 		$this->tester->assertEquals($expectedState, $backgroundJobs[0]->getState());
 	}
 
@@ -213,8 +230,6 @@ class BackgroundQueueTest extends Unit
 	 */
 	public function testCheckUnfinishedJobs(bool $producer, bool $waitingQueue)
 	{
-		self::clear();
-
 		$reflectionClass = new \ReflectionClass(BackgroundQueue::class);
 		$method = $reflectionClass->getMethod('checkUnfinishedJobs');
 		$method->setAccessible(true);
@@ -257,7 +272,11 @@ class BackgroundQueueTest extends Unit
 	{
 		return new BackgroundQueue([
 			'callbacks' => [
-				'process' => [new Mailer(), 'process']
+				'process' => [new Mailer(), 'process'],
+				'processWithTemporaryError' => [new Mailer(), 'processWithTemporaryError'],
+				'processWithPermanentError' => [new Mailer(), 'processWithPermanentError'],
+				'processWithWaitingException' => [new Mailer(), 'processWithWaitingException'],
+				'processWithTypeError' => [new Mailer(), 'processWithTypeError'],
 			],
 			'notifyOnNumberOfAttempts' => 5,
 			'tempDir' => $_ENV['PROJECT_TMP_FOLDER'],

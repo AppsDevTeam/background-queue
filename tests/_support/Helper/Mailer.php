@@ -2,15 +2,34 @@
 
 namespace Helper;
 
+use ADT\BackgroundQueue\Exception\PermanentErrorException;
+use ADT\BackgroundQueue\Exception\WaitingException;
+use Exception;
+
 class Mailer
 {
-	public function process(string $to, string $subject, string $message): bool
+	public function process(): void
 	{
-		return true;
+
 	}
 
-	public function processWithError(string $to, string $subject, string $message): bool
+	public function processWithTemporaryError(): void
 	{
-		return false;
+		throw new Exception();
+	}
+
+	public function processWithPermanentError(): void
+	{
+		throw new PermanentErrorException();
+	}
+
+	public function processWithWaitingException(): void
+	{
+		throw new WaitingException();
+	}
+
+	public function processWithTypeError(string $from): void
+	{
+
 	}
 }

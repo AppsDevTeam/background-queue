@@ -22,6 +22,7 @@ use Exception;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Throwable;
+use TypeError;
 
 class BackgroundQueue
 {
@@ -95,20 +96,32 @@ class BackgroundQueue
 		}
 
 		$this->save($entity);
-
-		if ($this->producer) {
-			$this->publishToBroker($entity, $availableAt ? $this->config['waitingQueue'] : null);
-		}
+		$this->publishToBroker($entity);
 	}
 
 	/**
 	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
 	 * @internal
 	 */
-	public function publishToBroker(BackgroundJob $entity, ?string $queue = null): void
+	public function publishToBroker(BackgroundJob $entity): void
 	{
+		if (!$this->producer) {
+			return;
+		}
+
+		if ($entity->getState() === BackgroundJob::STATE_WAITING) {
+			if (!$this->config['waitingQueue']) {
+				return;
+			}
+
+			if (!$entity->getExpiration()) {
+				$entity->setAvailableAt(new DateTimeImmutable('+' . $this->config['waitingJobExpiration'] . ' milliseconds'));
+			}
+		}
+
 		try {
-			$this->producer->publish($entity->getId(), $queue, $entity->getExpiration());
+			$this->producer->publish($entity->getId(), $entity->getExpiration() ? $this->config['waitingQueue'] : $this->config['queue'], $entity->getExpiration());
 		} catch (Exception $e) {
 			$this->logException('Unexpected error occurred.', $entity, $e);
 
@@ -193,6 +206,7 @@ class BackgroundQueue
 		} catch (Throwable $e) {
 			switch (get_class($e)) {
 				case PermanentErrorException::class:
+				case TypeError::class:
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
 					break;
 				case WaitingException::class:
@@ -213,6 +227,7 @@ class BackgroundQueue
 			$entity->setState($state)
 				->setErrorMessage($e ? $e->getMessage() : null);
 			$this->save($entity);
+			$this->publishToBroker($entity);
 
 			if ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
 				// odeslání emailu o chybě v callbacku
@@ -222,8 +237,6 @@ class BackgroundQueue
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
 					$this->logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
 				}
-			} elseif ($state === BackgroundJob::STATE_WAITING && $this->producer && $this->config['waitingQueue']) {
-				$this->publishToBroker($entity, $this->config['waitingQueue']);
 			}
 		} catch (Exception $innerEx) {
 			$this->logException('Unexpected error occurred', $entity, $innerEx);
@@ -558,14 +571,10 @@ class BackgroundQueue
 	{
 		if ($previousEntity = $this->getPreviousUnfinishedJob($entity)) {
 			try {
-				$entity->setAvailableAt(new DateTimeImmutable('+' . $this->config['waitingJobExpiration'] . ' milliseconds'));
 				$entity->setState(BackgroundJob::STATE_WAITING);
 				$entity->setErrorMessage('Waiting for job ID ' . $previousEntity->getId());
 				$this->save($entity);
-
-				if ($this->producer && $this->config['waitingQueue']) {
-					$this->publishToBroker($entity, $this->config['waitingQueue']);
-				}
+				$this->publishToBroker($entity);
 			} catch (Exception $e) {
 				$this->logException('Unexpected error occurred.', $entity, $e);
 			}

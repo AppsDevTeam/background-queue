@@ -13,12 +13,10 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	public ?AMQPChannel $channel = null;
 	private array $initQueues = [];
 
-	public function publish(int $id, ?string $queue = null, ?int $expiration = null): void
+	public function publish(int $id, string $queue, ?int $expiration = null): void
 	{
-		$exchange = $queue = $queue ?: 'general';
-
 		$this->initQueue($queue);
-		$this->getChannel()->basic_publish(new AMQPMessage($id, $expiration ? ['expiration' => $expiration] : []), $exchange);
+		$this->getChannel()->basic_publish(new AMQPMessage($id, $expiration ? ['expiration' => $expiration] : []), $queue);
 	}
 
 	public function publishNoop(): void

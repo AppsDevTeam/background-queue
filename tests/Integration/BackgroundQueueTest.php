@@ -3,15 +3,15 @@
 namespace Tests\Integration;
 
 use Doctrine\DBAL\Schema\SchemaException;
-use Helper\Mailer;
+use Tests\Support\Helper\Mailer;
 use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use Codeception\Test\Unit;
 use DateTimeImmutable;
 use Doctrine\DBAL\DriverManager;
 use Exception;
-use Helper\Producer;
-use IntegrationTester;
+use Tests\Support\Helper\Producer;
+use Tests\Support\IntegrationTester;
 use ReflectionException;
 
 class BackgroundQueueTest extends Unit
@@ -91,54 +91,6 @@ class BackgroundQueueTest extends Unit
 		if ($expectedQueue) {
 			$this->tester->assertEquals(1, self::$producer->getMessageCount($expectedQueue), 'queue');
 		}
-	}
-
-	public function getEntityProvider(): array
-	{
-		return [
-			'no delay; no producer; no waiting queue' => [
-				'availableAt' => false,
-				'producer' => false,
-				'waitingQueue' => false,
-				'expectedState' => BackgroundJob::STATE_READY,
-				'expectedQueue' => null
-			],
-			'no delay; producer; no waiting queue' => [
-				'availableAt' => false,
-				'producer' => true,
-				'waitingQueue' => false,
-				'expectedState' => BackgroundJob::STATE_READY,
-				'expectedQueue' => 'general'
-			],
-			'no delay; producer; waiting queue' => [
-				'availableAt' => false,
-				'producer' => true,
-				'waitingQueue' => true,
-				'expectedState' => BackgroundJob::STATE_READY,
-				'expectedQueue' => 'general'
-			],
-			'delay; no producer; no waiting queue' => [
-				'availableAt' => true,
-				'producer' => false,
-				'waitingQueue' => false,
-				'expectedState' => BackgroundJob::STATE_WAITING,
-				'expectedQueue' => null
-			],
-			'delay; producer; no waiting queue' => [
-				'availableAt' => true,
-				'producer' => true,
-				'waitingQueue' => false,
-				'expectedState' => BackgroundJob::STATE_WAITING,
-				'expectedQueue' => 'general'
-			],
-			'delay; producer; waiting queue' => [
-				'availableAt' => true,
-				'producer' => true,
-				'waitingQueue' => true,
-				'expectedState' => BackgroundJob::STATE_WAITING,
-				'expectedQueue' => 'waiting'
-			],
-		];
 	}
 
 	/**

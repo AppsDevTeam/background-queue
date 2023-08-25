@@ -34,15 +34,14 @@
     "require-dev": {
         "ext-bcmath": "*",
         "ext-sockets": "*",
-        "codeception/codeception": "^4.2",
+        "codeception/codeception": "^5.0",
         "php-amqplib/php-amqplib": "^2.8",
-        "codeception/module-phpbrowser": "^1.0.0",
         "codeception/module-asserts": "^2.0",
         "adt/docker-binaries": "^3.6"
     },
     "autoload-dev": {
         "psr-4": {
-            "Tests\\Integration\\": "tests/integration/"
+            "Tests\\": "tests/"
         }
     },
     "repositories": [

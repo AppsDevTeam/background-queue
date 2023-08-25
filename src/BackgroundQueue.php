@@ -49,6 +49,9 @@ class BackgroundQueue
 		if (is_string($config['connection'])) {
 			$config['connection'] = $this->parseDsn($config['connection']);
 		}
+		if (empty($config['waitingJobExpiration'])) {
+			$config['waitingJobExpiration'] = 1000;
+		}
 
 		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);

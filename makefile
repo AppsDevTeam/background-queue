@@ -27,7 +27,7 @@ docker-up:
 # ------------------------------------------------------------------------------
 
 test:
-	$(CODECEPT) run integration
+	$(CODECEPT) run Integration
 
 
 

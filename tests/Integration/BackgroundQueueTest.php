@@ -2,7 +2,9 @@
 
 namespace Tests\Integration;
 
+use Codeception\AssertThrows;
 use Doctrine\DBAL\Schema\SchemaException;
+use Tests\Support\Helper\Logger;
 use Tests\Support\Helper\Mailer;
 use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
@@ -16,7 +18,7 @@ use ReflectionException;
 
 class BackgroundQueueTest extends Unit
 {
-	//use AssertThrows;
+	use AssertThrows;
 
 	protected IntegrationTester $tester;
 
@@ -93,12 +95,37 @@ class BackgroundQueueTest extends Unit
 		}
 	}
 
+	public function getEntityProvider(): array
+	{
+		return [
+			'no producer' => [
+				'producer' => false,
+				'waitingQueue' => false,
+				'expectedException' => true,
+				'expectedQueue' => null
+			],
+			'producer, no waiting queue' => [
+				'producer' => true,
+				'waitingQueue' => false,
+				'expectedException' => false,
+				'expectedQueue' => 'general'
+			],
+			'producer, waiting queue' => [
+				'producer' => true,
+				'waitingQueue' => true,
+				'expectedException' => false,
+				'expectedQueue' => 'waiting'
+			]
+		];
+	}
+
 	/**
+	 * @dataProvider getEntityProvider
 	 * @throws ReflectionException
 	 * @throws SchemaException
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	public function testGetEntity()
+	public function testGetEntity(bool $producer, bool $waitingQueue, bool $expectedException, ?string $expectedQueue)
 	{
 		$reflectionClass = new \ReflectionClass(BackgroundQueue::class);
 		$method = $reflectionClass->getMethod('getEntity');
@@ -109,7 +136,26 @@ class BackgroundQueueTest extends Unit
 
 		/** @var BackgroundJob[] $backgroundJobs */
 		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
+
+		$backgroundQueue = self::getBackgroundQueue($producer, $waitingQueue, true);
+
 		$this->tester->assertEquals($backgroundJobs[0], $method->invoke($backgroundQueue, $backgroundJobs[0]->getId()));
+
+		$this->assertThrowsWithMessage(Exception::class, 'exception: backgroundqueue: No job found for ID "' . $backgroundJobs[0]->getId() - 1 . '".', function () use ($method, $backgroundQueue, $backgroundJobs) {
+			$method->invoke($backgroundQueue, $backgroundJobs[0]->getId() - 1);
+		});
+
+		if ($expectedException) {
+			$this->assertThrowsWithMessage(Exception::class, 'exception: backgroundqueue: No job found for ID "' . $backgroundJobs[0]->getId() + 1 . '".', function () use ($method, $backgroundQueue, $backgroundJobs) {
+				$method->invoke($backgroundQueue, $backgroundJobs[0]->getId() + 1);
+			});
+		} else {
+			$method->invoke($backgroundQueue, $backgroundJobs[0]->getId() + 1);
+		}
+
+		if ($expectedQueue) {
+			$this->tester->assertEquals(1, self::$producer->getMessageCount($expectedQueue), 'queue');
+		}
 	}
 
 	public function processProvider(): array
@@ -194,7 +240,7 @@ class BackgroundQueueTest extends Unit
 		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
 		$this->tester->assertEquals(true, $method->invoke($backgroundQueue, $backgroundJobs[0]));
 		$this->tester->assertEquals(false, $method->invoke($backgroundQueue, $backgroundJobs[1]));
-		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, $backgroundJobs[1]->getState());
+		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, $backgroundJobs[1]->getState(), 'state');
 		if ($producer) {
 			self::getProducer()->consume();
 			self::getProducer()->consume();
@@ -220,7 +266,7 @@ class BackgroundQueueTest extends Unit
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private static function getBackgroundQueue(bool $producer = false, bool $waitingQueue = false): BackgroundQueue
+	private static function getBackgroundQueue(bool $producer = false, bool $waitingQueue = false, bool $logger = false): BackgroundQueue
 	{
 		return new BackgroundQueue([
 			'callbacks' => [
@@ -238,7 +284,7 @@ class BackgroundQueueTest extends Unit
 			'producer' => $producer ? self::getProducer() : null,
 			'waitingQueue' => $waitingQueue ? 'waiting' : null,
 			'waitingJobExpiration' => 1000,
-			'logger' => null
+			'logger' => $logger ? new Logger() : null
 		]);
 	}
 
@@ -260,5 +306,8 @@ class BackgroundQueueTest extends Unit
 		self::getProducer()->purge('waiting');
 
 		rmdir($_ENV['PROJECT_TMP_FOLDER'] . '/background_queue_schema_generated');
+
+		self::$producer = null;
+		gc_collect_cycles();
 	}
 }

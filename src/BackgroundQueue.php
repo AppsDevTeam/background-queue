@@ -327,9 +327,17 @@ class BackgroundQueue
 	/**
 	 * @throws Exception
 	 */
-	private function fetch(QueryBuilder $qb): ?BackgroundJob
+	private function fetch(QueryBuilder $qb, $toEntity = true): ?BackgroundJob
 	{
-		return ($entities = $this->fetchAll($qb, 1)) ? $entities[0]: null;
+		return ($entities = $this->fetchAll($qb, 1, $toEntity)) ? $entities[0]: null;
+	}
+
+	/**
+	 * @throws Exception
+	 */
+	private function count(QueryBuilder $qb): int
+	{
+		return count($this->fetchAll($qb, 1, false));
 	}
 
 	/**
@@ -541,25 +549,26 @@ class BackgroundQueue
 		);
 
 		if (!$entity) {
+			$errorMessage = 'No job found for ID "' . $id . '".';
 			if ($this->producer) {
 				// pokud je to rabbit fungujici v clusteru na vice serverech,
 				// tak jeste nemusi byt syncnuta master master databaze
 
 				// coz si overime tak, ze v db neexistuje vetsi id
-				if (!$this->fetch($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
+				if (!$this->count($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
 					// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
 					try {
-						$this->producer->publish($id, $this->config['waitingQueue'], $this->config['waitingJobExpiration']);
+						$this->producer->publish($id, $this->config['waitingQueue'] ?: $this->config['queue'], $this->config['waitingJobExpiration']);
 					} catch (Exception $e) {
-						$this->logException('Error for job ID "' . $id . '."', null, $e);
+						$this->logException('Error for job ID "' . $id . '".', null, $e);
 					}
 				} else {
 					// zalogovat
-					$this->logException('No job found for ID "' . $id . '."');
+					$this->logException($errorMessage);
 				}
 			} else {
 				// zalogovat
-				$this->logException('No job found for ID "' . $id . '."');
+				$this->logException($errorMessage);
 			}
 			return null;
 		}

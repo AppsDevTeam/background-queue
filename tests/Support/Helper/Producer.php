@@ -16,7 +16,9 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	public function publish(int $id, string $queue, ?int $expiration = null): void
 	{
 		$this->initQueue($queue);
-		$this->getChannel()->basic_publish(new AMQPMessage($id, $expiration ? ['expiration' => $expiration] : []), $queue);
+
+		$this->getChannel()->basic_publish(new AMQPMessage($id, $expiration ? ['expiration' => $expiration] : []), $queue, '', true);
+		$this->getChannel()->wait_for_pending_acks();
 	}
 
 	public function publishNoop(): void
@@ -74,6 +76,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	{
 		if (!$this->channel) {
 			$this->channel = $this->getConnection()->channel();
+			$this->channel->confirm_select();
 		}
 
 		return $this->channel;

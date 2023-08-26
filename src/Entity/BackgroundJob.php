@@ -138,6 +138,11 @@ final class BackgroundJob
 		return $this;
 	}
 
+	public function getErrorMessage(): ?string
+	{
+		return $this->errorMessage;
+	}
+
 	public function setErrorMessage(?string $errorMessage): self
 	{
 		$this->errorMessage = $errorMessage;

@@ -32,16 +32,6 @@ class BackgroundQueue
 	private ?Producer $producer = null;
 
 	/**
-	 * @var callable[]
-	 */
-	public $onBeforeProcess = [];
-
-	/**
-	 * @var callable[]
-	 */
-	public $onAfterProcess = [];
-
-	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
 	public function __construct(array $config)
@@ -51,6 +41,15 @@ class BackgroundQueue
 		}
 		if (empty($config['waitingJobExpiration'])) {
 			$config['waitingJobExpiration'] = 1000;
+		}
+		if (!isset($config['onBeforeProcess'])) {
+			$config['onBeforeProcess'] = null;
+		}
+		if (!isset($config['onError'])) {
+			$config['onError'] = null;
+		}
+		if (!isset($config['onAfterProcess'])) {
+			$config['onAfterProcess'] = null;
 		}
 
 		$this->config = $config;
@@ -94,9 +93,6 @@ class BackgroundQueue
 		$entity->setIdentifier($identifier);
 		$entity->setIsUnique($isUnique);
 		$entity->setAvailableAt($availableAt);
-		if ($availableAt) {
-			$entity->setState(BackgroundJob::STATE_WAITING);
-		}
 
 		$this->save($entity);
 		$this->publishToBroker($entity);
@@ -110,6 +106,10 @@ class BackgroundQueue
 	public function publishToBroker(BackgroundJob $entity): void
 	{
 		if (!$this->producer) {
+			return;
+		}
+
+		if ($entity->getExpiration() && !$this->config['waitingQueue']) {
 			return;
 		}
 
@@ -190,8 +190,8 @@ class BackgroundQueue
 			return;
 		}
 
-		foreach ($this->onBeforeProcess as $cb) {
-			$cb($entity->getParameters());
+		if ($this->config['onBeforeProcess']) {
+			$this->config['onBeforeProcess']($entity->getParameters());
 		}
 
 		// zpracování callbacku
@@ -207,6 +207,12 @@ class BackgroundQueue
 			}
 			$state = BackgroundJob::STATE_FINISHED;
 		} catch (Throwable $e) {
+			if ($this->config['onError']) {
+				try {
+					$this->config['onError']($e, $entity->getParameters());
+				} catch (\Exception $e) {}
+			}
+
 			switch (get_class($e)) {
 				case PermanentErrorException::class:
 				case TypeError::class:
@@ -221,8 +227,8 @@ class BackgroundQueue
 			}
 		}
 
-		foreach ($this->onAfterProcess as $cb) {
-			$cb($entity->getParameters());
+		if ($this->config['onAfterProcess']) {
+			$this->config['onAfterProcess']($entity->getParameters());
 		}
 
 		// zpracování výsledku

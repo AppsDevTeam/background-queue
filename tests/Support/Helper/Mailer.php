@@ -32,4 +32,9 @@ class Mailer
 	{
 
 	}
+
+	public function processWithOnErrorException(): void
+	{
+		throw new OnErrorException();
+	}
 }

@@ -21,14 +21,18 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
     'callbacks' => [
 		'processEmail' => [$mailer, 'process']
 	]
-	'notifyOnNumberOfAttempts' => 5 // počet pokusů o zpracování záznamu před zalogováním
+	'notifyOnNumberOfAttempts' => 5, // počet pokusů o zpracování záznamu před zalogováním
 	'tempDir' => $tempDir, // cesta pro uložení zámku proti vícenásobnému spuštění commandu
 	'connection' => $database, // pole parametru predavane do Doctrine\Dbal\Connection nebo DSN
 	'queue' => 'general', // nepovinné, název fronty, do které se ukládají a ze které se vybírají záznamy
 	'tableName' => 'background_job', // nepovinné, název tabulky, do které se budou ukládat jednotlivé joby
 	'producer' => $producer, // nepovinné, producer implementující ADT\BackgroundQueue\Broker\Producer
 	'waitingQueue' => 'waiting', // nepovinné, název fronty, do které se má uložit záznam pro pozdější zpracování
-	'logger' => $logger // nepovinné
+	'waitingJobExpiration' => 1000, // nepovinné, délka v ms, po které se job pokusí znovu provést, když čeká na dokončení předchozího
+	'logger' => $logger, // nepovinné, musí implementovat psr/log LoggerInterface
+	'onBeforeProcess' => function(array $parameters) {...}, // nepovinné
+	'onError' => function(Throwable $e, array $parameters) {...},  // nepovinné
+	'onAfterProcess' => function(array $parameters) {...}, // nepovinné
 ]);
 
 backgroundQueue:

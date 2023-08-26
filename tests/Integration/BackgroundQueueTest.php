@@ -4,6 +4,7 @@ namespace Tests\Integration;
 
 use Codeception\AssertThrows;
 use Doctrine\DBAL\Schema\SchemaException;
+use Tests\Support\Helper\OnErrorException;
 use Tests\Support\Helper\Logger;
 use Tests\Support\Helper\Mailer;
 use ADT\BackgroundQueue\BackgroundQueue;
@@ -15,6 +16,7 @@ use Exception;
 use Tests\Support\Helper\Producer;
 use Tests\Support\IntegrationTester;
 use ReflectionException;
+use Throwable;
 
 class BackgroundQueueTest extends Unit
 {
@@ -58,21 +60,21 @@ class BackgroundQueueTest extends Unit
 				'availableAt' => true,
 				'producer' => false,
 				'waitingQueue' => false,
-				'expectedState' => BackgroundJob::STATE_WAITING,
+				'expectedState' => BackgroundJob::STATE_READY,
 				'expectedQueue' => null
 			],
 			'delay; producer; no waiting queue' => [
 				'availableAt' => true,
 				'producer' => true,
 				'waitingQueue' => false,
-				'expectedState' => BackgroundJob::STATE_WAITING,
+				'expectedState' => BackgroundJob::STATE_READY,
 				'expectedQueue' => null,
 			],
 			'delay; producer; waiting queue' => [
 				'availableAt' => true,
 				'producer' => true,
 				'waitingQueue' => true,
-				'expectedState' => BackgroundJob::STATE_WAITING,
+				'expectedState' => BackgroundJob::STATE_READY,
 				'expectedQueue' => 'waiting'
 			],
 		];
@@ -181,6 +183,10 @@ class BackgroundQueueTest extends Unit
 				'callback' => 'processWithTypeError',
 				'expectedState' => BackgroundJob::STATE_PERMANENTLY_FAILED,
 			],
+			'process with on error exception' => [
+				'callback' => 'processWithOnErrorException',
+				'expectedState' => BackgroundJob::STATE_TEMPORARILY_FAILED,
+			],
 		];
 	}
 
@@ -190,7 +196,7 @@ class BackgroundQueueTest extends Unit
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
 	 */
-	public function testProcess($callback, $expectedState)
+	public function testProcess(string $callback, int $expectedState)
 	{
 		$backgroundQueue = self::getBackgroundQueue();
 		$backgroundQueue->publish($callback);
@@ -275,6 +281,7 @@ class BackgroundQueueTest extends Unit
 				'processWithPermanentError' => [new Mailer(), 'processWithPermanentError'],
 				'processWithWaitingException' => [new Mailer(), 'processWithWaitingException'],
 				'processWithTypeError' => [new Mailer(), 'processWithTypeError'],
+				'processWithOnErrorException' => [new Mailer(), 'processWithOnErrorException']
 			],
 			'notifyOnNumberOfAttempts' => 5,
 			'tempDir' => $_ENV['PROJECT_TMP_FOLDER'],
@@ -284,7 +291,12 @@ class BackgroundQueueTest extends Unit
 			'producer' => $producer ? self::getProducer() : null,
 			'waitingQueue' => $waitingQueue ? 'waiting' : null,
 			'waitingJobExpiration' => 1000,
-			'logger' => $logger ? new Logger() : null
+			'logger' => $logger ? new Logger() : null,
+			'onError' => function(Throwable $e) {
+				if ($e instanceof OnErrorException) {
+					throw new Exception();
+				}
+			}
 		]);
 	}
 
@@ -305,7 +317,7 @@ class BackgroundQueueTest extends Unit
 		self::getProducer()->purge('general');
 		self::getProducer()->purge('waiting');
 
-		rmdir($_ENV['PROJECT_TMP_FOLDER'] . '/background_queue_schema_generated');
+		@rmdir($_ENV['PROJECT_TMP_FOLDER'] . '/background_queue_schema_generated');
 
 		self::$producer = null;
 		gc_collect_cycles();

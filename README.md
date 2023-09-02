@@ -19,7 +19,11 @@ BackgroundQueue přebírá pole následujících parametrů:
 
 $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
     'callbacks' => [
-		'processEmail' => [$mailer, 'process']
+		'processEmail' => [$mailer, 'process'],
+		'processEmail2' => [ // možnost specifikace jiné fronty pro tento callback
+		    'callback' => [$mailer, 'process'],
+		    'queue' => 'general',
+		],
 	]
 	'notifyOnNumberOfAttempts' => 5, // počet pokusů o zpracování záznamu před zalogováním
 	'tempDir' => $tempDir, // cesta pro uložení zámku proti vícenásobnému spuštění commandu

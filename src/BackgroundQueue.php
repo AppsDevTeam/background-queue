@@ -113,8 +113,11 @@ class BackgroundQueue
 			return;
 		}
 
+		$queue = $this->config['callbacks'][$entity->getCallbackName()]['queue']
+			?? ($entity->getExpiration() ? $this->config['waitingQueue'] : $this->config['queue']);
+
 		try {
-			$this->producer->publish($entity->getId(), $entity->getExpiration() ? $this->config['waitingQueue'] : $this->config['queue'], $entity->getExpiration());
+			$this->producer->publish($entity->getId(), $queue, $entity->getExpiration());
 		} catch (Exception $e) {
 			$this->logException('Unexpected error occurred.', $entity, $e);
 
@@ -167,7 +170,7 @@ class BackgroundQueue
 			return;
 		}
 
-		$callback = $this->config['callbacks'][$entity->getCallbackName()];
+		$callback = $this->config['callbacks'][$entity->getCallbackName()]['callback'];
 
 		// změna stavu na zpracovává se
 		try {

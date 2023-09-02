@@ -113,16 +113,6 @@ class BackgroundQueue
 			return;
 		}
 
-		if ($entity->getState() === BackgroundJob::STATE_WAITING) {
-			if (!$this->config['waitingQueue']) {
-				return;
-			}
-
-			if (!$entity->getExpiration()) {
-				$entity->setAvailableAt(new DateTimeImmutable('+' . $this->config['waitingJobExpiration'] . ' milliseconds'));
-			}
-		}
-
 		try {
 			$this->producer->publish($entity->getId(), $entity->getExpiration() ? $this->config['waitingQueue'] : $this->config['queue'], $entity->getExpiration());
 		} catch (Exception $e) {
@@ -591,6 +581,7 @@ class BackgroundQueue
 			try {
 				$entity->setState(BackgroundJob::STATE_WAITING);
 				$entity->setErrorMessage('Waiting for job ID ' . $previousEntity->getId());
+				$entity->setAvailableAt(new DateTimeImmutable('+' . $this->config['waitingJobExpiration'] . ' milliseconds'));
 				$this->save($entity);
 				$this->publishToBroker($entity);
 			} catch (Exception $e) {

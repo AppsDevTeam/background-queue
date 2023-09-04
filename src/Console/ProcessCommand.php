@@ -26,18 +26,11 @@ class ProcessCommand extends Command
 			return 0;
 		}
 
-		$states = BackgroundJob::READY_TO_PROCESS_STATES;
-		if ($this->backgroundQueue->getConfig()['producer']) {
-			unset ($states[BackgroundJob::STATE_READY]);
-			if ($this->backgroundQueue->getConfig()['waitingQueue']) {
-				unset ($states[BackgroundJob::STATE_TEMPORARILY_FAILED]);
-				unset ($states[BackgroundJob::STATE_WAITING]);
-			}
-		}
-
 		$qb = $this->backgroundQueue->createQueryBuilder()
-			->andWhere("state IN (:state)")
-			->setParameter("state", $states);
+			->andWhere('state IN (:state)')
+			->setParameter('state',  BackgroundJob::READY_TO_PROCESS_STATES)
+			->andWhere("process_by_broker = :process_by_broker")
+			->setParameter("process_by_broker", false);
 
 		/** @var BackgroundJob $_entity */
 		foreach ($this->backgroundQueue->fetchAll($qb) as $_entity) {

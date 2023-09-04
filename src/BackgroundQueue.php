@@ -121,7 +121,7 @@ class BackgroundQueue
 		} catch (Exception $e) {
 			$this->logException('Unexpected error occurred.', $entity, $e);
 
-			$entity->setState(BackgroundJob::STATE_AMQP_FAILED)
+			$entity->setProcessByBroker(false)
 				->setErrorMessage($e->getMessage());
 			$this->save($entity);
 		}
@@ -396,6 +396,9 @@ class BackgroundQueue
 		$this->updateSchema();
 
 		if (!$entity->getId()) {
+			if ($this->producer) {
+				$entity->setProcessByBroker(true);
+			}
 			$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
 			$entity->setId($this->connection->lastInsertId());
 		} else {
@@ -448,6 +451,7 @@ class BackgroundQueue
 		$table->addColumn('identifier', Types::STRING)->setNotnull(false);
 		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 		$table->addColumn('available_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
+		$table->addColumn('process_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);

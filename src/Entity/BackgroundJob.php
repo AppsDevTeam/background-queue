@@ -14,13 +14,11 @@ final class BackgroundJob
 	const STATE_PERMANENTLY_FAILED = 5; // kritická chyba (např. chyba v implementaci)
 	const STATE_WAITING = 6; // ceka na pristi zpracovani
 	const STATE_REDUNDANT = 7; // je nadbytecny (kdyz isUnique = true)
-	const STATE_AMQP_FAILED = 8; // nepodarilo se zpracovat pomoci AMQP
 
 	const READY_TO_PROCESS_STATES = [
 		self::STATE_READY => self::STATE_READY,
 		self::STATE_TEMPORARILY_FAILED => self::STATE_TEMPORARILY_FAILED,
 		self::STATE_WAITING => self::STATE_WAITING,
-		self::STATE_AMQP_FAILED => self::STATE_AMQP_FAILED
 	];
 
 	const FINISHED_STATES = [
@@ -41,6 +39,7 @@ final class BackgroundJob
 	private ?string $identifier = null;
 	private bool $isUnique = false;
 	private ?DateTimeImmutable $availableAt = null;
+	private bool $processByBroker = false;
 
 	public function __construct()
 	{
@@ -182,6 +181,17 @@ final class BackgroundJob
 		return $this;
 	}
 
+	public function getProcessByBroker(): bool
+	{
+		return $this->processByBroker;
+	}
+
+	public function setProcessByBroker(bool $processByBroker): self
+	{
+		$this->processByBroker = $processByBroker;
+		return $this;
+	}
+
 	public function isReadyForProcess(): bool
 	{
 		return isset(self::READY_TO_PROCESS_STATES[$this->state]);
@@ -206,7 +216,8 @@ final class BackgroundJob
 		$entity->identifier = $values['identifier'];
 		$entity->isUnique = $values['is_unique'];
 		$entity->availableAt = $values['available_at'] ? new DateTimeImmutable($values['available_at']) : null;
-		
+		$entity->processByBroker = $values['process_by_broker'];
+
 		return $entity;
 	}
 
@@ -225,6 +236,7 @@ final class BackgroundJob
 			'identifier' => $this->identifier,
 			'is_unique' => (int) $this->isUnique,
 			'available_at' => $this->availableAt ? $this->availableAt->format('Y-m-d H:i:s') : null,
+			'process_by_broker' => (int) $this->processByBroker,
 		];
 	}
 

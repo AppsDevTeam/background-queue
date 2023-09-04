@@ -44,7 +44,7 @@ class ProcessCommand extends Command
 			if (
 				$this->backgroundQueue->getConfig()['producer']
 				&&
-				$_entity->getState() !== BackgroundJob::STATE_AMQP_FAILED
+				$_entity->getProcessByBroker()
 			) {
 				$_entity->setState(BackgroundJob::STATE_READY);
 				$this->backgroundQueue->save($_entity);

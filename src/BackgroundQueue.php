@@ -92,7 +92,7 @@ class BackgroundQueue
 		$entity->setSerialGroup($serialGroup);
 		$entity->setIdentifier($identifier);
 		$entity->setIsUnique($isUnique);
-		$entity->setAvailableAt($availableAt);
+		$entity->setPostponedBy($availableAt);
 
 		$this->save($entity);
 		$this->publishToBroker($entity);
@@ -110,7 +110,7 @@ class BackgroundQueue
 		}
 
 		try {
-			$this->producer->publish($entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getExpiration());
+			$this->producer->publish($entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getPostponedBy());
 		} catch (Exception $e) {
 			$this->logException('Unexpected error occurred.', $entity, $e);
 
@@ -135,7 +135,7 @@ class BackgroundQueue
 			}
 		}
 
-		if ($entity->getAvailableAt() > new DateTime()) {
+		if ($entity->getAvailableFrom() > new DateTime()) {
 			return;
 		}
 
@@ -168,7 +168,7 @@ class BackgroundQueue
 		// změna stavu na zpracovává se
 		try {
 			$entity->setState(BackgroundJob::STATE_PROCESSING);
-			$entity->setAvailableAt(null);
+			$entity->setPostponedBy(null);
 			$entity->setErrorMessage(null);
 			$entity->updateLastAttemptAt();
 			$entity->increaseNumberOfAttempts();
@@ -210,7 +210,7 @@ class BackgroundQueue
 					$state = BackgroundJob::STATE_WAITING; break;
 				default:
 					$state = BackgroundJob::STATE_TEMPORARILY_FAILED;
-					$entity->setAvailableAt(new DateTimeImmutable('+' . $this->getPostponement($entity->getNumberOfAttempts()) . ' minutes'));
+					$entity->setPostponedBy(new DateTimeImmutable('+' . $this->getPostponement($entity->getNumberOfAttempts()) . ' minutes'));
 					break;
 			}
 		}
@@ -445,7 +445,7 @@ class BackgroundQueue
 		$table->addColumn('serial_group', Types::STRING)->setNotnull(false);
 		$table->addColumn('identifier', Types::STRING)->setNotnull(false);
 		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
-		$table->addColumn('available_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
+		$table->addColumn('postponed_by', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 
 		$table->setPrimaryKey(['id']);
@@ -583,7 +583,7 @@ class BackgroundQueue
 			try {
 				$entity->setState(BackgroundJob::STATE_WAITING);
 				$entity->setErrorMessage('Waiting for job ID ' . $previousEntity->getId());
-				$entity->setAvailableAt(new DateTimeImmutable('+' . $this->config['waitingJobExpiration'] . ' milliseconds'));
+				$entity->setPostponedBy(new DateTimeImmutable('+' . $this->config['waitingJobExpiration'] . ' milliseconds'));
 				$this->save($entity);
 				$this->publishToBroker($entity);
 			} catch (Exception $e) {

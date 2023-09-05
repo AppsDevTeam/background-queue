@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Entity;
 
+use DateTime;
 use DateTimeImmutable;
 use Exception;
 
@@ -40,7 +41,7 @@ final class BackgroundJob
 	private ?string $serialGroup = null;
 	private ?string $identifier = null;
 	private bool $isUnique = false;
-	private ?DateTimeImmutable $availableAt = null;
+	private ?int $postponedBy = null;
 	private bool $processedByBroker = false;
 
 	public function __construct()
@@ -172,14 +173,14 @@ final class BackgroundJob
 		return $this;
 	}
 
-	public function getAvailableAt(): ?DateTimeImmutable
+	public function getPostponedBy(): ?int
 	{
-		return $this->availableAt;
+		return $this->postponedBy;
 	}
 
-	public function setAvailableAt(?DateTimeImmutable $availableAt): self
+	public function setPostponedBy(?int $postponedBy): self
 	{
-		$this->availableAt = $availableAt;
+		$this->postponedBy = $postponedBy;
 		return $this;
 	}
 
@@ -217,7 +218,7 @@ final class BackgroundJob
 		$entity->serialGroup = $values['serial_group'];
 		$entity->identifier = $values['identifier'];
 		$entity->isUnique = $values['is_unique'];
-		$entity->availableAt = $values['available_at'] ? new DateTimeImmutable($values['available_at']) : null;
+		$entity->postponedBy = $values['postponed_by'];
 		$entity->processedByBroker = $values['processed_by_broker'];
 
 		return $entity;
@@ -237,17 +238,13 @@ final class BackgroundJob
 			'serial_group' => $this->serialGroup,
 			'identifier' => $this->identifier,
 			'is_unique' => (int) $this->isUnique,
-			'available_at' => $this->availableAt ? $this->availableAt->format('Y-m-d H:i:s') : null,
+			'postponed_by' => $this->postponedBy,
 			'processed_by_broker' => (int) $this->processedByBroker,
 		];
 	}
 
-	public function getExpiration()
+	public function getAvailableFrom(): DateTime
 	{
-		if (!$this->availableAt) {
-			return null;
-		}
-
-		return max(0, ($this->availableAt->format('Uv') - (new \DateTime())->format('Uv')));
+		return new DateTime('@' . max($this->createdAt->getTimestamp(), $this->lastAttemptAt ? $this->lastAttemptAt->getTimestamp() : 0) + $this->postponedBy);
 	}
 }

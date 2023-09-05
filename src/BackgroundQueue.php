@@ -109,19 +109,12 @@ class BackgroundQueue
 			return;
 		}
 
-		if ($entity->getExpiration() && !$this->config['waitingQueue']) {
-			return;
-		}
-
-		$queue = $this->config['callbacks'][$entity->getCallbackName()]['queue']
-			?? ($entity->getExpiration() ? $this->config['waitingQueue'] : $this->config['queue']);
-
 		try {
-			$this->producer->publish($entity->getId(), $queue, $entity->getExpiration());
+			$this->producer->publish($entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getExpiration());
 		} catch (Exception $e) {
 			$this->logException('Unexpected error occurred.', $entity, $e);
 
-			$entity->setProcessByBroker(false)
+			$entity->setState(BackgroundJob::STATE_BROKER_FAILED)
 				->setErrorMessage($e->getMessage());
 			$this->save($entity);
 		}
@@ -175,6 +168,8 @@ class BackgroundQueue
 		// změna stavu na zpracovává se
 		try {
 			$entity->setState(BackgroundJob::STATE_PROCESSING);
+			$entity->setAvailableAt(null);
+			$entity->setErrorMessage(null);
 			$entity->updateLastAttemptAt();
 			$entity->increaseNumberOfAttempts();
 			$this->save($entity);
@@ -397,7 +392,7 @@ class BackgroundQueue
 
 		if (!$entity->getId()) {
 			if ($this->producer) {
-				$entity->setProcessByBroker(true);
+				$entity->setProcessedByBroker(true);
 			}
 			$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
 			$entity->setId($this->connection->lastInsertId());
@@ -451,7 +446,7 @@ class BackgroundQueue
 		$table->addColumn('identifier', Types::STRING)->setNotnull(false);
 		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 		$table->addColumn('available_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
-		$table->addColumn('process_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
+		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);
@@ -561,7 +556,7 @@ class BackgroundQueue
 				if (!$this->count($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
 					// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
 					try {
-						$this->producer->publish($id, $this->config['waitingQueue'] ?: $this->config['queue'], $this->config['waitingJobExpiration']);
+						$this->producer->publish($id, $this->config['queue'], $this->config['waitingJobExpiration']);
 					} catch (Exception $e) {
 						$this->logException('Error for job ID "' . $id . '".', null, $e);
 					}

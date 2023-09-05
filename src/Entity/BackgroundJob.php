@@ -14,11 +14,13 @@ final class BackgroundJob
 	const STATE_PERMANENTLY_FAILED = 5; // kritická chyba (např. chyba v implementaci)
 	const STATE_WAITING = 6; // ceka na pristi zpracovani
 	const STATE_REDUNDANT = 7; // je nadbytecny (kdyz isUnique = true)
+	const STATE_BROKER_FAILED = 8; // nepodarilo se ulozit job do brokera
 
 	const READY_TO_PROCESS_STATES = [
 		self::STATE_READY => self::STATE_READY,
 		self::STATE_TEMPORARILY_FAILED => self::STATE_TEMPORARILY_FAILED,
 		self::STATE_WAITING => self::STATE_WAITING,
+		self::STATE_BROKER_FAILED => self::STATE_BROKER_FAILED
 	];
 
 	const FINISHED_STATES = [
@@ -39,7 +41,7 @@ final class BackgroundJob
 	private ?string $identifier = null;
 	private bool $isUnique = false;
 	private ?DateTimeImmutable $availableAt = null;
-	private bool $processByBroker = false;
+	private bool $processedByBroker = false;
 
 	public function __construct()
 	{
@@ -181,14 +183,14 @@ final class BackgroundJob
 		return $this;
 	}
 
-	public function getProcessByBroker(): bool
+	public function getProcessedByBroker(): bool
 	{
-		return $this->processByBroker;
+		return $this->processedByBroker;
 	}
 
-	public function setProcessByBroker(bool $processByBroker): self
+	public function setProcessedByBroker(bool $processedByBroker): self
 	{
-		$this->processByBroker = $processByBroker;
+		$this->processedByBroker = $processedByBroker;
 		return $this;
 	}
 
@@ -216,7 +218,7 @@ final class BackgroundJob
 		$entity->identifier = $values['identifier'];
 		$entity->isUnique = $values['is_unique'];
 		$entity->availableAt = $values['available_at'] ? new DateTimeImmutable($values['available_at']) : null;
-		$entity->processByBroker = $values['process_by_broker'];
+		$entity->processedByBroker = $values['processed_by_broker'];
 
 		return $entity;
 	}
@@ -236,7 +238,7 @@ final class BackgroundJob
 			'identifier' => $this->identifier,
 			'is_unique' => (int) $this->isUnique,
 			'available_at' => $this->availableAt ? $this->availableAt->format('Y-m-d H:i:s') : null,
-			'process_by_broker' => (int) $this->processByBroker,
+			'processed_by_broker' => (int) $this->processedByBroker,
 		];
 	}
 

@@ -5,6 +5,7 @@ namespace ADT\BackgroundQueue\Entity;
 use DateTime;
 use DateTimeImmutable;
 use Exception;
+use ReflectionClass;
 
 final class BackgroundJob
 {
@@ -205,7 +206,7 @@ final class BackgroundJob
 	 */
 	public static function createEntity(array $values): BackgroundJob
 	{
-		$entity = (new \ReflectionClass(self::class))->newInstanceWithoutConstructor();
+		$entity = (new ReflectionClass(self::class))->newInstanceWithoutConstructor();
 		$entity->id = $values['id'];
 		$entity->queue = $values['queue'];
 		$entity->callbackName = $values['callback_name'];
@@ -243,8 +244,11 @@ final class BackgroundJob
 		];
 	}
 
+	/**
+	 * @throws Exception
+	 */
 	public function getAvailableFrom(): DateTime
 	{
-		return new DateTime('@' . max($this->createdAt->getTimestamp(), $this->lastAttemptAt ? $this->lastAttemptAt->getTimestamp() : 0) + $this->postponedBy);
+		return new DateTime('@' . (max($this->createdAt->getTimestamp(), $this->lastAttemptAt ? $this->lastAttemptAt->getTimestamp() : 0) + ceil($this->postponedBy/ 1000)));
 	}
 }

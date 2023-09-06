@@ -8,7 +8,6 @@ use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\WaitingException;
 use ADT\Utils\FileSystem;
 use DateTime;
-use DateTimeImmutable;
 use DateTimeInterface;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
@@ -21,6 +20,7 @@ use Doctrine\DBAL\Types\Types;
 use Exception;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use RuntimeException;
 use Throwable;
 use TypeError;
 
@@ -70,7 +70,7 @@ class BackgroundQueue
 		?string $serialGroup = null,
 		?string $identifier = null,
 		bool $isUnique = false,
-		?DateTimeImmutable $availableAt = null
+		?int $postponeBy = null
 	): void
 	{
 		if (!$callbackName) {
@@ -92,7 +92,7 @@ class BackgroundQueue
 		$entity->setSerialGroup($serialGroup);
 		$entity->setIdentifier($identifier);
 		$entity->setIsUnique($isUnique);
-		$entity->setPostponedBy($availableAt);
+		$entity->setPostponedBy($postponeBy);
 
 		$this->save($entity);
 		$this->publishToBroker($entity);
@@ -129,13 +129,17 @@ class BackgroundQueue
 	 */
 	public function process($entity): void
 	{
+		if ($this->config['debug']) {
+			$this->logger->log('debug', $entity instanceof BackgroundJob ? $entity->getId() : $entity);
+		}
+		
 		if (!$entity instanceof BackgroundJob) {
 			if (!$entity = $this->getEntity($entity)) {
 				return;
 			}
 		}
 
-		if ($entity->getAvailableFrom() > new DateTime()) {
+		if (!$entity->getProcessedByBroker() && $entity->getAvailableFrom() > new DateTime()) {
 			return;
 		}
 
@@ -198,7 +202,7 @@ class BackgroundQueue
 			if ($this->config['onError']) {
 				try {
 					$this->config['onError']($e, $entity->getParameters());
-				} catch (\Exception $e) {}
+				} catch (Exception $e) {}
 			}
 
 			switch (get_class($e)) {
@@ -210,7 +214,7 @@ class BackgroundQueue
 					$state = BackgroundJob::STATE_WAITING; break;
 				default:
 					$state = BackgroundJob::STATE_TEMPORARILY_FAILED;
-					$entity->setPostponedBy(new DateTimeImmutable('+' . $this->getPostponement($entity->getNumberOfAttempts()) . ' minutes'));
+					$entity->setPostponedBy(self::getPostponement($entity->getNumberOfAttempts()));
 					break;
 			}
 		}
@@ -321,9 +325,9 @@ class BackgroundQueue
 	/**
 	 * @throws Exception
 	 */
-	private function fetch(QueryBuilder $qb, $toEntity = true): ?BackgroundJob
+	private function fetch(QueryBuilder $qb): ?BackgroundJob
 	{
-		return ($entities = $this->fetchAll($qb, 1, $toEntity)) ? $entities[0]: null;
+		return ($entities = $this->fetchAll($qb, 1)) ? $entities[0]: null;
 	}
 
 	/**
@@ -492,9 +496,9 @@ class BackgroundQueue
 			: $this->connection->fetchAll($sql, $parameters);
 	}
 
-	private function getPostponement(int $numberOfAttempts): int
+	private static function getPostponement(int $numberOfAttempts): int
 	{
-		return min(16, (($numberOfAttempts - 1) * 2) ?: 1);
+		return min(16, 2 ** ($numberOfAttempts -1)) * 1000 * 60;
 	}
 
 	public static function parseDsn($dsn): array
@@ -503,7 +507,7 @@ class BackgroundQueue
 		$parsedDsn = parse_url($dsn);
 
 		if ($parsedDsn === false || !isset($parsedDsn['scheme'], $parsedDsn['host'], $parsedDsn['path'])) {
-			throw new \RuntimeException("Invalid DSN: " . $dsn);
+			throw new RuntimeException("Invalid DSN: " . $dsn);
 		}
 
 		// Convert DSN scheme to Doctrine DBAL driver name
@@ -514,7 +518,7 @@ class BackgroundQueue
 		];
 
 		if (!isset($driversMap[$parsedDsn['scheme']])) {
-			throw new \RuntimeException("Unknown DSN scheme: " . $parsedDsn['scheme']);
+			throw new RuntimeException("Unknown DSN scheme: " . $parsedDsn['scheme']);
 		}
 
 		// Convert DSN components to Doctrine DBAL connection parameters
@@ -583,7 +587,7 @@ class BackgroundQueue
 			try {
 				$entity->setState(BackgroundJob::STATE_WAITING);
 				$entity->setErrorMessage('Waiting for job ID ' . $previousEntity->getId());
-				$entity->setPostponedBy(new DateTimeImmutable('+' . $this->config['waitingJobExpiration'] . ' milliseconds'));
+				$entity->setPostponedBy($this->config['waitingJobExpiration']);
 				$this->save($entity);
 				$this->publishToBroker($entity);
 			} catch (Exception $e) {

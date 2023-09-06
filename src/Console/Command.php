@@ -12,13 +12,13 @@ abstract class Command extends \Symfony\Component\Console\Command\Command
 {
 	use CommandLock;
 
-	private string $locksPath;
+	private string $locksDir;
 
 	abstract protected function executeCommand(InputInterface $input, OutputInterface $output): int;
 
-	public function setLocksPath(string $locksPath)
+	public function setLocksDir(string $locksDir)
 	{
-		$this->locksPath = $locksPath;
+		$this->locksDir = $locksDir;
 	}
 
 	/**
@@ -26,7 +26,7 @@ abstract class Command extends \Symfony\Component\Console\Command\Command
 	 */
 	protected function execute(InputInterface $input, OutputInterface $output): int
 	{
-		$this->setStorage(new FileSystemStorage($this->locksPath));
+		$this->setStorage(new FileSystemStorage($this->locksDir));
 
 		$this->lock();
 

@@ -11,7 +11,7 @@ class Connection
 	private array $params;
 	private ?AMQPStreamConnection $connection = null;
 	private ?AMQPChannel $channel = null;
-	
+
 	public function __construct(array $params)
 	{
 		$this->params = $params;
@@ -40,7 +40,11 @@ class Connection
 	 */
 	public function __destruct()
 	{
-		$this->channel->close();
-		$this->connection->close();
+		if ($this->channel) {
+			$this->channel->close();
+		}
+		if ($this->connection) {
+			$this->connection->close();
+		}
 	}
 }

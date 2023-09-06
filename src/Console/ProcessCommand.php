@@ -3,6 +3,7 @@
 namespace ADT\BackgroundQueue\Console;
 
 use ADT\BackgroundQueue\Entity\BackgroundJob;
+use DateTime;
 use Exception;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -34,7 +35,6 @@ class ProcessCommand extends Command
 		}
 
 		$qb = $this->backgroundQueue->createQueryBuilder()
-			->andWhere('available_at IS NULL OR available_at < NOW()')
 			->andWhere('state IN (:state)')
 			->setParameter('state',  $states);
 
@@ -49,6 +49,9 @@ class ProcessCommand extends Command
 				$this->backgroundQueue->save($_entity);
 				$this->backgroundQueue->publishToBroker($_entity);
 			} else {
+				if (!$_entity->getProcessedByBroker() && $_entity->getAvailableFrom() > new DateTime()) {
+					continue;
+				}
 				$_entity->setProcessedByBroker(false);
 				$this->backgroundQueue->process($_entity);
 			}

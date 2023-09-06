@@ -139,10 +139,6 @@ class BackgroundQueue
 			}
 		}
 
-		if (!$entity->getProcessedByBroker() && $entity->getAvailableFrom() > new DateTime()) {
-			return;
-		}
-
 		// Zpráva není ke zpracování v případě, že nemá stav READY nebo ERROR_REPEATABLE
 		// Pokud při zpracování zprávy nastane chyba, zpráva zůstane ve stavu PROCESSING a consumer se ukončí.
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).

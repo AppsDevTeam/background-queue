@@ -24,7 +24,7 @@
         "symfony/console": "^4.0|^5.0|^6.0",
         "psr/log": "^1.0|^2.0|^3.0",
         "adt/utils": "^2.10",
-        "adt/command-lock": "^1.0"
+        "adt/command-lock": "^1.1"
     },
     "autoload": {
         "psr-4": {

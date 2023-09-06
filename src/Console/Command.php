@@ -2,23 +2,38 @@
 
 namespace ADT\BackgroundQueue\Console;
 
-use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\CommandLock\CommandLock;
+use ADT\CommandLock\Storage\FileSystemStorage;
 use Exception;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 
 abstract class Command extends \Symfony\Component\Console\Command\Command
 {
 	use CommandLock;
 
-	protected BackgroundQueue $backgroundQueue;
+	private string $locksDir;
 
+	abstract protected function executeCommand(InputInterface $input, OutputInterface $output): int;
+
+	public function setLocksDir(string $locksDir)
+	{
+		$this->locksDir = $locksDir;
+	}
+	
 	/**
 	 * @throws Exception
 	 */
-	public function __construct(BackgroundQueue $backgroundQueue)
+	protected function execute(InputInterface $input, OutputInterface $output): int
 	{
-		parent::__construct();
-		$this->backgroundQueue = $backgroundQueue;
-		$this->setCommandLockPath($this->backgroundQueue->getConfig()['tempDir']);
+		$this->setStorage(new FileSystemStorage($this->locksDir));
+
+		$this->lock();
+
+		$status = $this->executeCommand($input, $output);
+
+		$this->unlock();
+
+		return $status;
 	}
 }

@@ -7,7 +7,7 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
-class ConsumeCommand extends  \Symfony\Component\Console\Command\Command
+class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 {
 	protected static $defaultName = 'background-queue:consume';
 	private Consumer $consumer;
@@ -29,6 +29,6 @@ class ConsumeCommand extends  \Symfony\Component\Console\Command\Command
 	{
 		$this->consumer->consume($input->getArgument('queue'));
 
-		return 0;
+		return \Symfony\Component\Console\Command\Command::SUCCESS;
 	}
 }

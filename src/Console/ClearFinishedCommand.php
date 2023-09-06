@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Console;
 
+use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use DateTime;
 use Doctrine\DBAL\Exception;
@@ -13,6 +14,17 @@ use Symfony\Component\Console\Input\InputArgument;
 class ClearFinishedCommand extends Command
 {
 	protected static $defaultName = 'background-queue:clear-finished';
+
+	private BackgroundQueue $backgroundQueue;
+
+	/**
+	 * @throws Exception
+	 */
+	public function __construct(BackgroundQueue $backgroundQueue)
+	{
+		parent::__construct();
+		$this->backgroundQueue = $backgroundQueue;
+	}
 
 	protected function configure()
 	{
@@ -31,12 +43,8 @@ class ClearFinishedCommand extends Command
 	 * @throws SchemaException
 	 * @throws \Exception
 	 */
-	protected function execute(InputInterface $input, OutputInterface $output): int
+	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
-		if (!$this->tryLock()) {
-			return 0;
-		}
-
 		$qb = $this->backgroundQueue->createQueryBuilder()
 			->delete($this->backgroundQueue->getConfig()['tableName'])
 			->andWhere('state = :state')
@@ -49,8 +57,6 @@ class ClearFinishedCommand extends Command
 
 		$qb->execute();
 
-		$this->tryUnlock();
-
-		return 0;
+		return \Symfony\Component\Console\Command\Command::SUCCESS;
 	}
 }

@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Console;
 
+use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use DateTime;
 use Exception;
@@ -12,6 +13,17 @@ class ProcessCommand extends Command
 {
 	protected static $defaultName = 'background-queue:process';
 
+	private BackgroundQueue $backgroundQueue;
+
+	/**
+	 * @throws Exception
+	 */
+	public function __construct(BackgroundQueue $backgroundQueue)
+	{
+		parent::__construct();
+		$this->backgroundQueue = $backgroundQueue;
+	}
+
 	protected function configure()
 	{
 		$this->setName('background-queue:process');
@@ -21,12 +33,8 @@ class ProcessCommand extends Command
 	/**
 	 * @throws Exception
 	 */
-	protected function execute(InputInterface $input, OutputInterface $output): int
+	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
-		if (!$this->tryLock()) {
-			return 0;
-		}
-
 		$states = BackgroundJob::READY_TO_PROCESS_STATES;
 		if ($this->backgroundQueue->getConfig()['producer']) {
 			unset ($states[BackgroundJob::STATE_READY]);
@@ -57,8 +65,6 @@ class ProcessCommand extends Command
 			}
 		}
 
-		$this->tryUnlock();
-
-		return 0;
+		return \Symfony\Component\Console\Command\Command::SUCCESS;
 	}
 }

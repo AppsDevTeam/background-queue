@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Console;
 
+use ADT\BackgroundQueue\BackgroundQueue;
 use Doctrine\DBAL\Schema\SchemaException;
 use Exception;
 use Symfony\Component\Console\Input\InputInterface;
@@ -10,6 +11,17 @@ use Symfony\Component\Console\Output\OutputInterface;
 class UpdateSchemaCommand extends Command
 {
 	protected static $defaultName = 'background-queue:update-schema';
+
+	private BackgroundQueue $backgroundQueue;
+
+	/**
+	 * @throws Exception
+	 */
+	public function __construct(BackgroundQueue $backgroundQueue)
+	{
+		parent::__construct();
+		$this->backgroundQueue = $backgroundQueue;
+	}
 
 	protected function configure()
 	{
@@ -21,16 +33,10 @@ class UpdateSchemaCommand extends Command
 	 * @throws SchemaException
 	 * @throws Exception
 	 */
-	protected function execute(InputInterface $input, OutputInterface $output): int
+	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
-		if (!$this->tryLock()) {
-			return 0;
-		}
-
 		$this->backgroundQueue->updateSchema();
 
-		$this->tryUnlock();
-
-		return 0;
+		return \Symfony\Component\Console\Command\Command::SUCCESS;
 	}
 }

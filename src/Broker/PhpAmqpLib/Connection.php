@@ -5,6 +5,7 @@ namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
 use Exception;
 use PhpAmqpLib\Channel\AMQPChannel;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
+use PhpAmqpLib\Message\AMQPMessage;
 
 class Connection
 {
@@ -30,6 +31,11 @@ class Connection
 	{
 		if (!$this->channel) {
 			$this->channel = $this->getConnection()->channel();
+			$this->channel->confirm_select();
+			$this->channel->set_nack_handler(function (AMQPMessage $message) {
+				throw new Exception('Internal error (basic.nack)');
+			});
+			$this->channel->wait_for_pending_acks();
 		}
 
 		return $this->channel;

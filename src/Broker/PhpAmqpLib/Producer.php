@@ -34,7 +34,15 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 			$this->createQueue($exchange, $queue . '_' . $expiration, $additionalArguments);
 		}
 
-		$this->connection->getChannel()->basic_publish($this->createMessage($id), $queue, $expiration ? $queue . '_' . $expiration : $queue);
+		$channel = $this->connection->getChannel();
+		$channel->confirm_select();
+		$channel->set_nack_handler(function (AMQPMessage $message) {
+			throw new \Exception('Internal error (basic.nack)');
+		});
+		$channel->basic_publish($this->createMessage($id), $queue, $expiration ? $queue . '_' . $expiration : $queue);
+		$channel->wait_for_pending_acks();
+
+		//$this->connection->getChannel()->basic_publish($this->createMessage($id), $queue, $expiration ? $queue . '_' . $expiration : $queue);
 	}
 
 	public function publishNoop(): void

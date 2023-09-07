@@ -224,7 +224,9 @@ class BackgroundQueue
 			$entity->setState($state)
 				->setErrorMessage($e ? $e->getMessage() : null);
 			$this->save($entity);
-			$this->publishToBroker($entity);
+			if ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
+				$this->publishToBroker($entity);
+			}
 
 			if ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
 				// odeslání emailu o chybě v callbacku

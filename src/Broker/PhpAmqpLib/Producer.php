@@ -34,7 +34,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 			$this->createQueue($exchange, $queue . '_' . $expiration, $additionalArguments);
 		}
 
-		$this->connection->getChannel()->basic_publish($this->createMessage($id), $exchange, $expiration ? $queue . '_' . $expiration : $queue);
+		$this->connection->getChannel()->basic_publish($this->createMessage($id), $exchange, $expiration ? $queue . '_' . $expiration : $queue, true);
 	}
 
 	public function publishNoop(): void

@@ -35,7 +35,12 @@ class Connection
 			$this->channel->set_nack_handler(function (AMQPMessage $message) {
 				throw new Exception('Internal error (basic.nack)');
 			});
-			$this->channel->wait_for_pending_acks();
+			$this->channel->set_return_listener(
+				function ($replyCode, $replyText, $exchange, $routingKey, AMQPMessage $message) {
+					throw new Exception("Code: $replyCode, Text: $replyText, Exchange: $exchange, Routing Key: $routingKey");
+				}
+			);
+			$this->channel->wait_for_pending_acks_returns();
 		}
 
 		return $this->channel;

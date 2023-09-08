@@ -31,15 +31,15 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 		$channel = $this->connection->getChannel();
 
 		$channel->basic_consume($queue, '', false, false, false, false, function(AMQPMessage $msg) {
+			$msg->ack();
+
 			if ($msg->getBody() === Producer::NOOP) {
 				return true;
 			}
 
-			$msg->ack();
-
 			$this->backgroundQueue->process((int)$msg->getBody());
 
-			exit(0);
+			$msg->getChannel()->basic_cancel($msg->getConsumerTag());
 		});
 
 		while ($this->connection->getChannel()->is_consuming()) {

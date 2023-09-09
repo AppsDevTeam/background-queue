@@ -40,7 +40,6 @@ class Connection
 					throw new Exception("Code: $replyCode, Text: $replyText, Exchange: $exchange, Routing Key: $routingKey");
 				}
 			);
-			$this->channel->wait_for_pending_acks_returns();
 		}
 
 		return $this->channel;

@@ -35,7 +35,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		}
 
 		$this->connection->getChannel()->basic_publish($this->createMessage($id), $exchange, $expiration ? $queue . '_' . $expiration : $queue, true);
-		$this->connection->getChannel()->wait_for_pending_acks_returns();
+
 	}
 
 	public function publishNoop(): void

@@ -40,21 +40,13 @@ class Connection
 					throw new Exception("Code: $replyCode, Text: $replyText, Exchange: $exchange, Routing Key: $routingKey");
 				}
 			);
+			register_shutdown_function(function() {
+				$this->channel->wait_for_pending_acks_returns();
+				$this->channel->close();
+				$this->connection->close();
+			});
 		}
 
 		return $this->channel;
-	}
-
-	/**
-	 * @throws Exception
-	 */
-	public function __destruct()
-	{
-		if ($this->channel) {
-			$this->channel->close();
-		}
-		if ($this->connection) {
-			$this->connection->close();
-		}
 	}
 }

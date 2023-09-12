@@ -9,7 +9,7 @@ use PhpAmqpLib\Message\AMQPMessage;
 
 class Manager
 {
-	private array $databaseParams;
+	private array $connectionParams;
 	private array $queueParams;
 
 	private ?AMQPStreamConnection $connection = null;
@@ -19,16 +19,16 @@ class Manager
 	private array $initExchanges;
 	private  bool $initQos = false;
 
-	public function __construct(array $databaseParams, array $queueParams)
+	public function __construct(array $connectionParams, array $queueParams)
 	{
-		$this->databaseParams = $databaseParams;
+		$this->connectionParams = $connectionParams;
 		$this->queueParams = $queueParams;
 	}
 
 	private function getConnection(): AMQPStreamConnection
 	{
 		if (!$this->connection) {
-			$this->connection = new AMQPStreamConnection($this->databaseParams['host'], $this->databaseParams['port'] ?? 5672, $this->databaseParams['user'], $this->databaseParams['password']);
+			$this->connection = new AMQPStreamConnection($this->connectionParams['host'], $this->connectionParams['port'] ?? 5672, $this->connectionParams['user'], $this->connectionParams['password']);
 		}
 
 		return $this->connection;

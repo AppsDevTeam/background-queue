@@ -456,7 +456,7 @@ class BackgroundQueue
 
 		if ($this->createSchemaManager()->tablesExist($this->config['tableName'])) {
 			$tableDiff = (new Comparator())->diffTable($this->createSchemaManager()->listTableDetails($this->config['tableName']), $table);
-			$sqls = $this->createSchemaManager()->getDatabasePlatform()->getAlterTableSQL($tableDiff);
+			$sqls = $tableDiff ? $this->createSchemaManager()->getDatabasePlatform()->getAlterTableSQL($tableDiff) : [];
 		} else {
 			$sqls = $this->createSchemaManager()->getDatabasePlatform()->getCreateTableSQL($table);
 		}

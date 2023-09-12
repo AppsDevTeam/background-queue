@@ -74,7 +74,7 @@ class Manager
 		$this->initExchanges[$exchange] = true;
 	}
 
-	public function createQueue(string $exchange, string $queue, array $additionalArguments = [])
+	public function createQueue(string $queue, ?string $exchange = null, array $additionalArguments = [])
 	{
 		if (isset($this->initQueues[$queue])) {
 			return;
@@ -94,7 +94,9 @@ class Manager
 			false,
 			$arguments
 		);
-		$this->getChannel()->queue_bind($queue, $exchange, $queue);
+		if ($exchange) {
+			$this->getChannel()->queue_bind($queue, $exchange, $queue);
+		}
 
 		$this->initQueues[$queue] = true;
 	}

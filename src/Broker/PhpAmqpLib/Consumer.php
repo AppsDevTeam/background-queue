@@ -22,9 +22,7 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 	 */
 	public function consume(string $queue): void
 	{
-		$exchange = $queue;
-
-		$this->manager->createQueue($exchange, $queue);
+		$this->manager->createQueue($queue);
 		
 		$this->manager->setupQos();
 

@@ -20,14 +20,14 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		$exchange = $queue;
 
 		$this->manager->createExchange($exchange);
-		$this->manager->createQueue($exchange, $queue);
+		$this->manager->createQueue($queue, $exchange);
 		if ($expiration) {
 			$additionalArguments = [
 				'x-dead-letter-exchange' => ['S', $exchange],
 				'x-dead-letter-routing-key' => ['S',  $queue],
 				'x-message-ttl' => ['I', $expiration]
 			];
-			$this->manager->createQueue($exchange, $queue . '_' . $expiration, $additionalArguments);
+			$this->manager->createQueue($queue . '_' . $expiration, $exchange, $additionalArguments);
 		}
 
 		$this->manager->getChannel()->basic_publish($this->createMessage($id), $exchange, $expiration ? $queue . '_' . $expiration : $queue, true);

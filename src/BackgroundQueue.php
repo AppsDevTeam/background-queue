@@ -454,13 +454,14 @@ class BackgroundQueue
 		$table->addIndex(['identifier']);
 		$table->addIndex(['state']);
 
-		$schemaDiff = (new Comparator())->compare($this->createSchemaManager()->createSchema(), $schema);
-		foreach ($schemaDiff->toSaveSql($this->connection->getDatabasePlatform()) as $_sql) {
-			if (strstr($_sql, ' ' . $this->config['tableName'] . ' ') === false) {
-				continue;
-			}
-
-			$this->executeStatement($_sql);
+		if ($this->createSchemaManager()->tablesExist($this->config['tableName'])) {
+			$tableDiff = (new Comparator())->diffTable($this->createSchemaManager()->listTableDetails($this->config['tableName']), $table);
+			$sqls = $this->createSchemaManager()->getDatabasePlatform()->getAlterTableSQL($tableDiff);
+		} else {
+			$sqls = $this->createSchemaManager()->getDatabasePlatform()->getCreateTableSQL($table);
+		}
+		foreach ($sqls as $sql) {
+			$this->executeStatement($sql);
 		}
 	}
 

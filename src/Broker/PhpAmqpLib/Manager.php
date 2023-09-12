@@ -1,0 +1,116 @@
+<?php
+
+namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
+
+use Exception;
+use PhpAmqpLib\Channel\AMQPChannel;
+use PhpAmqpLib\Connection\AMQPStreamConnection;
+use PhpAmqpLib\Message\AMQPMessage;
+
+class Manager
+{
+	private array $databaseParams;
+	private array $queueParams;
+
+	private ?AMQPStreamConnection $connection = null;
+	private ?AMQPChannel $channel = null;
+
+	private array $initQueues;
+	private array $initExchanges;
+	private  bool $initQos = false;
+
+	public function __construct(array $databaseParams, array $queueParams)
+	{
+		$this->databaseParams = $databaseParams;
+		$this->queueParams = $queueParams;
+	}
+
+	private function getConnection(): AMQPStreamConnection
+	{
+		if (!$this->connection) {
+			$this->connection = new AMQPStreamConnection($this->databaseParams['host'], $this->databaseParams['port'] ?? 5672, $this->databaseParams['user'], $this->databaseParams['password']);
+		}
+
+		return $this->connection;
+	}
+
+	public function getChannel(): AMQPChannel
+	{
+		if (!$this->channel) {
+			$this->channel = $this->getConnection()->channel();
+			$this->channel->confirm_select();
+			$this->channel->set_nack_handler(function (AMQPMessage $message) {
+				throw new Exception('Internal error (basic.nack)');
+			});
+			$this->channel->set_return_listener(
+				function ($replyCode, $replyText, $exchange, $routingKey, AMQPMessage $message) {
+					throw new Exception("Code: $replyCode, Text: $replyText, Exchange: $exchange, Routing Key: $routingKey");
+				}
+			);
+			register_shutdown_function(function() {
+				$this->channel->wait_for_pending_acks_returns();
+				$this->channel->close();
+				$this->connection->close();
+			});
+		}
+
+		return $this->channel;
+	}
+
+	public function createExchange(string $exchange)
+	{
+		if (isset($this->initExchanges[$exchange])) {
+			return;
+		}
+
+		$this->getChannel()->exchange_declare(
+			$exchange,
+			'direct',
+			false,
+			true,
+			false,
+		);
+
+		$this->initExchanges[$exchange] = true;
+	}
+
+	public function createQueue(string $exchange, string $queue, array $additionalArguments = [])
+	{
+		if (isset($this->initQueues[$queue])) {
+			return;
+		}
+
+		$arguments = $this->queueParams['arguments'];
+		if ($additionalArguments) {
+			$arguments = array_merge($arguments, $additionalArguments);
+		}
+
+		$this->getChannel()->queue_declare(
+			$queue,
+			false,
+			true,
+			false,
+			false,
+			false,
+			$arguments
+		);
+		$this->getChannel()->queue_bind($queue, $exchange, $queue);
+
+		$this->initQueues[$queue] = true;
+	}
+
+	public function setupQos()
+	{
+		if ($this->initQos) {
+			return;
+		}
+
+		$this->getChannel()->basic_qos(
+			0,
+			1,
+			false
+		);
+
+		$this->initQos = true;
+	}
+}

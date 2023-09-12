@@ -9,11 +9,11 @@ use PhpAmqpLib\Message\AMQPMessage;
 class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 {
 	private BackgroundQueue $backgroundQueue;
-	private Connection $connection;
-
-	public function __construct(Connection $connection, BackgroundQueue $backgroundQueue)
+	private Manager $manager;
+	
+	public function __construct(Manager $manager, BackgroundQueue $backgroundQueue)
 	{
-		$this->connection = $connection;
+		$this->manager = $manager;
 		$this->backgroundQueue = $backgroundQueue;
 	}
 
@@ -22,15 +22,13 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 	 */
 	public function consume(string $queue): void
 	{
-		$this->connection->getChannel()->basic_qos(
-			0,
-			1,
-			false
-		);
+		$exchange = $queue;
 
-		$channel = $this->connection->getChannel();
+		$this->manager->createQueue($exchange, $queue);
+		
+		$this->manager->setupQos();
 
-		$channel->basic_consume($queue, '', false, false, false, false, function(AMQPMessage $msg) {
+		$this->manager->getChannel()->basic_consume($queue, '', false, false, false, false, function(AMQPMessage $msg) {
 			$msg->ack();
 
 			if ($msg->getBody() === Producer::NOOP) {
@@ -42,8 +40,8 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 			$msg->getChannel()->basic_cancel($msg->getConsumerTag());
 		});
 
-		while ($this->connection->getChannel()->is_consuming()) {
-			$this->connection->getChannel()->wait();
+		while ($this->manager->getChannel()->is_consuming()) {
+			$this->manager->getChannel()->wait();
 		}
 	}
 }

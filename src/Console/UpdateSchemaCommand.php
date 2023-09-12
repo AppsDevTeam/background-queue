@@ -37,6 +37,6 @@ class UpdateSchemaCommand extends Command
 	{
 		$this->backgroundQueue->updateSchema();
 
-		return \Symfony\Component\Console\Command\Command::SUCCESS;
+		return 0;
 	}
 }

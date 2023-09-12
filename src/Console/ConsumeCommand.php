@@ -29,6 +29,6 @@ class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 	{
 		$this->consumer->consume($input->getArgument('queue'));
 
-		return \Symfony\Component\Console\Command\Command::SUCCESS;
+		return 0;
 	}
 }

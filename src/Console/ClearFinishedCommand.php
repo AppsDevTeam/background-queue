@@ -57,6 +57,6 @@ class ClearFinishedCommand extends Command
 
 		$qb->execute();
 
-		return \Symfony\Component\Console\Command\Command::SUCCESS;
+		return 0;
 	}
 }

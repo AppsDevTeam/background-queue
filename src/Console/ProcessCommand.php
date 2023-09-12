@@ -65,6 +65,6 @@ class ProcessCommand extends Command
 			}
 		}
 
-		return \Symfony\Component\Console\Command\Command::SUCCESS;
+		return 0;
 	}
 }

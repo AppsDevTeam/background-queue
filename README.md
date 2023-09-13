@@ -88,7 +88,7 @@ $producer = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Producer();
 $consumer = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Consumer();
 
 $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
-    ...
+	...
 	'producer' => $producer,
 	'waitingJobExpiration' => 1000, // nepovinné, délka v ms, po které se job pokusí znovu provést, když čeká na dokončení předchozího
 ]);

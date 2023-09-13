@@ -18,11 +18,11 @@ BackgroundQueue přebírá pole následujících parametrů:
 ```php
 
 $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
-    'callbacks' => [
+	'callbacks' => [
 		'processEmail' => [$mailer, 'process'],
 		'processEmail2' => [ // možnost specifikace jiné fronty pro tento callback
-		    'callback' => [$mailer, 'process'],
-		    'queue' => 'general',
+			'callback' => [$mailer, 'process'],
+			'queue' => 'general',
 		],
 	]
 	'notifyOnNumberOfAttempts' => 5, // počet pokusů o zpracování záznamu před zalogováním
@@ -113,19 +113,15 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 Všechny commandy jsou chráněny proti vícenásobnému spuštění.
 
-### 2.3 Napojení na message brokera
-
-Kromě odbavování cronem můžete zprávy odbavovat i pomocí message brokera (např. RabbitMQ).
-
-### 2.4 Callbacky
+### 2.3 Callbacky
 
 Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v nichž například můžete provést přepinání databází.
 
-### 2.5 Broker
+### 2.4 Broker
 
-You can use this package with any broker. Your producer or consumer just need to implement `ADT\BackgroundQueue\Broker\Producer` or `ADT\BackgroundQueue\Broker\Consumer`. 
+You can use this package with any broker. Your producer or consumer just need to implement `ADT\BackgroundQueue\Broker\Producer` or `ADT\BackgroundQueue\Broker\Consumer`. Or you can use `php-amqplib/php-amqplib`, for which this library has an implementation.
 
-#### 2.5.1 php-amqplib
+#### 2.4.1 php-amqplib
 
 Because using of `php-amqplib/php-amqplib` is optional, it doesn't check your installed version against the version with which this package was tested. That's why it's recommended to add to your composer:
 

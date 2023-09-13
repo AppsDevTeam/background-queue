@@ -7,6 +7,7 @@ Komponenta využívá vlastní doctrine entity manager pro ukládání záznamů
 ## 1. Instalace a konfigurace
 
 ### 1.1 Instalace
+
 ```
 composer require adt/background-queue
 ```
@@ -16,6 +17,16 @@ composer require adt/background-queue
 BackgroundQueue přebírá pole následujících parametrů:
 
 ```php
+$connection = [
+	'serverVersion' => '8.0',
+	'driver' => 'pdo_mysql',
+	'host' => $_ENV['DB_HOST'],
+	'port' => $_ENV['DB_PORT'],
+	'user' => $_ENV['DB_USER'],
+	'password' => $_ENV['DB_PASSWORD'],
+	'dbname' => $_ENV['DB_DBNAME'],
+];
+
 $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'callbacks' => [
 		'processEmail' => [$mailer, 'process'],
@@ -26,7 +37,7 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	]
 	'notifyOnNumberOfAttempts' => 5, // počet pokusů o zpracování záznamu před zalogováním
 	'tempDir' => $tempDir, // cesta pro uložení zámku proti vícenásobnému spuštění commandu
-	'connection' => $database, // pole parametru predavane do Doctrine\Dbal\Connection nebo DSN
+	'connection' => $connection, // pole parametru predavane do Doctrine\Dbal\Connection nebo DSN
 	'queue' => $_ENV['PROJECT_NAME'], // název fronty, do které se ukládají a ze které se vybírají záznamy
 	'tableName' => 'background_job', // nepovinné, název tabulky, do které se budou ukládat jednotlivé joby
 	'logger' => $logger, // nepovinné, musí implementovat psr/log LoggerInterface

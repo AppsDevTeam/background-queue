@@ -16,7 +16,6 @@ composer require adt/background-queue
 BackgroundQueue přebírá pole následujících parametrů:
 
 ```php
-
 $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'callbacks' => [
 		'processEmail' => [$mailer, 'process'],
@@ -37,12 +36,42 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'onError' => function(Throwable $e, array $parameters) {...},  // nepovinné
 	'onAfterProcess' => function(array $parameters) {...}, // nepovinné
 ]);
-
-backgroundQueue:
-	
 ```
 
 Potřebné databázové schéma se vytvoři při prvním použití fronty automaticky a také se automaticky aktualizuje, je-li třeba.
+
+### 1.3 Broker (optional)
+
+You can use this package with any broker. Your producer or consumer just need to implement `ADT\BackgroundQueue\Broker\Producer` or `ADT\BackgroundQueue\Broker\Consumer`. 
+
+Or you can use `php-amqplib/php-amqplib`, for which this library has an ready to use implementation.
+
+#### 1.3.1 php-amqplib
+
+Because using of `php-amqplib/php-amqplib` is optional, it doesn't check your installed version against the version with which this package was tested. That's why it's recommended to add to your composer:
+
+```json
+{
+  "conflict": {
+    "php-amqplib/php-amqplib": "<3.0.0 || >=4.0.0"
+  }
+}
+```
+
+This version of `php-amqplib/php-amqplib` also need `ext-sockets`. You can add it to your Dockerfile like this:
+
+```Dockerfile
+docker-php-ext-install sockets
+```
+
+and then run:
+
+```
+composer require php-amqplib/php-amqplib
+```
+
+This make sures you avoid BC break when upgrading `php-amqplib/php-amqplib` in the future.
+
 
 ## 2 Použití
 
@@ -116,36 +145,6 @@ Všechny commandy jsou chráněny proti vícenásobnému spuštění.
 ### 2.3 Callbacky
 
 Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v nichž například můžete provést přepinání databází.
-
-### 2.4 Broker
-
-You can use this package with any broker. Your producer or consumer just need to implement `ADT\BackgroundQueue\Broker\Producer` or `ADT\BackgroundQueue\Broker\Consumer`. Or you can use `php-amqplib/php-amqplib`, for which this library has an implementation.
-
-#### 2.4.1 php-amqplib
-
-Because using of `php-amqplib/php-amqplib` is optional, it doesn't check your installed version against the version with which this package was tested. That's why it's recommended to add to your composer:
-
-```json
-{
-  "conflict": {
-    "php-amqplib/php-amqplib": "<3.0.0 || >=4.0.0"
-  }
-}
-```
-
-This version of `php-amqplib/php-amqplib` also need `ext-sockets`. You can add it to your Dockerfile like this:
-
-```Dockerfile
-docker-php-ext-install sockets
-```
-
-and then run:
-
-```
-composer require php-amqplib/php-amqplib
-```
-
-This make sures you avoid BC break when upgrading `php-amqplib/php-amqplib` in the future.
 
 ### 3 Integrace do frameworků
 

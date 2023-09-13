@@ -121,6 +121,36 @@ Kromě odbavování cronem můžete zprávy odbavovat i pomocí message brokera 
 
 Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v nichž například můžete provést přepinání databází.
 
+### 2.5 Broker
+
+You can use this package with any broker. Your producer or consumer just need to implement `ADT\BackgroundQueue\Broker\Producer` or `ADT\BackgroundQueue\Broker\Consumer`. 
+
+#### 2.5.1 php-amqplib
+
+Because using of `php-amqplib/php-amqplib` is optional, it doesn't check your installed version against the version with which this package was tested. That's why it's recommended to add to your composer:
+
+```json
+{
+  "conflict": {
+    "php-amqplib/php-amqplib": "<3.0.0 || >=4.0.0"
+  }
+}
+```
+
+This version of `php-amqplib/php-amqplib` also need `ext-sockets`. You can add it to your Dockerfile like this:
+
+```Dockerfile
+docker-php-ext-install sockets
+```
+
+and then run:
+
+```
+composer require php-amqplib/php-amqplib
+```
+
+This make sures you avoid BC break when upgrading `php-amqplib/php-amqplib` in the future.
+
 ### 3 Integrace do frameworků
 
 - Nette - https://github.com/AppsDevTeam/background-queue-nette

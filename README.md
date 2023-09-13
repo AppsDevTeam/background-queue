@@ -29,8 +29,6 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'connection' => $database, // pole parametru predavane do Doctrine\Dbal\Connection nebo DSN
 	'queue' => $_ENV['PROJECT_NAME'], // název fronty, do které se ukládají a ze které se vybírají záznamy
 	'tableName' => 'background_job', // nepovinné, název tabulky, do které se budou ukládat jednotlivé joby
-	'producer' => $producer, // nepovinné, producer implementující ADT\BackgroundQueue\Broker\Producer
-	'waitingJobExpiration' => 1000, // nepovinné, délka v ms, po které se job pokusí znovu provést, když čeká na dokončení předchozího
 	'logger' => $logger, // nepovinné, musí implementovat psr/log LoggerInterface
 	'onBeforeProcess' => function(array $parameters) {...}, // nepovinné
 	'onError' => function(Throwable $e, array $parameters) {...},  // nepovinné
@@ -42,11 +40,11 @@ Potřebné databázové schéma se vytvoři při prvním použití fronty automa
 
 ### 1.3 Broker (optional)
 
-You can use this package with any broker. Your producer or consumer just need to implement `ADT\BackgroundQueue\Broker\Producer` or `ADT\BackgroundQueue\Broker\Consumer`. 
+You can use this package with any message broker. Your producer or consumer just need to implement `ADT\BackgroundQueue\Broker\Producer` or `ADT\BackgroundQueue\Broker\Consumer`. 
 
 Or you can use `php-amqplib/php-amqplib`, for which this library has an ready to use implementation.
 
-#### 1.3.1 php-amqplib
+#### 1.3.1 php-amqplib installation
 
 Because using of `php-amqplib/php-amqplib` is optional, it doesn't check your installed version against the version with which this package was tested. That's why it's recommended to add to your composer:
 
@@ -71,6 +69,30 @@ composer require php-amqplib/php-amqplib
 ```
 
 This make sures you avoid BC break when upgrading `php-amqplib/php-amqplib` in the future.
+
+
+#### 1.3.1 php-amqplib configuration
+
+```php
+$connectionParams = [
+    'host' => $_ENV['RABBITMQ_HOST'],
+    'user' => $_ENV['RABBITMQ_USER'],
+    'password' => $_ENV['RABBITMQ_PASSWORD']
+];
+$queueParams = [
+    'arguments' => ['x-queue-type' => ['S', 'quorum']]
+];
+
+$manager = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Manager($connectionParams, $queueParams);
+$producer = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Producer();
+$consumer = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Consumer();
+
+$backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
+    ...
+	'producer' => $producer,
+	'waitingJobExpiration' => 1000, // nepovinné, délka v ms, po které se job pokusí znovu provést, když čeká na dokončení předchozího
+]);
+```
 
 
 ## 2 Použití

@@ -226,7 +226,7 @@ class BackgroundQueue
 			$entity->setState($state)
 				->setErrorMessage($e ? $e->getMessage() : null);
 			$this->save($entity);
-			if ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
+			if (in_array($state, [BackgroundJob::STATE_TEMPORARILY_FAILED, BackgroundJob::STATE_WAITING], true)) {
 				$this->publishToBroker($entity);
 			}
 

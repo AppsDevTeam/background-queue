@@ -132,7 +132,7 @@ class BackgroundQueue
 		if ($this->config['debug']) {
 			$this->logger->log('debug', $entity instanceof BackgroundJob ? $entity->getId() : $entity);
 		}
-		
+
 		if (!$entity instanceof BackgroundJob) {
 			if (!$entity = $this->getEntity($entity)) {
 				return;
@@ -163,7 +163,7 @@ class BackgroundQueue
 			return;
 		}
 
-		$callback = $this->config['callbacks'][$entity->getCallbackName()]['callback'];
+		$callback = $this->config['callbacks'][$entity->getCallbackName()]['callback'] ?? $this->config['callbacks'][$entity->getCallbackName()];
 
 		// změna stavu na zpracovává se
 		try {
@@ -207,7 +207,9 @@ class BackgroundQueue
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
 					break;
 				case WaitingException::class:
-					$state = BackgroundJob::STATE_WAITING; break;
+					$state = BackgroundJob::STATE_WAITING;
+					$entity->setPostponedBy($this->config['waitingJobExpiration']);
+					break;
 				default:
 					$state = BackgroundJob::STATE_TEMPORARILY_FAILED;
 					$entity->setPostponedBy(self::getPostponement($entity->getNumberOfAttempts()));

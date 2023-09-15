@@ -129,10 +129,6 @@ class BackgroundQueue
 	 */
 	public function process($entity): void
 	{
-		if ($this->config['debug']) {
-			$this->logger->log('debug', $entity instanceof BackgroundJob ? $entity->getId() : $entity);
-		}
-
 		if (!$entity instanceof BackgroundJob) {
 			if (!$entity = $this->getEntity($entity)) {
 				return;

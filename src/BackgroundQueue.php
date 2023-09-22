@@ -25,10 +25,14 @@ use TypeError;
 
 class BackgroundQueue
 {
+	const UNEXPECTED_ERROR_MESSAGE = 'Unexpected error occurred.';
+
 	private array $config;
 	private Connection $connection;
 	private LoggerInterface $logger;
 	private ?Producer $producer = null;
+	private bool $transaction = false;
+	private array $transactionCallbacks = [];
 
 	/**
 	 * @throws \Doctrine\DBAL\Exception
@@ -98,7 +102,6 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
 	 * @internal
 	 */
@@ -108,14 +111,26 @@ class BackgroundQueue
 			return;
 		}
 
-		try {
-			$this->producer->publish($entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getPostponedBy());
-		} catch (Exception $e) {
-			$this->logException('Unexpected error occurred.', $entity, $e);
+		$this->transactionCallbacks[] = function() use ($entity) {
+			try {
+				$this->producer->publish($entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getPostponedBy());
+			} catch (Exception $e) {
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity->getId(), $e);
 
-			$entity->setState(BackgroundJob::STATE_BROKER_FAILED)
-				->setErrorMessage($e->getMessage());
-			$this->save($entity);
+				$entity->setState(BackgroundJob::STATE_BROKER_FAILED)
+					->setErrorMessage($e->getMessage());
+				$this->save($entity);
+			}
+		};
+		if (!$this->transaction) {
+			$this->doPublishToBroker();
+		}
+	}
+
+	private function doPublishToBroker()
+	{
+		foreach ($this->transactionCallbacks as $_closure) {
+			$_closure();
 		}
 	}
 
@@ -128,6 +143,10 @@ class BackgroundQueue
 	 */
 	public function process($entity): void
 	{
+		if ($this->config['debug']) {
+			$this->logger->log('debug', $entity instanceof BackgroundJob ? $entity->getId() : $entity);
+		}
+
 		if (!$entity instanceof BackgroundJob) {
 			if (!$entity = $this->getEntity($entity)) {
 				return;
@@ -139,7 +158,7 @@ class BackgroundQueue
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			$this->logException('Unexpected state', $entity);
+			$this->logException('Unexpected state "' .$entity->getState() . '".', $entity->getId());
 			return;
 		}
 
@@ -154,7 +173,7 @@ class BackgroundQueue
 		}
 
 		if (!isset($this->config['callbacks'][$entity->getCallbackName()])) {
-			$this->logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity);
+			$this->logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity->getId());
 			return;
 		}
 
@@ -169,7 +188,7 @@ class BackgroundQueue
 			$entity->increaseNumberOfAttempts();
 			$this->save($entity);
 		} catch (Exception $e) {
-			$this->logException('Unexpected error occurred', $entity, $e);
+			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity->getId(), $e);
 			return;
 		}
 
@@ -221,21 +240,21 @@ class BackgroundQueue
 			$entity->setState($state)
 				->setErrorMessage($e ? $e->getMessage() : null);
 			$this->save($entity);
-			if (in_array($state, [BackgroundJob::STATE_TEMPORARILY_FAILED, BackgroundJob::STATE_WAITING], true)) {
+			if ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				$this->publishToBroker($entity);
 			}
 
 			if ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
 				// odeslání emailu o chybě v callbacku
-				$this->logException('Permanent error occured', $entity, $e);
+				$this->logException('Permanent error occured.', $entity->getId(), $e);
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
-					$this->logException('Number of attempts reached ' . $entity->getNumberOfAttempts(), $entity, $e);
+					$this->logException('Number of attempts reached "' . $entity->getNumberOfAttempts() . '".', $entity->getId(), $e);
 				}
 			}
 		} catch (Exception $innerEx) {
-			$this->logException('Unexpected error occurred', $entity, $innerEx);
+			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity->getId(), $innerEx);
 		}
 	}
 
@@ -318,6 +337,36 @@ class BackgroundQueue
 	}
 
 	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	public function startTransaction()
+	{
+		if ($this->transaction) {
+			throw new Exception('Nested transactions not implemented.');
+		}
+		$this->transaction = true;
+		$this->connection->beginTransaction();
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	public function commitTransaction()
+	{
+		$this->transaction = false;
+		$this->connection->commit();
+		$this->doPublishToBroker();
+	}
+
+	public function rollbackTransaction()
+	{
+		$this->transaction = false;
+		$this->connection->rollBack();
+		$this->transactionCallbacks = [];
+	}
+
+	/**
 	 * @throws Exception
 	 */
 	private function fetch(QueryBuilder $qb): ?BackgroundJob
@@ -389,20 +438,25 @@ class BackgroundQueue
 	{
 		$this->updateSchema();
 
-		if (!$entity->getId()) {
-			if ($this->producer) {
-				$entity->setProcessedByBroker(true);
+		try {
+			if (!$entity->getId()) {
+				if ($this->producer) {
+					$entity->setProcessedByBroker(true);
+				}
+				$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
+				$entity->setId($this->connection->lastInsertId());
+			} else {
+				$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
 			}
-			$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
-			$entity->setId($this->connection->lastInsertId());
-		} else {
-			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
+		} catch (Exception $e) {
+			$this->rollbackTransaction();
+			throw $e;
 		}
 	}
 
-	private function logException(string $errorMessage, ?BackgroundJob $entity = null, ?Throwable $e = null): void
+	private function logException(string $errorMessage, int $id, ?Throwable $e = null): void
 	{
-		$this->logger->log('critical', new Exception('BackgroundQueue: ' . $errorMessage  . ($entity ? ' (ID: ' . $entity->getId() . '; State: ' . $entity->getState() . ')' : ''), 0, $e));
+		$this->logger->log('critical', new Exception('BackgroundQueue: ' . $errorMessage  . ' (ID: ' . $id . ')', 0, $e));
 	}
 
 	private static function bindParamArray(string $prefix, array $values, array &$bindArray): string
@@ -547,7 +601,6 @@ class BackgroundQueue
 		);
 
 		if (!$entity) {
-			$errorMessage = 'No job found for ID "' . $id . '".';
 			if ($this->producer) {
 				// pokud je to rabbit fungujici v clusteru na vice serverech,
 				// tak jeste nemusi byt syncnuta master master databaze
@@ -558,15 +611,15 @@ class BackgroundQueue
 					try {
 						$this->producer->publish($id, $this->config['queue'], $this->config['waitingJobExpiration']);
 					} catch (Exception $e) {
-						$this->logException('Error for job ID "' . $id . '".', null, $e);
+						$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $id, $e);
 					}
 				} else {
 					// zalogovat
-					$this->logException($errorMessage);
+					$this->logException('No job found.', $id);
 				}
 			} else {
 				// zalogovat
-				$this->logException($errorMessage);
+				$this->logException('No job found.', $id);
 			}
 			return null;
 		}
@@ -587,7 +640,7 @@ class BackgroundQueue
 				$this->save($entity);
 				$this->publishToBroker($entity);
 			} catch (Exception $e) {
-				$this->logException('Unexpected error occurred.', $entity, $e);
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity->getId(), $e);
 			}
 			return false;
 		}

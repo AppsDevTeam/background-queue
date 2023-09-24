@@ -678,18 +678,13 @@ class BackgroundQueue
 	 */
 	private function checkArguments(array $args, $callback)
 	{
-		return;	// TODO
-		
+		return; // TODO
+
 		// Create a ReflectionFunction object based on the provided callback
 		$reflection = new ReflectionMethod($callback[0], $callback[1]);
 
 		// Retrieve the parameters of the method
 		$params = $reflection->getParameters();
-
-		// Check the number of arguments
-		if (count($args) !== count($params)) {
-			throw new InvalidArgumentException("Number of arguments does not match.");
-		}
 
 		$builtInTypesMapping = [
 			'integer' => 'int',
@@ -698,8 +693,20 @@ class BackgroundQueue
 		];
 
 		if (version_compare(PHP_VERSION, '8.0', '<')) {
+			$requiredParams = 0;
+			foreach ($params as $_param) {
+				if (!$_param->isOptional()) {
+					$requiredParams++;
+				}
+			}
+
+			// Check the number of arguments
+			if (count($args) < $requiredParams) {
+				throw new InvalidArgumentException("Number of arguments does not match.");
+			}
+
 			$argsValues = array_values($args);
-			// Pro PHP verze nižší než 8.0
+			// For PHP lower than 8.0
 			foreach ($params as $index => $param) {
 				$type = $param->getType();
 
@@ -727,22 +734,31 @@ class BackgroundQueue
 				}
 			}
 		} else {
+			$paramNames = [];
+			foreach ($params as $param) {
+				$paramNames[$param->getName()] = $param->getName();
+			}
+
+			foreach ($args as $_name => $_value) {
+				if (!array_key_exists($_name, $paramNames)) {
+					throw new InvalidArgumentException("Missing parameter for the argument $_name.");
+				}
+			}
+
 			foreach ($params as $param) {
 				$name = $param->getName();
 				$type = $param->getType();
 
-				if (!array_key_exists($name, $args) && !$param->isOptional()) {
-					throw new InvalidArgumentException("Missing argument for the parameter $name");
+				if (!array_key_exists($name, $args)) {
+					if (!$param->isOptional()) {
+						throw new InvalidArgumentException("Missing argument for the parameter $name.");
+					}
+
+					continue;
 				}
 
 				$argument = $args[$name];
 
-				// For nullable parameters
-				if ($param->isOptional() && is_null($argument)) {
-					continue;
-				}
-
-				// For other parameters
 				if ($type) {
 					$expectedType = $type->getName();
 					if ($type->isBuiltin()) {

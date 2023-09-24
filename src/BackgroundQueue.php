@@ -67,12 +67,11 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @param object|array|string|int|float|bool|null $parameters
 	 * @throws Exception
 	 */
 	public function publish(
 		string $callbackName,
-			   $parameters = null,
+		?array $parameters = null,
 		?string $serialGroup = null,
 		?string $identifier = null,
 		bool $isUnique = false,
@@ -187,7 +186,7 @@ class BackgroundQueue
 
 		try {
 			$this->checkArguments($entity->getParameters(), $callback);
-		} catch (\Exception $e) {
+		} catch (Exception $e) {
 			$this->logException($e, $entity);
 			return;
 		}

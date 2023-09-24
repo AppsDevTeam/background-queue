@@ -171,6 +171,8 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 `background-queue:clear-finished 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
 
+`background-queue:reload-consumers QUEUE NUMBER` Reloadne NUMBER consumerů pro danou QUEUE.
+
 `background-queue:update-schema` Aktualizuje databázové schéma, pokud je potřeba.
 
 Všechny commandy jsou chráněny proti vícenásobnému spuštění.

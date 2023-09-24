@@ -22,17 +22,22 @@ class ReloadConsumersCommand extends Command
 	protected function configure()
 	{
 		$this->addArgument(
+			"queue",
+			InputArgument::REQUIRED,
+			'A queue whose consumers are to reload.'
+		);
+		$this->addArgument(
 			"number",
 			InputArgument::REQUIRED,
 			'Number of consumers to reload.'
 		);
-		$this->setDescription('Creates the specified number of noop messages to reload consumers.');
+		$this->setDescription('Creates the specified number of noop messages to reload consumers consuming specified queue.');
 	}
 
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
 		for ($i = 0; $i < $input->getArgument("number"); $i++) {
-			$this->producer->publishNoop();
+			$this->producer->publishNoop($input->getArgument("queue"));
 		}
 
 		return 0;

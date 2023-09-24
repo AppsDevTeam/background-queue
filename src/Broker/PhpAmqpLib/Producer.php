@@ -34,9 +34,9 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 
 	}
 
-	public function publishNoop(): void
+	public function publishNoop(string $queue): void
 	{
-		$this->manager->getChannel()->basic_publish($this->createMessage(self::NOOP));
+		$this->publish(self::NOOP, $queue);
 	}
 
 	private function createMessage($body): AMQPMessage

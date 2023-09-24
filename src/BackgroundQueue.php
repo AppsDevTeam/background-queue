@@ -37,12 +37,6 @@ class BackgroundQueue
 	private bool $transaction = false;
 	private array $transactionCallbacks = [];
 
-	private array $builtInTypesMapping = [
-		'integer' => 'int',
-		'boolean' => 'bool',
-		'double' => 'float',
-	];
-
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
@@ -125,11 +119,11 @@ class BackgroundQueue
 			try {
 				$this->producer->publish((string) $entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getPostponedBy());
 			} catch (Exception $e) {
-				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
-
 				$entity->setState(BackgroundJob::STATE_BROKER_FAILED)
 					->setErrorMessage($e->getMessage());
 				$this->save($entity);
+
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 			}
 		};
 		if (!$this->transaction) {
@@ -142,6 +136,7 @@ class BackgroundQueue
 		foreach ($this->transactionCallbacks as $_closure) {
 			$_closure();
 		}
+		$this->transactionCallbacks = [];
 	}
 
 	/**

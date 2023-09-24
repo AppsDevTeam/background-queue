@@ -10,7 +10,7 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 {
 	private BackgroundQueue $backgroundQueue;
 	private Manager $manager;
-	
+
 	public function __construct(Manager $manager, BackgroundQueue $backgroundQueue)
 	{
 		$this->manager = $manager;
@@ -23,17 +23,15 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 	public function consume(string $queue): void
 	{
 		$this->manager->createQueue($queue);
-		
+
 		$this->manager->setupQos();
 
 		$this->manager->getChannel()->basic_consume($queue, '', false, false, false, false, function(AMQPMessage $msg) {
 			$msg->ack();
 
-			if ($msg->getBody() === Producer::NOOP) {
-				return true;
+			if ($msg->getBody() !== Producer::NOOP) {
+				$this->backgroundQueue->process((int)$msg->getBody());
 			}
-
-			$this->backgroundQueue->process((int)$msg->getBody());
 
 			$msg->getChannel()->basic_cancel($msg->getConsumerTag());
 		});

@@ -118,7 +118,7 @@ class BackgroundQueue
 
 		$this->transactionCallbacks[] = function() use ($entity) {
 			try {
-				$this->producer->publish($entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getPostponedBy());
+				$this->producer->publish((string) $entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getPostponedBy());
 			} catch (Exception $e) {
 				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 
@@ -631,7 +631,7 @@ class BackgroundQueue
 				if (!$this->count($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
 					// pridame znovu do queue
 					try {
-						$this->producer->publish($id, $this->config['queue'], $this->config['waitingJobExpiration']);
+						$this->producer->publish((string) $id, $this->config['queue'], $this->config['waitingJobExpiration']);
 					} catch (Exception $e) {
 						$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 

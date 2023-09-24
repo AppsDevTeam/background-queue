@@ -7,7 +7,7 @@ use PhpAmqpLib\Message\AMQPMessage;
 class Producer implements \ADT\BackgroundQueue\Broker\Producer
 {
 	const NOOP = 'noop';
-	
+
 	private Manager $manager;
 
 	public function __construct( Manager $manager)
@@ -15,7 +15,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		$this->manager = $manager;
 	}
 
-	public function publish(int $id, string $queue, ?int $expiration = null): void
+	public function publish(string $id, string $queue, ?int $expiration = null): void
 	{
 		$exchange = $queue;
 
@@ -39,7 +39,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		$this->publish(self::NOOP, $queue);
 	}
 
-	private function createMessage($body): AMQPMessage
+	private function createMessage(string $body): AMQPMessage
 	{
 		$properties = [
 			'content_type' => 'text/plain',

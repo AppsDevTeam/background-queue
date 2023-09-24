@@ -678,6 +678,8 @@ class BackgroundQueue
 	 */
 	private function checkArguments(array $args, $callback)
 	{
+		return;	// TODO
+		
 		// Create a ReflectionFunction object based on the provided callback
 		$reflection = new ReflectionMethod($callback[0], $callback[1]);
 

@@ -17,8 +17,11 @@ use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\SchemaException;
 use Doctrine\DBAL\Types\Types;
 use Exception;
+use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use ReflectionException;
+use ReflectionMethod;
 use RuntimeException;
 use Throwable;
 use TypeError;
@@ -88,6 +91,8 @@ class BackgroundQueue
 			throw new Exception('Parameters "serialGroup" and "identifier" have to be set if "isUnique" is true.');
 		}
 
+		$this->checkArguments($parameters, $this->getCallback($callbackName));
+
 		$entity = new BackgroundJob();
 		$entity->setQueue($this->config['queue']);
 		$entity->setCallbackName($callbackName);
@@ -115,7 +120,7 @@ class BackgroundQueue
 			try {
 				$this->producer->publish($entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getPostponedBy());
 			} catch (Exception $e) {
-				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity->getId(), $e);
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 
 				$entity->setState(BackgroundJob::STATE_BROKER_FAILED)
 					->setErrorMessage($e->getMessage());
@@ -154,7 +159,7 @@ class BackgroundQueue
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			$this->logException('Unexpected state "' .$entity->getState() . '".', $entity->getId());
+			$this->logException('Unexpected state "' .$entity->getState() . '".', $entity);
 			return;
 		}
 
@@ -169,11 +174,23 @@ class BackgroundQueue
 		}
 
 		if (!isset($this->config['callbacks'][$entity->getCallbackName()])) {
-			$this->logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity->getId());
+			$this->logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity);
 			return;
 		}
 
-		$callback = $this->config['callbacks'][$entity->getCallbackName()]['callback'] ?? $this->config['callbacks'][$entity->getCallbackName()];
+		$callback = $this->getCallback($entity->getCallbackName());
+
+		if (!is_callable($callback)) {
+			$this->logException('Method "' . $callback[0] . '::' . $callback[1] . '" does not exist or is not callable.', $entity);
+			return;
+		}
+
+		try {
+			$this->checkArguments($entity->getParameters(), $callback);
+		} catch (\Exception $e) {
+			$this->logException($e, $entity);
+			return;
+		}
 
 		// změna stavu na zpracovává se
 		try {
@@ -184,7 +201,7 @@ class BackgroundQueue
 			$entity->increaseNumberOfAttempts();
 			$this->save($entity);
 		} catch (Exception $e) {
-			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity->getId(), $e);
+			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 			return;
 		}
 
@@ -208,7 +225,7 @@ class BackgroundQueue
 			if ($this->config['onError']) {
 				try {
 					$this->config['onError']($e, $entity->getParameters());
-				} catch (Exception $e) {}
+				} catch (Throwable $e) {}
 			}
 
 			switch (get_class($e)) {
@@ -242,15 +259,15 @@ class BackgroundQueue
 
 			if ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
 				// odeslání emailu o chybě v callbacku
-				$this->logException('Permanent error occured.', $entity->getId(), $e);
+				$this->logException('Permanent error occured.', $entity, $e);
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
-					$this->logException('Number of attempts reached "' . $entity->getNumberOfAttempts() . '".', $entity->getId(), $e);
+					$this->logException('Number of attempts reached "' . $entity->getNumberOfAttempts() . '".', $entity, $e);
 				}
 			}
 		} catch (Exception $innerEx) {
-			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity->getId(), $innerEx);
+			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $innerEx);
 		}
 	}
 
@@ -450,9 +467,18 @@ class BackgroundQueue
 		}
 	}
 
-	private function logException(string $errorMessage, int $id, ?Throwable $e = null): void
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function logException(string $errorMessage, ?BackgroundJob $entity = null, ?Throwable $e = null): void
 	{
-		$this->logger->log('critical', new Exception('BackgroundQueue: ' . $errorMessage  . ' (ID: ' . $id . ')', 0, $e));
+		$this->logger->log('critical', new Exception('BackgroundQueue: ' . $errorMessage  . ($entity ?  ' (ID: ' . $entity->getId() . ')' : ''), 0, $e));
+
+		if ($entity && $entity->getState() === BackgroundJob::STATE_READY) {
+			$entity->setState(BackgroundJob::STATE_PERMANENTLY_FAILED);
+			$entity->setErrorMessage($errorMessage);
+			$this->save($entity);
+		}
 	}
 
 	private static function bindParamArray(string $prefix, array $values, array &$bindArray): string
@@ -603,19 +629,22 @@ class BackgroundQueue
 
 				// coz si overime tak, ze v db neexistuje vetsi id
 				if (!$this->count($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
-					// pridame bud do waiting queue, pokud je nastavena, a nebo znovu do general queue
+					// pridame znovu do queue
 					try {
 						$this->producer->publish($id, $this->config['queue'], $this->config['waitingJobExpiration']);
 					} catch (Exception $e) {
-						$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $id, $e);
+						$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
+
+						$entity->setState(BackgroundJob::STATE_BROKER_FAILED);
+						$this->save($entity);
 					}
 				} else {
 					// zalogovat
-					$this->logException('No job found.', $id);
+					$this->logException('Job "' . $id . '" not found.');
 				}
 			} else {
 				// zalogovat
-				$this->logException('No job found.', $id);
+				$this->logException('Job "' . $id . '" not found.');
 			}
 			return null;
 		}
@@ -636,11 +665,92 @@ class BackgroundQueue
 				$this->save($entity);
 				$this->publishToBroker($entity);
 			} catch (Exception $e) {
-				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity->getId(), $e);
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 			}
 			return false;
 		}
 
 		return true;
+	}
+
+	/**
+	 * @throws ReflectionException
+	 */
+	private function checkArguments(array $args, $callback)
+	{
+		// Create a ReflectionFunction object based on the provided callback
+		$reflection = new ReflectionMethod($callback[0], $callback[1]);
+
+		// Retrieve the parameters of the method
+		$params = $reflection->getParameters();
+
+		// Check the number of arguments
+		if (count($args) !== count($params)) {
+			throw new InvalidArgumentException("Number of arguments does not match.");
+		}
+
+		if (version_compare(PHP_VERSION, '8.0', '<')) {
+			$argsValues = array_values($args);
+			// Pro PHP verze nižší než 8.0
+			foreach ($params as $index => $param) {
+				$type = $param->getType();
+
+				$argument = $argsValues[$index];
+
+				// For nullable parameters
+				if ($param->isOptional() && is_null($argument)) {
+					continue;
+				}
+
+				// For other parameters
+				if ($type) {
+					$expectedType = $type->getName();
+					if ($type->isBuiltin()) {
+						if (gettype($argument) !== $expectedType) {
+							throw new InvalidArgumentException("Parameter type does not match at index $index: expected $expectedType, got " . gettype($argument));
+						}
+					} else {
+						if (!is_a($argument, $expectedType)) {
+							throw new InvalidArgumentException("Parameter type does not match at index $index: expected $expectedType or subtype, got " . get_class($argument));
+						}
+					}
+				}
+			}
+		} else {
+			foreach ($params as $param) {
+				$name = $param->getName();
+				$type = $param->getType();
+
+				if (!array_key_exists($name, $args) && !$param->isOptional()) {
+					throw new InvalidArgumentException("Missing argument for the parameter $name");
+				}
+
+				$argument = $args[$name];
+
+				// For nullable parameters
+				if ($param->isOptional() && is_null($argument)) {
+					continue;
+				}
+
+				// For other parameters
+				if ($type) {
+					$expectedType = $type->getName();
+					if ($type->isBuiltin()) {
+						if (gettype($argument) !== $expectedType) {
+							throw new InvalidArgumentException("Parameter $name type does not match: expected $expectedType, got " . gettype($argument));
+						}
+					} else {
+						if (!is_a($argument, $expectedType)) {
+							throw new InvalidArgumentException("Parameter $name type does not match: expected $expectedType or subtype, got " . get_class($argument));
+						}
+					}
+				}
+			}
+		}
+	}
+
+	private function getCallback($callback): callable
+	{
+		return $this->config['callbacks'][$callback]['callback'] ?? $this->config['callbacks'][$callback];
 	}
 }

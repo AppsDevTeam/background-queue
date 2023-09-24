@@ -37,6 +37,12 @@ class BackgroundQueue
 	private bool $transaction = false;
 	private array $transactionCallbacks = [];
 
+	private array $builtInTypesMapping = [
+		'integer' => 'int',
+		'boolean' => 'bool',
+		'double' => 'float',
+	];
+
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
@@ -688,6 +694,12 @@ class BackgroundQueue
 			throw new InvalidArgumentException("Number of arguments does not match.");
 		}
 
+		$builtInTypesMapping = [
+			'integer' => 'int',
+			'boolean' => 'bool',
+			'double' => 'float',
+		];
+
 		if (version_compare(PHP_VERSION, '8.0', '<')) {
 			$argsValues = array_values($args);
 			// Pro PHP verze nižší než 8.0
@@ -705,6 +717,8 @@ class BackgroundQueue
 				if ($type) {
 					$expectedType = $type->getName();
 					if ($type->isBuiltin()) {
+						$actualType = gettype($argument);
+						$actualType = $builtInTypesMapping[$actualType] ?? $actualType;
 						if (gettype($argument) !== $expectedType) {
 							throw new InvalidArgumentException("Parameter type does not match at index $index: expected $expectedType, got " . gettype($argument));
 						}
@@ -735,7 +749,9 @@ class BackgroundQueue
 				if ($type) {
 					$expectedType = $type->getName();
 					if ($type->isBuiltin()) {
-						if (gettype($argument) !== $expectedType) {
+						$actualType = gettype($argument);
+						$actualType = $builtInTypesMapping[$actualType] ?? $actualType;
+						if ($actualType !== $expectedType) {
 							throw new InvalidArgumentException("Parameter $name type does not match: expected $expectedType, got " . gettype($argument));
 						}
 					} else {

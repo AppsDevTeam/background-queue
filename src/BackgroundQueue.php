@@ -374,6 +374,10 @@ class BackgroundQueue
 
 	public function rollbackTransaction()
 	{
+		if (!$this->transaction) {
+			return;
+		}
+
 		$this->transaction = false;
 		$this->connection->rollBack();
 		$this->transactionCallbacks = [];

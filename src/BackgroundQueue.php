@@ -228,12 +228,12 @@ class BackgroundQueue
 				} catch (Throwable $e) {}
 			}
 
-			switch (get_class($e)) {
-				case PermanentErrorException::class:
-				case TypeError::class:
+			switch (true) {
+				case $e instanceof PermanentErrorException:
+				case $e instanceof TypeError:
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
 					break;
-				case WaitingException::class:
+				case $e instanceof WaitingException:
 					$state = BackgroundJob::STATE_WAITING;
 					$entity->setPostponedBy($this->config['waitingJobExpiration']);
 					break;

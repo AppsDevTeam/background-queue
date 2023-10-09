@@ -680,7 +680,7 @@ class BackgroundQueue
 	/**
 	 * @throws ReflectionException
 	 */
-	private function checkArguments(array $args, $callback)
+	private function checkArguments(?array $args, $callback)
 	{
 		return; // TODO
 

@@ -215,12 +215,15 @@ class BackgroundQueue
 		// v ostatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
 		$e = null;
 		try {
+			$startTime = microtime(true);
 			if (PHP_VERSION_ID < 80000) {
 				$callback(...array_values($entity->getParameters()));
 			} else {
 				$callback(...$entity->getParameters());
 			}
+			$endTime = microtime(true);
 			$state = BackgroundJob::STATE_FINISHED;
+			$entity->setExecutionTime(($endTime - $startTime) * 1000);
 		} catch (Throwable $e) {
 			if ($this->config['onError']) {
 				try {
@@ -526,6 +529,7 @@ class BackgroundQueue
 		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 		$table->addColumn('postponed_by', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
+		$table->addColumn('execution_time', Types::INTEGER)->setNotnull(false);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);

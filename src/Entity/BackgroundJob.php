@@ -44,6 +44,7 @@ final class BackgroundJob
 	private bool $isUnique = false;
 	private ?int $postponedBy = null;
 	private bool $processedByBroker = false;
+	private ?int $executionTime = null;
 
 	public function __construct()
 	{
@@ -204,7 +205,7 @@ final class BackgroundJob
 	/**
 	 * @throws Exception
 	 */
-	public static function createEntity(array $values): BackgroundJob
+	public static function createEntity(array $values): self
 	{
 		$entity = (new ReflectionClass(self::class))->newInstanceWithoutConstructor();
 		$entity->id = $values['id'];
@@ -221,6 +222,7 @@ final class BackgroundJob
 		$entity->isUnique = $values['is_unique'];
 		$entity->postponedBy = $values['postponed_by'];
 		$entity->processedByBroker = $values['processed_by_broker'];
+		$entity->executionTime = $values['execution_time'];
 
 		return $entity;
 	}
@@ -241,6 +243,7 @@ final class BackgroundJob
 			'is_unique' => (int) $this->isUnique,
 			'postponed_by' => $this->postponedBy,
 			'processed_by_broker' => (int) $this->processedByBroker,
+			'execution_time' => (int) $this->executionTime
 		];
 	}
 
@@ -250,5 +253,16 @@ final class BackgroundJob
 	public function getAvailableFrom(): DateTime
 	{
 		return new DateTime('@' . (max($this->createdAt->getTimestamp(), $this->lastAttemptAt ? $this->lastAttemptAt->getTimestamp() : 0) + ceil($this->postponedBy/ 1000)));
+	}
+
+	public function getExecutionTime(): ?int
+	{
+		return $this->executionTime;
+	}
+
+	public function setExecutionTime(?int $executionTime): self
+	{
+		$this->executionTime = $executionTime;
+		return $this;
 	}
 }

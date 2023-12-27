@@ -223,7 +223,7 @@ class BackgroundQueue
 			}
 			$endTime = microtime(true);
 			$state = BackgroundJob::STATE_FINISHED;
-			$entity->setExecutionTime(($endTime - $startTime) * 1000);
+			$entity->setExecutionTime((int) (($endTime - $startTime) * 1000));
 		} catch (Throwable $e) {
 			if ($this->config['onError']) {
 				try {

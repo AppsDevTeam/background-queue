@@ -5,6 +5,7 @@ namespace ADT\BackgroundQueue;
 use ADT\BackgroundQueue\Broker\Producer;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
+use ADT\BackgroundQueue\Exception\SkipException;
 use ADT\BackgroundQueue\Exception\WaitingException;
 use ADT\Utils\FileSystem;
 use DateTimeInterface;
@@ -214,6 +215,7 @@ class BackgroundQueue
 		// pokud se vyhodí jakákoliv jiný error nebo exception implementující Throwable, job nebyl zpracován a jeho zpracování se již nebude opakovat
 		// v ostatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
 		$e = null;
+		$state = BackgroundJob::STATE_FINISHED;
 		try {
 			$startTime = microtime(true);
 			if (PHP_VERSION_ID < 80000) {
@@ -222,7 +224,6 @@ class BackgroundQueue
 				$callback(...$entity->getParameters());
 			}
 			$endTime = microtime(true);
-			$state = BackgroundJob::STATE_FINISHED;
 			$entity->setExecutionTime((int) (($endTime - $startTime) * 1000));
 		} catch (Throwable $e) {
 			if ($this->config['onError']) {
@@ -232,6 +233,8 @@ class BackgroundQueue
 			}
 
 			switch (true) {
+				case $e instanceof SkipException:
+					break;
 				case $e instanceof PermanentErrorException:
 				case $e instanceof TypeError:
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;

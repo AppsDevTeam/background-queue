@@ -533,6 +533,7 @@ class BackgroundQueue
 		$table->addColumn('postponed_by', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 		$table->addColumn('execution_time', Types::INTEGER)->setNotnull(false);
+		$table->addColumn('finished_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);

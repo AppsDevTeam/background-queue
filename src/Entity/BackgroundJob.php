@@ -45,6 +45,7 @@ final class BackgroundJob
 	private ?int $postponedBy = null;
 	private bool $processedByBroker = false;
 	private ?int $executionTime = null;
+	private ?DateTimeImmutable $finishedAt = null;
 
 	public function __construct()
 	{
@@ -116,6 +117,10 @@ final class BackgroundJob
 
 	public function setState(int $state): self
 	{
+		if ($this->state == self::STATE_PROCESSING && $this->state != $state) {
+			$this->updateFinishedAt();
+		}
+
 		$this->state = $state;
 		return $this;
 	}
@@ -197,6 +202,17 @@ final class BackgroundJob
 		return $this;
 	}
 
+	public function getFinishedAt(): ?DateTimeImmutable
+	{
+		return $this->finishedAt;
+	}
+
+	public function updateFinishedAt(): self
+	{
+		$this->finishedAt = new DateTimeImmutable();
+		return $this;
+	}
+
 	public function isReadyForProcess(): bool
 	{
 		return isset(self::READY_TO_PROCESS_STATES[$this->state]);
@@ -223,6 +239,7 @@ final class BackgroundJob
 		$entity->postponedBy = $values['postponed_by'];
 		$entity->processedByBroker = $values['processed_by_broker'];
 		$entity->executionTime = $values['execution_time'];
+		$entity->finishedAt = $values['finished_at'] ? new DateTimeImmutable($values['finished_at']) : null;
 
 		return $entity;
 	}
@@ -243,7 +260,8 @@ final class BackgroundJob
 			'is_unique' => (int) $this->isUnique,
 			'postponed_by' => $this->postponedBy,
 			'processed_by_broker' => (int) $this->processedByBroker,
-			'execution_time' => (int) $this->executionTime
+			'execution_time' => (int) $this->executionTime,
+			'finished_at' => $this->finishedAt ? $this->finishedAt->format('Y-m-d H:i:s') : null,
 		];
 	}
 

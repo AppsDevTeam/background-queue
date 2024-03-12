@@ -181,7 +181,11 @@ Všechny commandy jsou chráněny proti vícenásobnému spuštění.
 
 Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v nichž například můžete provést přepinání databází.
 
-### 3 Integrace do frameworků
+### 3 Monitoring
+
+Při spuštění consumera se do tabulky `background_job` do sloupce `pid` uloží aktuální PID procesu. Nejedná se o PID z pohledu systému, ale o PID uvnitř docker kontejneru.
+
+### 4 Integrace do frameworků
 
 - Nette - https://github.com/AppsDevTeam/background-queue-nette
 - Symfony - https://github.com/AppsDevTeam/background-queue-symfony

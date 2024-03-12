@@ -46,6 +46,7 @@ final class BackgroundJob
 	private bool $processedByBroker = false;
 	private ?int $executionTime = null;
 	private ?DateTimeImmutable $finishedAt = null;
+	private ?int $pid = null; // PID supervisor consumera uvintř docker kontejneru
 
 	public function __construct()
 	{
@@ -213,6 +214,17 @@ final class BackgroundJob
 		return $this;
 	}
 
+	public function getPid(): ?int
+	{
+		return $this->pid;
+	}
+
+	public function updatePid(): self
+	{
+		$this->pid = getmypid();
+		return $this;
+	}
+
 	public function isReadyForProcess(): bool
 	{
 		return isset(self::READY_TO_PROCESS_STATES[$this->state]);
@@ -240,6 +252,7 @@ final class BackgroundJob
 		$entity->processedByBroker = $values['processed_by_broker'];
 		$entity->executionTime = $values['execution_time'];
 		$entity->finishedAt = $values['finished_at'] ? new DateTimeImmutable($values['finished_at']) : null;
+		$entity->pid = $values['pid'];
 
 		return $entity;
 	}
@@ -262,6 +275,7 @@ final class BackgroundJob
 			'processed_by_broker' => (int) $this->processedByBroker,
 			'execution_time' => (int) $this->executionTime,
 			'finished_at' => $this->finishedAt ? $this->finishedAt->format('Y-m-d H:i:s') : null,
+			'pid' => $this->pid,
 		];
 	}
 

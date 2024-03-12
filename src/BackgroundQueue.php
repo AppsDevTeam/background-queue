@@ -200,6 +200,7 @@ class BackgroundQueue
 			$entity->setErrorMessage(null);
 			$entity->updateLastAttemptAt();
 			$entity->increaseNumberOfAttempts();
+			$entity->updatePid();
 			$this->save($entity);
 		} catch (Exception $e) {
 			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
@@ -534,6 +535,7 @@ class BackgroundQueue
 		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 		$table->addColumn('execution_time', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('finished_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
+		$table->addColumn('pid', Types::INTEGER)->setNotnull(false);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);

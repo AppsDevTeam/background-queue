@@ -37,7 +37,7 @@ class ReloadConsumersCommand extends Command
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
 		for ($i = 0; $i < $input->getArgument("number"); $i++) {
-			$this->producer->publishNoop($input->getArgument("queue"));
+			$this->producer->publishDie($input->getArgument("queue"));
 		}
 
 		return 0;

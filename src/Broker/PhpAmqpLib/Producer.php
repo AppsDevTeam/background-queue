@@ -6,7 +6,7 @@ use PhpAmqpLib\Message\AMQPMessage;
 
 class Producer implements \ADT\BackgroundQueue\Broker\Producer
 {
-	const NOOP = 'noop';
+	const DIE = 'die';
 
 	private Manager $manager;
 
@@ -34,9 +34,9 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 
 	}
 
-	public function publishNoop(string $queue): void
+	public function publishDie(string $queue): void
 	{
-		$this->publish(self::NOOP, $queue);
+		$this->publish(self::DIE, $queue);
 	}
 
 	private function createMessage(string $body): AMQPMessage

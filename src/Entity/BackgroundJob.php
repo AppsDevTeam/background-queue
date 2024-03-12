@@ -47,6 +47,7 @@ final class BackgroundJob
 	private ?int $executionTime = null;
 	private ?DateTimeImmutable $finishedAt = null;
 	private ?int $pid = null; // PID supervisor consumera uvintř docker kontejneru
+	private ?string $metadata = null; // ukládá ve formátu JSON
 
 	public function __construct()
 	{
@@ -225,6 +226,17 @@ final class BackgroundJob
 		return $this;
 	}
 
+	public function getMetadata(): ?array
+	{
+		return json_decode($this->metadata, true);
+	}
+
+	public function setMetadata(?array $metadata): self
+	{
+		$this->metadata = json_encode($metadata);
+		return $this;
+	}
+
 	public function isReadyForProcess(): bool
 	{
 		return isset(self::READY_TO_PROCESS_STATES[$this->state]);
@@ -253,6 +265,7 @@ final class BackgroundJob
 		$entity->executionTime = $values['execution_time'];
 		$entity->finishedAt = $values['finished_at'] ? new DateTimeImmutable($values['finished_at']) : null;
 		$entity->pid = $values['pid'];
+		$entity->metadata = $values['metadata'];
 
 		return $entity;
 	}
@@ -276,6 +289,7 @@ final class BackgroundJob
 			'execution_time' => (int) $this->executionTime,
 			'finished_at' => $this->finishedAt ? $this->finishedAt->format('Y-m-d H:i:s') : null,
 			'pid' => $this->pid,
+			'metadata' => $this->metadata,
 		];
 	}
 

@@ -44,6 +44,7 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'onBeforeProcess' => function(array $parameters) {...}, // nepovinné
 	'onError' => function(Throwable $e, array $parameters) {...},  // nepovinné
 	'onAfterProcess' => function(array $parameters) {...}, // nepovinné
+	'onProcessingGetMetadata' => function(array $parameters): ?array {...}, // nepovinné
 ]);
 ```
 

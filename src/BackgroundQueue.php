@@ -508,7 +508,7 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @internal
 	 */
-	public function updateSchema($force = false): void
+	public function updateSchema(bool $force = false): void
 	{
 		if (!$force && !FileSystem::createDirAtomically($this->config['locksDir'] . '/background_queue_schema_generated')) {
 			return;

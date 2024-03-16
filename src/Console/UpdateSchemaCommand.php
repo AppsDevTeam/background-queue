@@ -5,7 +5,6 @@ namespace ADT\BackgroundQueue\Console;
 use ADT\BackgroundQueue\BackgroundQueue;
 use Doctrine\DBAL\Schema\SchemaException;
 use Exception;
-use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -29,12 +28,7 @@ class UpdateSchemaCommand extends Command
 	{
 		$this->setName('background-queue:update-schema');
 		$this->setDescription('Update table schema if needed.');
-		$this->addOption(
-			"force",
-			"f",
-			InputOption::VALUE_NONE,
-			'Force schema update'
-		);
+		$this->addOption('force', 'f', InputOption::VALUE_NONE, 'Force schema update');
 	}
 
 	/**

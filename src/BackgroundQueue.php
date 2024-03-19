@@ -58,6 +58,9 @@ class BackgroundQueue
 		if (!isset($config['onAfterProcess'])) {
 			$config['onAfterProcess'] = null;
 		}
+		if (!isset($config['onProcessingGetMetadata'])) {
+			$config['onProcessingGetMetadata'] = null;
+		}
 
 		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);
@@ -200,6 +203,13 @@ class BackgroundQueue
 			$entity->setErrorMessage(null);
 			$entity->updateLastAttemptAt();
 			$entity->increaseNumberOfAttempts();
+			$entity->updatePid();
+
+			if ($this->config['onProcessingGetMetadata']) {
+				$metadata = $this->config['onProcessingGetMetadata']($entity->getParameters());
+				$entity->setMetadata($metadata);
+			}
+
 			$this->save($entity);
 		} catch (Exception $e) {
 			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
@@ -533,6 +543,9 @@ class BackgroundQueue
 		$table->addColumn('postponed_by', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 		$table->addColumn('execution_time', Types::INTEGER)->setNotnull(false);
+		$table->addColumn('finished_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
+		$table->addColumn('pid', Types::INTEGER)->setNotnull(false);
+		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);

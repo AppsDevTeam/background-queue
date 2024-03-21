@@ -40,6 +40,11 @@ class ProcessCommand extends Command
 			unset ($states[BackgroundJob::STATE_READY]);
 			unset ($states[BackgroundJob::STATE_TEMPORARILY_FAILED]);
 			unset ($states[BackgroundJob::STATE_WAITING]);
+
+		} else {
+			// Nemáme producera
+
+			unset ($states[BackgroundJob::STATE_BACK_TO_BROKER]);
 		}
 
 		$qb = $this->backgroundQueue->createQueryBuilder()

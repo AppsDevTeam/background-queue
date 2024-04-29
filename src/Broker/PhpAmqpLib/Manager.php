@@ -9,6 +9,8 @@ use PhpAmqpLib\Message\AMQPMessage;
 
 class Manager
 {
+	const QUEUE_TOP_PRIORITY = 0;
+
 	private array $connectionParams;
 	private array $queueParams;
 
@@ -101,6 +103,12 @@ class Manager
 		$this->initQueues[$queue] = true;
 	}
 
+	public function getQueueMessagesCount(string $queue): int
+	{
+		list($queueName, $messageCount, $activeConsumerCount) = $this->getChannel()->queue_declare($queue, true);
+		return $messageCount + $activeConsumerCount;
+	}
+
 	public function setupQos()
 	{
 		if ($this->initQos) {
@@ -115,4 +123,15 @@ class Manager
 
 		$this->initQos = true;
 	}
+
+	public function getQueueWithPriority(string $queue, int $priority): string
+	{
+		return $queue . '_' . $priority;
+	}
+
+	public function parseQueueAndPriority(string $queueWithPriority): array
+	{
+		return explode('_', $queueWithPriority);
+	}
+
 }

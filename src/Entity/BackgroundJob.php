@@ -32,6 +32,7 @@ final class BackgroundJob
 
 	private ?int $id = null;
 	private string $queue;
+	private ?int $priority;
 	private string $callbackName;
 	private $parameters;
 	private int $state = self::STATE_READY;
@@ -74,6 +75,22 @@ final class BackgroundJob
 	{
 		$this->queue = $queue;
 		return $this;
+	}
+
+	public function getQueue(): string
+	{
+		return $this->queue;
+	}
+
+	public function setPriority(?int $priority): self
+	{
+		$this->priority = $priority;
+		return $this;
+	}
+
+	public function getPriority(): ?int
+	{
+		return $this->priority;
 	}
 
 	public function getCallbackName(): string
@@ -250,6 +267,7 @@ final class BackgroundJob
 		$entity = (new ReflectionClass(self::class))->newInstanceWithoutConstructor();
 		$entity->id = $values['id'];
 		$entity->queue = $values['queue'];
+		$entity->priority = $values['priority'];
 		$entity->callbackName = $values['callback_name'];
 		$entity->parameters = $values['parameters'];
 		$entity->state = $values['state'];
@@ -274,6 +292,7 @@ final class BackgroundJob
 	{
 		return [
 			'queue' => $this->queue,
+			'priority' => $this->priority,
 			'callback_name' => $this->callbackName,
 			'parameters' => $this->parameters,
 			'state' => $this->state,

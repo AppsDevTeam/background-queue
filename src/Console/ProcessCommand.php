@@ -61,7 +61,9 @@ class ProcessCommand extends Command
 					continue;
 				}
 				$_entity->setProcessedByBroker(false);
-				$this->backgroundQueue->process($_entity);
+				// Chceme použít prioritu na entitě. Může být využito na přeřazení do jiné priority.
+				// Chceme zařadit do stejné fronty jako původně bylo. Tedy musíme zohlednit co je nastaveno u callbacku.
+				$this->backgroundQueue->process($_entity, $this->backgroundQueue->getQueueForEntityIncludeCallback($_entity), $_entity->getPriority());
 			}
 		}
 

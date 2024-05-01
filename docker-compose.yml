@@ -4,7 +4,7 @@ services:
     container_name: ${PROJECT_NAME}_php
     hostname: ${PROJECT_NAME}_php
     volumes:
-      - /Users/tomaskudelka/Development/web/background-queue:/var/www/html
+      - ./:/var/www/html
     working_dir: /var/www/html
     env_file:
       - .env

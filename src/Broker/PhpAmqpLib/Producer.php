@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
 
+use ADT\BackgroundQueue\BackgroundQueue;
 use PhpAmqpLib\Message\AMQPMessage;
 
 class Producer implements \ADT\BackgroundQueue\Broker\Producer
@@ -15,8 +16,9 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		$this->manager = $manager;
 	}
 
-	public function publish(string $id, string $queue, ?int $expiration = null): void
+	public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void
 	{
+		$queue = $this->manager->getQueueWithPriority($queue, $priority);
 		$exchange = $queue;
 
 		$this->manager->createExchange($exchange);
@@ -36,7 +38,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 
 	public function publishDie(string $queue): void
 	{
-		$this->publish(self::DIE, $queue);
+		$this->publish(self::DIE, $queue, Manager::QUEUE_TOP_PRIORITY);
 	}
 
 	private function createMessage(string $body): AMQPMessage

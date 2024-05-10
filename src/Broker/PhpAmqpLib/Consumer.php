@@ -4,6 +4,7 @@ namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
 
 use ADT\BackgroundQueue\BackgroundQueue;
 use Exception;
+use PhpAmqpLib\Exception\AMQPProtocolChannelException;
 use PhpAmqpLib\Message\AMQPMessage;
 
 class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
@@ -20,26 +21,55 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 	/**
 	 * @throws Exception
 	 */
-	public function consume(string $queue): void
+	public function consume(string $queue, array $priorities): void
 	{
-		$this->manager->createQueue($queue);
+		// TODO Do budoucna cheme podporovat libovolné priority a ne pouze jejich výčet.
+		//      Zde si musíme vytáhnout seznam existujících front. To lze přes HTTP API pomocí CURL.
+
+		// Nejprve se chceme kouknout, jestli není zaslána zpráva k ukončení, proto na první místo dáme supereme frontu.
+		array_unshift($priorities, Manager::QUEUE_TOP_PRIORITY);
+
+		$queuesWithPriorities = [];
+		foreach ($priorities as $priority) {
+			$queuesWithPriorities[] = $this->manager->getQueueWithPriority($queue, $priority);;
+		}
+
+		// Pokud jsou všechny prázdné, nabinduju se na všechny dle priority.
+		// Jinak se nabinduju jen na první neprázdnou, abych z ní odbavil zprávu.
+		$queuesToBind = $queuesWithPriorities;
+		foreach ($queuesWithPriorities as $queueWithPriority) {
+			$this->manager->createQueue($queueWithPriority);
+			if ($this->manager->getQueueMessagesCount($queueWithPriority)) {
+				$queuesToBind = [$queueWithPriority];
+				break;
+			}
+		}
 
 		$this->manager->setupQos();
 
-		$this->manager->getChannel()->basic_consume($queue, '', false, false, false, false, function(AMQPMessage $msg) {
-			$msg->ack();
+		foreach ($queuesToBind as $queue) {
 
-			if ($msg->getBody() === Producer::DIE) {
-				die();
-			}
+			$this->manager->getChannel()->basic_consume($queue, $queue, false, false, false, false, function(AMQPMessage $msg) use ($queuesToBind) {
+				$msg->ack();
 
-			$this->backgroundQueue->process((int)$msg->getBody());
+				if ($msg->getBody() === Producer::DIE) {
+					die();
+				}
 
-			$msg->getChannel()->basic_cancel($msg->getConsumerTag());
-		});
+				$queue = $msg->getConsumerTag();
+				list($queueWithoutPriority, $priority) = $this->manager->parseQueueAndPriority($queue);
+				$this->backgroundQueue->process((int)$msg->getBody(), $queueWithoutPriority, $priority);
+
+				// Odpojím se od všech nabindovaných front
+				foreach ($queuesToBind as $queue) {
+					$msg->getChannel()->basic_cancel($queue);
+				}
+			});
+		}
 
 		while ($this->manager->getChannel()->is_consuming()) {
 			$this->manager->getChannel()->wait();
 		}
 	}
+
 }

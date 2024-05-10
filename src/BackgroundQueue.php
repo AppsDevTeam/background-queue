@@ -61,6 +61,9 @@ class BackgroundQueue
 		if (!isset($config['onProcessingGetMetadata'])) {
 			$config['onProcessingGetMetadata'] = null;
 		}
+		if (!isset($config['priorities'])) {
+			$config['priorities'] = [1];
+		}
 
 		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);
@@ -79,7 +82,8 @@ class BackgroundQueue
 		?string $serialGroup = null,
 		?string $identifier = null,
 		bool $isUnique = false,
-		?int $postponeBy = null
+		?int $postponeBy = null,
+		?int $priority = null
 	): void
 	{
 		if (!$callbackName) {
@@ -96,8 +100,11 @@ class BackgroundQueue
 
 		$this->checkArguments($parameters, $this->getCallback($callbackName));
 
+		$priority = $this->getPriority($priority, $callbackName);
+
 		$entity = new BackgroundJob();
 		$entity->setQueue($this->config['queue']);
+		$entity->setPriority($priority);
 		$entity->setCallbackName($callbackName);
 		$entity->setParameters($parameters);
 		$entity->setSerialGroup($serialGroup);
@@ -121,7 +128,9 @@ class BackgroundQueue
 
 		$this->transactionCallbacks[] = function() use ($entity) {
 			try {
-				$this->producer->publish((string) $entity->getId(), $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $this->config['queue'], $entity->getPostponedBy());
+				// Pokud mám u callbacku nastavenou frontu, v DB zůstává původní, ale do brokera použiju tu z konfigu.
+				// Tedy řadím do různých front pro různé consumery, ale z pohledu záznamů v DB se jedná o stejnou frontu.
+				$this->producer->publish((string) $entity->getId(), $this->getQueueForEntityIncludeCallback($entity), $entity->getPriority(), $entity->getPostponedBy());
 			} catch (Exception $e) {
 				$entity->setState(BackgroundJob::STATE_BROKER_FAILED)
 					->setErrorMessage($e->getMessage());
@@ -150,10 +159,10 @@ class BackgroundQueue
 	 * @return void
 	 * @throws Exception
 	 */
-	public function process($entity): void
+	public function process($entity, string $queue, int $priority): void
 	{
 		if (!$entity instanceof BackgroundJob) {
-			if (!$entity = $this->getEntity($entity)) {
+			if (!$entity = $this->getEntity($entity, $queue, $priority)) {
 				return;
 			}
 		}
@@ -530,6 +539,7 @@ class BackgroundQueue
 
 		$table->addColumn('id', Types::BIGINT, ['unsigned' => true])->setAutoincrement(true)->setNotnull(true);
 		$table->addColumn('queue', Types::STRING)->setNotnull(true);
+		$table->addColumn('priority', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('callback_name', Types::STRING)->setNotnull(true);
 		$table->addColumn('parameters', Types::BLOB)->setNotnull(true);
 		$table->addColumn('state', Types::SMALLINT)->setNotnull(true);
@@ -638,7 +648,7 @@ class BackgroundQueue
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
 	 */
-	private function getEntity(int $id): ?BackgroundJob
+	private function getEntity(int $id, string $queue, int $priority): ?BackgroundJob
 	{
 		$entity = $this->fetch(
 			$this->createQueryBuilder()
@@ -655,7 +665,8 @@ class BackgroundQueue
 				if (!$this->count($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
 					// pridame znovu do queue
 					try {
-						$this->producer->publish((string) $id, $this->config['queue'], $this->config['waitingJobExpiration']);
+						// Zde máme $queue a $priority, ze kterých bylo vytaženo z brokera, tedy dáváme znovu do té stejné fronty a priority
+						$this->producer->publish((string) $id, $queue, $priority, $this->config['waitingJobExpiration']);
 					} catch (Exception $e) {
 						$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 
@@ -801,8 +812,26 @@ class BackgroundQueue
 		}
 	}
 
+	private function getPriority(?int $priority, string $callbackName): int
+	{
+		if (is_null($priority)) {
+			$priority = $this->config['callbacks'][$callbackName]['priority'] ?? array_values($this->config['priority'])[0];
+		}
+
+		if (!in_array($priority, $this->config['priorities'])) {
+			throw new InvalidArgumentException("Priority $priority for callback $callbackName is not in available priorities: " . implode(',' , $this->config['priorities']));
+		}
+
+		return $priority;
+	}
+
 	private function getCallback($callback): callable
 	{
 		return $this->config['callbacks'][$callback]['callback'] ?? $this->config['callbacks'][$callback];
+	}
+
+	public function getQueueForEntityIncludeCallback(BackgroundJob $entity): string
+	{
+		return $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $entity->getQueue();
 	}
 }

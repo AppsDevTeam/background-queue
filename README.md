@@ -186,6 +186,66 @@ Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v ni
 
 Při spuštění consumera se do tabulky `background_job` do sloupce `pid` uloží aktuální PID procesu. Nejedná se o PID z pohledu systému, ale o PID uvnitř docker kontejneru.
 
+### 4 Prioritizace záznamů
+
+Vkládaným záznamům máme možnost určit jejich prioritu. Později vložený záznam s větší prioritou má přednost při zpracování před dříve vloženým.
+
+V nastavení určím, jaké priority budou využívány. Parametr je nepovinný s výchozí hodnotou `[1]`.
+
+```
+$backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
+	...
+	'priorities' => [10, 15, 20, 25, 30, 35, 40, 45, 50],
+	...
+]);
+```
+
+Přímo u jednotlivých callbacků pro zpracování záznamů lze určit jejich priority. Pokud callback nemá určenou prioritu, použije se nejvyšší dostupná priorita.
+
+Pro příklad mějme následující typy úloh:
+
+* Přepočet ACL
+* Stahování dat z API třetích sran
+* Rozesílání emailů (např. registrační emaily)
+
+Běžně stahujeme data z API, což může být dlouhotrvající úloha. Pokud je však potřeba přepočítat ACL, nechceme, aby to bylo blokováno stahováním dat z API. A ještě přednostněji chceme odbavit občasné emaily při registraci.
+
+```
+$backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
+	...
+	'priorities' => [10, 15, 20, 25, 30, 35, 40, 45, 50],
+	'callbacks' => [
+		'email' => [$mailer, 'process'], // záznamy budou mít prioritu 10
+		'aclRecalculation' => [
+			'callback' => [$aclService, 'process'],
+			'priority' => 20,
+		],
+		'dataImporting' => [
+			'callback' => [$apiService, 'process'],
+			'priority' => 30,
+		],
+	],
+	...
+]);
+```
+
+Příkazu `background-queue:consume` máme možnost nastavit pomocí parametru `-p`, jaký rozsah priorit má zpracovávat (např. `-p 10 `, `-p 20-40 `, `-p 25- `, `-p"-20"`, ...).
+Můžeme tedy jednoho konzumera vyhradit například na rozesílání registračním emailů (`background-queue:consume -p 10`) a ostatní pro všechny úlohy (`background-queue:consume`).
+Tím zajistíme, že rychlé odeslání registračního emailu nebude čekat na dlouho trvající úlohy, protože je odbaví první konzumer.
+Ale pokud by se vyskytlo více požadavků na zasílání emailů, po nějaké době je začnou odbavovat všichni konzumeři.
+
+Dále máme možnost prioritu nastavenou pro callback přetížit při vkládání záznamu v metodě `publish`. Například víme, že se jedná o rozesílání newsletterů.
+Tedy se jedná o zasílání emailů, ale s nízkou prioritou zpracování.
+
+```
+$priority = null; // aplikuje se priorita 10 z nastavení pro callback
+if ($isNewsletter) {
+	$priority = 25;
+}
+$this->backgroundQueue->publish('email', $parameters, $serialGroup, $identifier, $isUnique, $availableAt, $priority);
+```
+
+
 ### 4 Integrace do frameworků
 
 - Nette - https://github.com/AppsDevTeam/background-queue-nette

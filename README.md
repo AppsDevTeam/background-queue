@@ -46,6 +46,7 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'onError' => function(Throwable $e, array $parameters) {...},  // nepovinné
 	'onAfterProcess' => function(array $parameters) {...}, // nepovinné
 	'onProcessingGetMetadata' => function(array $parameters): ?array {...}, // nepovinné
+	'parametersFormat' => \ADT\BackgroundQueue\Entity\BackgroundJob::PARAMETERS_FORMAT_SERIALIZE, // nepovinné, určuje v jakém formátu budou do DB ukládána data v `background_job.parameters` (@see \ADT\BackgroundQueue\Entity\BackgroundJob::setParameters)
 ]);
 ```
 

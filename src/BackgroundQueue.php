@@ -69,6 +69,12 @@ class BackgroundQueue
 		if (!isset($config['bulkSize'])) {
 			$config['bulkSize'] = 1;
 		}
+		if (!isset($config['parametersFormat'])) {
+			$config['parametersFormat'] = BackgroundJob::PARAMETERS_FORMAT_SERIALIZE;
+		}
+		if (!in_array($config['parametersFormat'], BackgroundJob::PARAMETERS_FORMATS, true)) {
+			throw new Exception('Unsupported parameters format: ' . $config['parametersFormat']);
+		}
 
 		$this->config = $config;
 		$this->connection = DriverManager::getConnection($config['connection']);
@@ -111,7 +117,7 @@ class BackgroundQueue
 		$entity->setQueue($this->config['queue']);
 		$entity->setPriority($priority);
 		$entity->setCallbackName($callbackName);
-		$entity->setParameters($parameters);
+		$entity->setParameters($parameters, $this->config['parametersFormat']);
 		$entity->setSerialGroup($serialGroup);
 		$entity->setIdentifier($identifier);
 		$entity->setIsUnique($isUnique);

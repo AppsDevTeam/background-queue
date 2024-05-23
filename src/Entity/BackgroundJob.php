@@ -30,11 +30,18 @@ final class BackgroundJob
 		self::STATE_REDUNDANT => self::STATE_REDUNDANT,
 	];
 
+	const PARAMETERS_FORMAT_SERIALIZE = 'serialize';
+	const PARAMETERS_FORMAT_JSON = 'json';
+	const PARAMETERS_FORMATS = [
+		self::PARAMETERS_FORMAT_SERIALIZE,
+		self::PARAMETERS_FORMAT_JSON,
+	];
+
 	private ?int $id = null;
 	private string $queue;
 	private ?int $priority;
 	private string $callbackName;
-	private $parameters;
+	private $parameters; /** @see self::setParameters() */
 	private int $state = self::STATE_READY;
 	private DateTimeImmutable $createdAt;
 	private ?DateTimeImmutable $lastAttemptAt = null;
@@ -116,17 +123,51 @@ final class BackgroundJob
 		return $this;
 	}
 
+	/**
+	 * Při získávání parametrů detekujeme automaticky formát uložení.
+	 * Tedy při přechodu z self::PARAMETERS_FORMAT_SERIALIZE na self::PARAMETERS_FORMAT_JSON nedojde k výpadku.
+	 * Také je možné v případě ladění chyb data v DB ručně upravit ze serializovaného pole do json formátu, i když pro ukládání používáme self::PARAMETERS_FORMAT_SERIALIZE
+	 * @return array
+	 */
 	public function getParameters(): array
 	{
-		return unserialize($this->parameters);
+		if (substr($this->parameters, 0, 2) === 'a:') {
+			return unserialize($this->parameters);
+		}
+
+		return json_decode($this->parameters, true);
 	}
 
 	/**
+	 * Parametry ukládá jako serializované pole nebo jako json.
+	 * Formát určuje parametr v BackgroundQueue `parametersFormat`.
+	 *   - `serialize` => ukládá jako serializované pole a je bez omezení
+	 *   - `json` => parametry mohou obsahovat pouze skalární typy, pole a NULL
+	 *
 	 * @param object|array|string|int|float|bool|null $parameters
+	 * @param string $parametersFormat
+	 * @throws Exception
 	 */
-	public function setParameters($parameters): self
+	public function setParameters($parameters, string $parametersFormat): self
 	{
-		$this->parameters = serialize(is_array($parameters) ? $parameters : [$parameters]);
+		$parameters = is_array($parameters) ? $parameters : [$parameters];
+
+		switch ($parametersFormat) {
+			case self::PARAMETERS_FORMAT_SERIALIZE:
+				$this->parameters = serialize($parameters);
+				break;
+			case self::PARAMETERS_FORMAT_JSON:
+				foreach ($parameters as $idx => $parameter) {
+					if (!is_scalar($parameter) && !is_array($parameter) && !is_null($parameter)) {
+						throw new Exception("Unsupported type '" . gettype($parameter) . "' for \$parameters[$idx] using parametersFormat = " . self::PARAMETERS_FORMAT_JSON);
+					}
+				}
+				$this->parameters = json_encode($parameters);
+				break;
+			default:
+				throw new Exception("Unsupported parameters format: $parametersFormat");
+		}
+
 		return $this;
 	}
 

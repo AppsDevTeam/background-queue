@@ -236,14 +236,24 @@ class BackgroundQueue
 		$e = null;
 		$state = BackgroundJob::STATE_FINISHED;
 		try {
+			if (PHP_VERSION_ID >= 80200) {
+				memory_reset_peak_usage();
+			}
+
+			$memory = ['before' => $this->getMemories()];
 			$startTime = microtime(true);
+
 			if (PHP_VERSION_ID < 80000) {
 				$callback(...array_values($entity->getParameters()));
 			} else {
 				$callback(...$entity->getParameters());
 			}
+
 			$endTime = microtime(true);
+			$memory['after'] = $this->getMemories();
+
 			$entity->setExecutionTime((int) (($endTime - $startTime) * 1000));
+			$entity->setMemory($memory);
 		} catch (Throwable $e) {
 			if ($this->config['onError']) {
 				try {
@@ -556,6 +566,7 @@ class BackgroundQueue
 		$table->addColumn('finished_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
 		$table->addColumn('pid', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
+		$table->addColumn('memory', Types::JSON)->setNotnull(false);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);
@@ -834,4 +845,15 @@ class BackgroundQueue
 	{
 		return $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $entity->getQueue();
 	}
+
+	private function getMemories(): array
+	{
+		return [
+			'notRealActual' => memory_get_usage(),
+			'realActual' => memory_get_usage(true),
+			'notRealPeak' => memory_get_peak_usage(),
+			'realPeak' => memory_get_peak_usage(true),
+		];
+	}
+
 }

@@ -186,6 +186,16 @@ Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v ni
 
 Při spuštění consumera se do tabulky `background_job` do sloupce `pid` uloží aktuální PID procesu. Nejedná se o PID z pohledu systému, ale o PID uvnitř docker kontejneru.
 
+Při dokončení callbacku se do tabulky `background_job` do sloupce `memory` uloží informace o využité paměti před a po dokončení.
+Pokud v commandu `background-queue:consume` využíváme parametr `jobs`, od verze PHP 8.2 se před každým jednotlivým zpracováním resetuje "memory peak" (metoda `memory_reset_peak_usage()`).
+
+```
+'notRealActual' => memory_get_usage(),
+'realActual' => memory_get_usage(true),
+'notRealPeak' => memory_get_peak_usage(),
+'realPeak' => memory_get_peak_usage(true),
+```
+
 ### 4 Prioritizace záznamů
 
 Vkládaným záznamům máme možnost určit jejich prioritu. Později vložený záznam s větší prioritou má přednost při zpracování před dříve vloženým.

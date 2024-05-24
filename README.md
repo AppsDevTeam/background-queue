@@ -39,6 +39,7 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'tempDir' => $tempDir, // cesta pro uložení zámku proti vícenásobnému spuštění commandu
 	'connection' => $connection, // pole parametru predavane do Doctrine\Dbal\Connection nebo DSN
 	'queue' => $_ENV['PROJECT_NAME'], // název fronty, do které se ukládají a ze které se vybírají záznamy
+	'bulkSize' => 1, // velikost dávky při vkládání více záznamů najednou
 	'tableName' => 'background_job', // nepovinné, název tabulky, do které se budou ukládat jednotlivé joby
 	'logger' => $logger, // nepovinné, musí implementovat psr/log LoggerInterface
 	'onBeforeProcess' => function(array $parameters) {...}, // nepovinné
@@ -196,7 +197,22 @@ Pokud v commandu `background-queue:consume` využíváme parametr `jobs`, od ver
 'realPeak' => memory_get_peak_usage(true),
 ```
 
-### 4 Prioritizace záznamů
+### 4 Vkládání po dávkách
+
+Pokud vkládáme větší množství záznamů, může BackgroundQueue vkládat záznamy do DB efektivněji po dávkách pomocí `INSERT INOT table () VALUES (...), (...), ...`.
+Velikost dávky se nastavuje parametrem `bulkSize`.
+Začátek a konec dávkového vkládání záznamů uvedeme metodami `starBulk` a `endBulk`.
+Bez započetí dávkového vkládání metodou `startBulk` bude vždy dávka velikosti 1, nehledě na parametr `bulkSize`.
+
+```php
+$this->backgroundQueueService->startBulk();
+foreach ($data as $oneJobData) {
+    $this->backgroundQueue->publish(...);
+}
+$this->backgroundQueueService->endBulk();
+```
+
+### 5 Prioritizace záznamů
 
 Vkládaným záznamům máme možnost určit jejich prioritu. Později vložený záznam s větší prioritou má přednost při zpracování před dříve vloženým.
 
@@ -256,7 +272,7 @@ $this->backgroundQueue->publish('email', $parameters, $serialGroup, $identifier,
 ```
 
 
-### 4 Integrace do frameworků
+### 6 Integrace do frameworků
 
 - Nette - https://github.com/AppsDevTeam/background-queue-nette
 - Symfony - https://github.com/AppsDevTeam/background-queue-symfony

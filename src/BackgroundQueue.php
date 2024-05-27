@@ -922,7 +922,7 @@ class BackgroundQueue
 	private function getPriority(?int $priority, string $callbackName): int
 	{
 		if (is_null($priority)) {
-			$priority = $this->config['callbacks'][$callbackName]['priority'] ?? array_values($this->config['priority'])[0];
+			$priority = $this->config['callbacks'][$callbackName]['priority'] ?? array_values($this->config['priorities'])[0];
 		}
 
 		if (!in_array($priority, $this->config['priorities'])) {

@@ -39,12 +39,14 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'tempDir' => $tempDir, // cesta pro uložení zámku proti vícenásobnému spuštění commandu
 	'connection' => $connection, // pole parametru predavane do Doctrine\Dbal\Connection nebo DSN
 	'queue' => $_ENV['PROJECT_NAME'], // název fronty, do které se ukládají a ze které se vybírají záznamy
+	'bulkSize' => 1, // velikost dávky při vkládání více záznamů najednou
 	'tableName' => 'background_job', // nepovinné, název tabulky, do které se budou ukládat jednotlivé joby
 	'logger' => $logger, // nepovinné, musí implementovat psr/log LoggerInterface
 	'onBeforeProcess' => function(array $parameters) {...}, // nepovinné
 	'onError' => function(Throwable $e, array $parameters) {...},  // nepovinné
 	'onAfterProcess' => function(array $parameters) {...}, // nepovinné
 	'onProcessingGetMetadata' => function(array $parameters): ?array {...}, // nepovinné
+	'parametersFormat' => \ADT\BackgroundQueue\Entity\BackgroundJob::PARAMETERS_FORMAT_SERIALIZE, // nepovinné, určuje v jakém formátu budou do DB ukládána data v `background_job.parameters` (@see \ADT\BackgroundQueue\Entity\BackgroundJob::setParameters)
 ]);
 ```
 
@@ -186,7 +188,32 @@ Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v ni
 
 Při spuštění consumera se do tabulky `background_job` do sloupce `pid` uloží aktuální PID procesu. Nejedná se o PID z pohledu systému, ale o PID uvnitř docker kontejneru.
 
-### 4 Prioritizace záznamů
+Při dokončení callbacku se do tabulky `background_job` do sloupce `memory` uloží informace o využité paměti před a po dokončení.
+Pokud v commandu `background-queue:consume` využíváme parametr `jobs`, od verze PHP 8.2 se před každým jednotlivým zpracováním resetuje "memory peak" (metoda `memory_reset_peak_usage()`).
+
+```
+'notRealActual' => memory_get_usage(),
+'realActual' => memory_get_usage(true),
+'notRealPeak' => memory_get_peak_usage(),
+'realPeak' => memory_get_peak_usage(true),
+```
+
+### 4 Vkládání po dávkách
+
+Pokud vkládáme větší množství záznamů, může BackgroundQueue vkládat záznamy do DB efektivněji po dávkách pomocí `INSERT INOT table () VALUES (...), (...), ...`.
+Velikost dávky se nastavuje parametrem `bulkSize`.
+Začátek a konec dávkového vkládání záznamů uvedeme metodami `starBulk` a `endBulk`.
+Bez započetí dávkového vkládání metodou `startBulk` bude vždy dávka velikosti 1, nehledě na parametr `bulkSize`.
+
+```php
+$this->backgroundQueueService->startBulk();
+foreach ($data as $oneJobData) {
+    $this->backgroundQueue->publish(...);
+}
+$this->backgroundQueueService->endBulk();
+```
+
+### 5 Prioritizace záznamů
 
 Vkládaným záznamům máme možnost určit jejich prioritu. Později vložený záznam s větší prioritou má přednost při zpracování před dříve vloženým.
 
@@ -246,7 +273,7 @@ $this->backgroundQueue->publish('email', $parameters, $serialGroup, $identifier,
 ```
 
 
-### 4 Integrace do frameworků
+### 6 Integrace do frameworků
 
 - Nette - https://github.com/AppsDevTeam/background-queue-nette
 - Symfony - https://github.com/AppsDevTeam/background-queue-symfony

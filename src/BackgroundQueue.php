@@ -36,7 +36,9 @@ class BackgroundQueue
 	private LoggerInterface $logger;
 	private ?Producer $producer = null;
 	private bool $transaction = false;
-	private array $transactionCallbacks = [];
+	private int $bulkSize = 1;
+	private array $bulkBrokerCallbacks = [];
+	private array $bulkDatabaseEntities = [];
 
 	/**
 	 * @throws \Doctrine\DBAL\Exception
@@ -63,6 +65,15 @@ class BackgroundQueue
 		}
 		if (!isset($config['priorities'])) {
 			$config['priorities'] = [1];
+		}
+		if (!isset($config['bulkSize'])) {
+			$config['bulkSize'] = 1;
+		}
+		if (!isset($config['parametersFormat'])) {
+			$config['parametersFormat'] = BackgroundJob::PARAMETERS_FORMAT_SERIALIZE;
+		}
+		if (!in_array($config['parametersFormat'], BackgroundJob::PARAMETERS_FORMATS, true)) {
+			throw new Exception('Unsupported parameters format: ' . $config['parametersFormat']);
 		}
 
 		$this->config = $config;
@@ -106,7 +117,7 @@ class BackgroundQueue
 		$entity->setQueue($this->config['queue']);
 		$entity->setPriority($priority);
 		$entity->setCallbackName($callbackName);
-		$entity->setParameters($parameters);
+		$entity->setParameters($parameters, $this->config['parametersFormat']);
 		$entity->setSerialGroup($serialGroup);
 		$entity->setIdentifier($identifier);
 		$entity->setIsUnique($isUnique);
@@ -126,7 +137,7 @@ class BackgroundQueue
 			return;
 		}
 
-		$this->transactionCallbacks[] = function() use ($entity) {
+		$this->bulkBrokerCallbacks[] = function() use ($entity) {
 			try {
 				// Pokud mám u callbacku nastavenou frontu, v DB zůstává původní, ale do brokera použiju tu z konfigu.
 				// Tedy řadím do různých front pro různé consumery, ale z pohledu záznamů v DB se jedná o stejnou frontu.
@@ -139,17 +150,17 @@ class BackgroundQueue
 				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 			}
 		};
-		if (!$this->transaction) {
+		if (!$this->transaction && count($this->bulkBrokerCallbacks) >= $this->bulkSize) {
 			$this->doPublishToBroker();
 		}
 	}
 
 	private function doPublishToBroker()
 	{
-		foreach ($this->transactionCallbacks as $_closure) {
+		foreach ($this->bulkBrokerCallbacks as $_closure) {
 			$_closure();
 		}
-		$this->transactionCallbacks = [];
+		$this->bulkBrokerCallbacks = [];
 	}
 
 	/**
@@ -236,14 +247,24 @@ class BackgroundQueue
 		$e = null;
 		$state = BackgroundJob::STATE_FINISHED;
 		try {
+			if (PHP_VERSION_ID >= 80200) {
+				memory_reset_peak_usage();
+			}
+
+			$memory = ['before' => $this->getMemories()];
 			$startTime = microtime(true);
+
 			if (PHP_VERSION_ID < 80000) {
 				$callback(...array_values($entity->getParameters()));
 			} else {
 				$callback(...$entity->getParameters());
 			}
+
 			$endTime = microtime(true);
+			$memory['after'] = $this->getMemories();
+
 			$entity->setExecutionTime((int) (($endTime - $startTime) * 1000));
+			$entity->setMemory($memory);
 		} catch (Throwable $e) {
 			if ($this->config['onError']) {
 				try {
@@ -374,6 +395,24 @@ class BackgroundQueue
 		return $entities;
 	}
 
+	public function startBulk()
+	{
+		$this->bulkSize = $this->config['bulkSize'];
+		if ($this->transaction) {
+			$this->connection->beginTransaction();
+		}
+	}
+
+	public function endBulk()
+	{
+		$this->doPublishToDatabase();
+		if ($this->transaction) {
+			$this->connection->commit();
+		}
+		$this->doPublishToBroker();
+		$this->bulkSize = 1;
+	}
+
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
@@ -384,7 +423,7 @@ class BackgroundQueue
 			throw new Exception('Nested transactions not implemented.');
 		}
 		$this->transaction = true;
-		$this->connection->beginTransaction();
+		$this->startBulk();
 	}
 
 	/**
@@ -392,9 +431,8 @@ class BackgroundQueue
 	 */
 	public function commitTransaction()
 	{
+		$this->endBulk();
 		$this->transaction = false;
-		$this->connection->commit();
-		$this->doPublishToBroker();
 	}
 
 	public function rollbackTransaction()
@@ -403,9 +441,11 @@ class BackgroundQueue
 			return;
 		}
 
-		$this->transaction = false;
 		$this->connection->rollBack();
-		$this->transactionCallbacks = [];
+		$this->transaction = false;
+		$this->bulkDatabaseEntities = [];
+		$this->bulkBrokerCallbacks = [];
+		$this->bulkSize = 1;
 	}
 
 	/**
@@ -485,8 +525,12 @@ class BackgroundQueue
 				if ($this->producer) {
 					$entity->setProcessedByBroker(true);
 				}
-				$this->connection->insert($this->config['tableName'], $entity->getDatabaseValues());
-				$entity->setId($this->connection->lastInsertId());
+
+				$this->bulkDatabaseEntities[] = $entity;
+
+				if (count($this->bulkDatabaseEntities) >= $this->bulkSize) {
+					$this->doPublishToDatabase();
+				}
 			} else {
 				$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
 			}
@@ -494,6 +538,68 @@ class BackgroundQueue
 			$this->rollbackTransaction();
 			throw $e;
 		}
+	}
+
+	private function doPublishToDatabase() {
+		if (empty($this->bulkDatabaseEntities)) {
+			return null;
+		}
+
+		// Protože vkládám více záznamů najednou, potřebuju si vše uzavřít do transakce, abych si bezpečně získal seznam vložených ID a nastavil je vloženým entitám.
+		$this->connection->beginTransaction();
+
+		$this->insertMultipleEntities($this->bulkDatabaseEntities);
+		$firstInsertedId = $this->connection->lastInsertId(); // Id prvního z vložených záznamů
+
+		// Pokud jsme vkládal pouze jednu entitu, nemusím se zbytečně dotazovat do DB
+		$insertedIds = [$firstInsertedId];
+		if (count($this->bulkDatabaseEntities) > 1) {
+			$qb = $this->createQueryBuilder()
+				->select('id')
+				->andWhere('id >= :firstId')
+				->setParameter('firstId', $firstInsertedId);
+			$insertedIds = $this->fetchAll($qb, null, false);
+		}
+
+		foreach (array_values($insertedIds) as $idx => $data) {
+			$this->bulkDatabaseEntities[$idx]->setId($data['id']);
+		}
+
+		$this->bulkDatabaseEntities = [];
+		$this->connection->commit();
+	}
+
+	/**
+	 * Podporuje INSERT s více VALUES v jednom příkazu.
+	 * Vychází z @link \Doctrine\DBAL\Connection::insert
+	 *
+	 * @param BackgroundJob[] $entities
+	 */
+	private function insertMultipleEntities(array $entities)
+	{
+		$table = $this->config['tableName'];
+
+		if (empty($entities)) {
+			return null;
+		}
+
+		$columns = array_keys($entities[0]->getDatabaseValues());
+		$setOne = array_fill(0, count($columns), '?');
+		$set = [];
+		$values = [];
+		foreach ($entities as $entity) {
+			if (! $entity instanceof BackgroundJob) {
+				throw new InvalidArgumentException("All entities have to be instance of ADT\BackgroundQueue\Entity\BackgroundJob. There are " . get_class($entity) . ".");
+			}
+			$values = array_merge($values, array_values($entity->getDatabaseValues()));
+			$set[] = '(' . implode(', ', $setOne) . ')';
+		}
+
+		$columnsToSql = implode(', ', $columns);
+		$setToSql = implode(', ', $set);
+		$sql = "INSERT INTO $table ($columnsToSql) VALUES $setToSql";
+
+		return $this->connection->executeUpdate($sql, $values);
 	}
 
 	/**
@@ -556,6 +662,7 @@ class BackgroundQueue
 		$table->addColumn('finished_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
 		$table->addColumn('pid', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
+		$table->addColumn('memory', Types::JSON)->setNotnull(false);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);
@@ -815,7 +922,7 @@ class BackgroundQueue
 	private function getPriority(?int $priority, string $callbackName): int
 	{
 		if (is_null($priority)) {
-			$priority = $this->config['callbacks'][$callbackName]['priority'] ?? array_values($this->config['priority'])[0];
+			$priority = $this->config['callbacks'][$callbackName]['priority'] ?? array_values($this->config['priorities'])[0];
 		}
 
 		if (!in_array($priority, $this->config['priorities'])) {
@@ -834,4 +941,15 @@ class BackgroundQueue
 	{
 		return $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $entity->getQueue();
 	}
+
+	private function getMemories(): array
+	{
+		return [
+			'notRealActual' => memory_get_usage(),
+			'realActual' => memory_get_usage(true),
+			'notRealPeak' => memory_get_peak_usage(),
+			'realPeak' => memory_get_peak_usage(true),
+		];
+	}
+
 }

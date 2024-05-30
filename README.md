@@ -200,7 +200,7 @@ Pokud v commandu `background-queue:consume` využíváme parametr `jobs`, od ver
 
 ### 4 Vkládání po dávkách
 
-Pokud vkládáme větší množství záznamů, může BackgroundQueue vkládat záznamy do DB efektivněji po dávkách pomocí `INSERT INOT table () VALUES (...), (...), ...`.
+Pokud vkládáme větší množství záznamů, může BackgroundQueue vkládat záznamy do DB efektivněji po dávkách pomocí `INSERT INTO table () VALUES (...), (...), ...`.
 Velikost dávky se nastavuje parametrem `bulkSize`.
 Začátek a konec dávkového vkládání záznamů uvedeme metodami `starBulk` a `endBulk`.
 Bez započetí dávkového vkládání metodou `startBulk` bude vždy dávka velikosti 1, nehledě na parametr `bulkSize`.

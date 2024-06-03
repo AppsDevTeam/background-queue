@@ -59,6 +59,16 @@ class Manager
 		return $this->channel;
 	}
 
+	public function closeChannel(): void
+	{
+		$channel = $this->channel;
+		$this->channel = null;
+		$this->initQos = false;
+		if ($channel) {
+			$channel->close();
+		}
+	}
+
 	public function createExchange(string $exchange)
 	{
 		if (isset($this->initExchanges[$exchange])) {
@@ -101,12 +111,6 @@ class Manager
 		}
 
 		$this->initQueues[$queue] = true;
-	}
-
-	public function getQueueMessagesCount(string $queue): int
-	{
-		list($queueName, $messageCount, $activeConsumerCount) = $this->getChannel()->queue_declare($queue, true);
-		return $messageCount + $activeConsumerCount;
 	}
 
 	public function setupQos()

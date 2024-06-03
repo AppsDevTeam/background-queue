@@ -554,8 +554,8 @@ class BackgroundQueue
 		$this->insertMultipleEntities($this->bulkDatabaseEntities);
 		$firstInsertedId = $this->connection->lastInsertId(); // Id prvního z vložených záznamů
 
-		// Pokud jsme vkládal pouze jednu entitu, nemusím se zbytečně dotazovat do DB
-		$insertedIds = [$firstInsertedId];
+		// Pokud jsem vkládal pouze jednu entitu, nemusím se zbytečně dotazovat do DB
+		$insertedIds = [['id' => $firstInsertedId]];
 		if (count($this->bulkDatabaseEntities) > 1) {
 			$qb = $this->createQueryBuilder()
 				->select('id')

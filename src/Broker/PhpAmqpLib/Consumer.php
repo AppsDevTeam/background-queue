@@ -41,15 +41,13 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 
 		foreach ($queuesWithPriorities as $queue) {
 			$this->manager->getChannel()->basic_consume($queue, $queue, false, false, false, false, function(AMQPMessage $msg) use ($queuesWithPriorities) {
-
-				$msg->ack();
-
 				// Odpojím se od všech nabindovaných front
 				foreach ($queuesWithPriorities as $queuesWithPriority) {
 					$msg->getChannel()->basic_cancel($queuesWithPriority);
 				}
 
-				// Odpojím se od kanálu, abych uvolnil zprávy vyhrazené pro ostatní nabindované callbacky na ostatní fronty a zprávy mohly okamžitě zpracovat jiní konzumeři
+				$msg->ack();
+
 				$this->manager->closeChannel();
 
 				if ($msg->getBody() === Producer::DIE) {

@@ -48,6 +48,7 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 
 				$msg->ack();
 
+				// Odpojím se od kanálu, abych uvolnil zprávy vyhrazené pro ostatní nabindované callbacky na ostatní fronty a zprávy mohly okamžitě zpracovat jiní konzumeři
 				$this->manager->closeChannel();
 
 				if ($msg->getBody() === Producer::DIE) {

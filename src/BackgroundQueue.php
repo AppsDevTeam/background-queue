@@ -108,8 +108,8 @@ class BackgroundQueue
 			throw new Exception('Callback "' . $callbackName . '" does not exist.');
 		}
 
-		if ((!$serialGroup || !$identifier) && $isUnique) {
-			throw new Exception('Parameters "serialGroup" and "identifier" have to be set if "isUnique" is true.');
+		if (!$identifier && $isUnique) {
+			throw new Exception('Parameter "identifier" has to be set if "isUnique" is true.');
 		}
 
 		$this->checkArguments($parameters, $this->getCallback($callbackName));

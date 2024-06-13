@@ -178,7 +178,7 @@ final class BackgroundJob
 
 	public function setState(int $state): self
 	{
-		if ($this->state == self::STATE_PROCESSING && $this->state != $state) {
+		if (in_array($state, self::FINISHED_STATES) && $this->state != $state) {
 			$this->updateFinishedAt();
 		}
 

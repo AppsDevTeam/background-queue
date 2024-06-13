@@ -34,7 +34,8 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 		foreach ($priorities as $priority) {
 			$queueWithPriority = $this->manager->getQueueWithPriority($queue, $priority);
 			$queuesWithPriorities[] = $queueWithPriority;
-			$this->manager->createQueue($queueWithPriority);
+			$this->manager->createExchange($queueWithPriority);
+			$this->manager->createQueue($queueWithPriority, $queueWithPriority);
 		}
 
 		$this->manager->setupQos();

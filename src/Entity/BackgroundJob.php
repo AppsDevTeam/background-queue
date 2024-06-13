@@ -9,6 +9,7 @@ use ReflectionClass;
 
 final class BackgroundJob
 {
+	const STATE_BACK_TO_BROKER = -1; // vloží znovu do brokera (typicky je ručně nastavíme na -1 a chceme je znovu nasypat do Rabbita)
 	const STATE_READY = 1; // připraveno
 	const STATE_PROCESSING = 2; // zpracovává se
 	const STATE_FINISHED = 3; // dokončeno
@@ -19,6 +20,7 @@ final class BackgroundJob
 	const STATE_BROKER_FAILED = 8; // nepodarilo se ulozit job do brokera
 
 	const READY_TO_PROCESS_STATES = [
+		self::STATE_BACK_TO_BROKER => self::STATE_BACK_TO_BROKER,
 		self::STATE_READY => self::STATE_READY,
 		self::STATE_TEMPORARILY_FAILED => self::STATE_TEMPORARILY_FAILED,
 		self::STATE_WAITING => self::STATE_WAITING,

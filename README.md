@@ -168,7 +168,7 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 ### 2.2 Commandy
 
-`background-queue:process` Zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `BROKER_FAILED`, v případě využití brokera pouze záznamy ve stavu `TEMPORARILY_FAILED` a `WAITING`. Command je ideální spouštět cronem každou minutu. V případě použití brokeru je záznam ve stavu `TEMPORARILY_FAILED` a `WAITING` zařazen znovu do brokera a stav je změněn na `READY`.
+`background-queue:process` Bez využití brokera zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `BROKER_FAILED`. V případě využití brokera pak záznamy ve stavu `STATE_BACK_TO_BROKER`, `TEMPORARILY_FAILED` a `WAITING`. Command je ideální spouštět cronem každou minutu. V případě použití brokeru je záznam ve stavu `STATE_BACK_TO_BROKER`, `TEMPORARILY_FAILED` a `WAITING` zařazen znovu do brokera a stav je změněn na `READY`. Stav `STATE_BACK_TO_BROKER` je typicky nastaven ručně v databázi těm záznamům, které chceme nechat znovu zpracovat.
 
 `background-queue:clear-finished` Smaže všechny úspěšně zpracované záznamy.
 

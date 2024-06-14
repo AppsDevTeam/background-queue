@@ -597,7 +597,9 @@ class BackgroundQueue
 			if (! $entity instanceof BackgroundJob) {
 				throw new InvalidArgumentException("All entities have to be instance of ADT\BackgroundQueue\Entity\BackgroundJob. There are " . get_class($entity) . ".");
 			}
-			$values = array_merge($values, array_values($entity->getDatabaseValues()));
+			foreach ($entity->getDatabaseValues() as $value) {
+				$values[] = $value;
+			}
 			$set[] = '(' . implode(', ', $setOne) . ')';
 		}
 

@@ -67,7 +67,10 @@ class BackgroundQueue
 			$config['priorities'] = [1];
 		}
 		if (count($config['priorities']) != count(array_unique($config['priorities']))) {
-			throw new Exception('There are duplicates priority in prioritoes list: ' . implode(',', $config['priorities']));
+			throw new Exception('There are duplicates priority in priorities list: ' . implode(',', $config['priorities']));
+		}
+		if (min($config['priorities']) < 0 || max($config['priorities']) > 999) {
+			throw new Exception('There are value out of range 0-999 in priorities list: ' . implode(',', $config['priorities']));
 		}
 		if (!isset($config['bulkSize'])) {
 			$config['bulkSize'] = 1;
@@ -594,7 +597,9 @@ class BackgroundQueue
 			if (! $entity instanceof BackgroundJob) {
 				throw new InvalidArgumentException("All entities have to be instance of ADT\BackgroundQueue\Entity\BackgroundJob. There are " . get_class($entity) . ".");
 			}
-			$values = array_merge($values, array_values($entity->getDatabaseValues()));
+			foreach ($entity->getDatabaseValues() as $value) {
+				$values[] = $value;
+			}
 			$set[] = '(' . implode(', ', $setOne) . ')';
 		}
 

@@ -3,6 +3,8 @@
 namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
 
 use ADT\BackgroundQueue\BackgroundQueue;
+use PhpAmqpLib\Exception\AMQPChannelClosedException;
+use PhpAmqpLib\Exception\AMQPConnectionClosedException;
 use PhpAmqpLib\Message\AMQPMessage;
 
 class Producer implements \ADT\BackgroundQueue\Broker\Producer
@@ -32,7 +34,15 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 			$this->manager->createQueue($queue . '_' . $expiration, $exchange, $additionalArguments);
 		}
 
-		$this->manager->getChannel()->basic_publish($this->createMessage($id), $exchange, $expiration ? $queue . '_' . $expiration : $queue, true);
+		try {
+			$this->manager->getChannel()->basic_publish($this->createMessage($id), $exchange, $expiration ? $queue . '_' . $expiration : $queue, true);
+		} catch (AMQPChannelClosedException $e) {
+			$this->manager->closeChannel(true);
+			throw $e;
+		} catch (AMQPConnectionClosedException $e) {
+			$this->manager->closeConnection(true);
+			throw $e;
+		}
 
 	}
 

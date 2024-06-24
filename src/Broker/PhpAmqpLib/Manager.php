@@ -16,6 +16,7 @@ class Manager
 
 	private ?AMQPStreamConnection $connection = null;
 	private ?AMQPChannel $channel = null;
+	private bool $shutdownRegistered = false;
 
 	private array $initQueues;
 	private array $initExchanges;
@@ -36,6 +37,15 @@ class Manager
 		return $this->connection;
 	}
 
+	public function closeConnection(bool $hard = false): void
+	{
+		$this->closeChannel($hard);
+		if ($this->connection && !$hard) {
+			$this->connection->close();
+		}
+		$this->connection = null;
+	}
+
 	public function getChannel(): AMQPChannel
 	{
 		if (!$this->channel) {
@@ -49,24 +59,27 @@ class Manager
 					throw new Exception("Code: $replyCode, Text: $replyText, Exchange: $exchange, Routing Key: $routingKey");
 				}
 			);
-			register_shutdown_function(function() {
-				$this->channel->wait_for_pending_acks_returns();
-				$this->channel->close();
-				$this->connection->close();
-			});
+
+			if (!$this->shutdownRegistered) {
+				register_shutdown_function(function() {
+					$this->closeChannel();
+					$this->closeConnection();
+				});
+				$this->shutdownRegistered = true;
+			}
 		}
 
 		return $this->channel;
 	}
 
-	public function closeChannel(): void
+	public function closeChannel(bool $hard = false): void
 	{
-		$channel = $this->channel;
+		if ($this->channel && !$hard) {
+			$this->channel->wait_for_pending_acks_returns();
+			$this->channel->close();
+		}
 		$this->channel = null;
 		$this->initQos = false;
-		if ($channel) {
-			$channel->close();
-		}
 	}
 
 	public function createExchange(string $exchange)

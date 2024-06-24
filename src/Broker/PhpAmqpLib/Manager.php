@@ -37,12 +37,13 @@ class Manager
 		return $this->connection;
 	}
 
-	public function closeConnection(): void
+	public function closeConnection(bool $hard = false): void
 	{
-		if ($this->connection) {
+		$this->closeChannel($hard);
+		if ($this->connection && !$hard) {
 			$this->connection->close();
-			$this->connection = null;
 		}
+		$this->connection = null;
 	}
 
 	public function getChannel(): AMQPChannel
@@ -71,14 +72,14 @@ class Manager
 		return $this->channel;
 	}
 
-	public function closeChannel(): void
+	public function closeChannel(bool $hard = false): void
 	{
-		if ($this->channel) {
+		if ($this->channel && !$hard) {
 			$this->channel->wait_for_pending_acks_returns();
 			$this->channel->close();
-			$this->channel = null;
-			$this->initQos = false;
 		}
+		$this->channel = null;
+		$this->initQos = false;
 	}
 
 	public function createExchange(string $exchange)

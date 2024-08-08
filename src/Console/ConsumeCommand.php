@@ -13,6 +13,7 @@ class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 {
 	protected static $defaultName = 'background-queue:consume';
 	private Consumer $consumer;
+	private BackgroundQueue $backgroundQueue;
 
 	public function __construct(Consumer $consumer, BackgroundQueue $backgroundQueue)
 	{

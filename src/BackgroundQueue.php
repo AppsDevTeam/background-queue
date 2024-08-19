@@ -91,6 +91,35 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Bezpečně ověříme, že nedošlo ke ztrátě spojení k DB.
+	 * Pokud ano, připojíme se znovu.
+	 */
+	private function databaseConnectionCheckAndReconnect(): void
+	{
+		$warningHandler = function($errno, $errstr) {
+			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (warning): code(' . $errno . ') ' . $errstr, 0));
+			$this->connection->close();
+			$this->connection->connect();
+		};
+
+		set_error_handler($warningHandler, E_WARNING);
+
+		try {
+			if (!$this->connection->ping()) {
+				$this->connection->close();
+				$this->connection->connect();
+			}
+		} catch (\Exception $e) {
+			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (exception): ' . $e->getMessage(), 0, $e));
+			$this->connection->close();
+			$this->connection->connect();
+		} finally {
+			restore_error_handler();
+		}
+	}
+
+
+	/**
 	 * @throws Exception
 	 */
 	public function publish(
@@ -242,10 +271,6 @@ class BackgroundQueue
 			return;
 		}
 
-		if ($this->config['onBeforeProcess']) {
-			$this->config['onBeforeProcess']($entity->getParameters());
-		}
-
 		// zpracování callbacku
 		// pokud metoda vyhodí TemporaryErrorException, job nebyl zpracován a zpracuje se příště
 		// pokud se vyhodí jakákoliv jiný error nebo exception implementující Throwable, job nebyl zpracován a jeho zpracování se již nebude opakovat
@@ -253,6 +278,10 @@ class BackgroundQueue
 		$e = null;
 		$state = BackgroundJob::STATE_FINISHED;
 		try {
+			if ($this->config['onBeforeProcess']) {
+				$this->config['onBeforeProcess']($entity->getParameters());
+			}
+
 			if (PHP_VERSION_ID >= 80200) {
 				memory_reset_peak_usage();
 			}
@@ -271,6 +300,10 @@ class BackgroundQueue
 
 			$entity->setExecutionTime((int) (($endTime - $startTime) * 1000));
 			$entity->setMemory($memory);
+
+			if ($this->config['onAfterProcess']) {
+				$this->config['onAfterProcess']($entity->getParameters());
+			}
 		} catch (Throwable $e) {
 			if ($this->config['onError']) {
 				try {
@@ -294,10 +327,6 @@ class BackgroundQueue
 					$entity->setPostponedBy(self::getPostponement($entity->getNumberOfAttempts()));
 					break;
 			}
-		}
-
-		if ($this->config['onAfterProcess']) {
-			$this->config['onAfterProcess']($entity->getParameters());
 		}
 
 		// zpracování výsledku
@@ -524,6 +553,7 @@ class BackgroundQueue
 	 */
 	public function save(BackgroundJob $entity): void
 	{
+		$this->databaseConnectionCheckAndReconnect();
 		$this->updateSchema();
 
 		try {
@@ -765,6 +795,8 @@ class BackgroundQueue
 	 */
 	private function getEntity(int $id, string $queue, int $priority): ?BackgroundJob
 	{
+		$this->databaseConnectionCheckAndReconnect();
+
 		$entity = $this->fetch(
 			$this->createQueryBuilder()
 				->andWhere('id = :id')

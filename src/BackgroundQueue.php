@@ -91,35 +91,6 @@ class BackgroundQueue
 	}
 
 	/**
-	 * Bezpečně ověříme, že nedošlo ke ztrátě spojení k DB.
-	 * Pokud ano, připojíme se znovu.
-	 */
-	private function databaseConnectionCheckAndReconnect(): void
-	{
-		$warningHandler = function($errno, $errstr) {
-			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (warning): code(' . $errno . ') ' . $errstr, 0));
-			$this->connection->close();
-			$this->connection->connect();
-		};
-
-		set_error_handler($warningHandler, E_WARNING);
-
-		try {
-			if (!$this->connection->ping()) {
-				$this->connection->close();
-				$this->connection->connect();
-			}
-		} catch (\Exception $e) {
-			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (exception): ' . $e->getMessage(), 0, $e));
-			$this->connection->close();
-			$this->connection->connect();
-		} finally {
-			restore_error_handler();
-		}
-	}
-
-
-	/**
 	 * @throws Exception
 	 */
 	public function publish(
@@ -553,7 +524,6 @@ class BackgroundQueue
 	 */
 	public function save(BackgroundJob $entity): void
 	{
-		$this->databaseConnectionCheckAndReconnect();
 		$this->updateSchema();
 
 		try {
@@ -795,8 +765,6 @@ class BackgroundQueue
 	 */
 	private function getEntity(int $id, string $queue, int $priority): ?BackgroundJob
 	{
-		$this->databaseConnectionCheckAndReconnect();
-
 		$entity = $this->fetch(
 			$this->createQueryBuilder()
 				->andWhere('id = :id')

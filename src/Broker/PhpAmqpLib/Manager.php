@@ -148,7 +148,22 @@ class Manager
 
 	public function parseQueueAndPriority(string $queueWithPriority): array
 	{
-		return explode('_', $queueWithPriority);
-	}
+		$parts = explode('_', $queueWithPriority);
 
+		if (count($parts) === 2) {
+			return [$parts[0], $parts[1]];
+		} elseif (count($parts) > 2) {
+			$nameParts = [];
+			while (true) {
+				$part = array_shift($parts);
+				if (is_numeric($part)) {
+					return [implode('_', $nameParts), $part];
+				} else {
+					$nameParts[] = $part;
+				}
+			}
+		} else {
+			throw new \Exception('Missing priority in queue name.');
+		}
+	}
 }

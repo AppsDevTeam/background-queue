@@ -162,6 +162,17 @@ Pokud callback vyhodí `ADT\BackgroundQueue\Exception\PermanentErrorException`, 
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, záznam se uloží ve stavu `WAITING` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Počítadlo pokusů se nezvyšuje.
 
+Pokud callback vyhodí `ADT\BackgroundQueue\Exception\DieException`, zpracuje se vše dál jako při `ADT\BackgroundQueue\Exception\PermanentErrorException`, ale pokud je konzumer volán s parametrem `-j` vetším než 1, před další iterací je konzumer ukončen.
+Toho lze využít například v `onError`, pokud v aplikaci dojde k uzavření Doctrine Entity manageru a další iterace konzumera by opět skončili chybou.
+
+```php
+public function onError(\Throwable $exception) {
+	if (!$this->entityManager->isOpen()) {
+		throw new \ADT\BackgroundQueue\Exception\DieException('Uzavřený EM.');
+	}
+}
+```
+
 Pokud callback vyhodí jakýkoliv jiný error nebo exception implementující `Throwable`, záznam se uloží ve stavu `TEMPORARILY_FAILED` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Po `notifyOnNumberOfAttempts` je zaslána notifikace. Prodleva mezi každým dalším opakováním je prodloužena o dvojnásobek času, maximálně však na dobu 16 minut.
 
 Ve všech ostatních případech se záznam uloží jako úspěšně dokončený ve stavu `STATE_FINISHED`.

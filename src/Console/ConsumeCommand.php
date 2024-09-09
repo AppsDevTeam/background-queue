@@ -42,6 +42,7 @@ class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 		}
 
 		for ($i = 0; $i < (int)$jobs; $i++) {
+			$this->backgroundQueue->dieIfNecessary();
 			$this->consumer->consume($input->getArgument('queue'), $priorities);
 		}
 

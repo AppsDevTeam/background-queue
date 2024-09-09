@@ -2,8 +2,6 @@
 
 namespace ADT\BackgroundQueue\Exception;
 
-use Exception;
-
-class SkipException extends Exception
+class SkipException extends BackgroundQueueException
 {
 }

@@ -4,6 +4,7 @@ namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Broker\Producer;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
+use ADT\BackgroundQueue\Exception\DieException;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\SkipException;
 use ADT\BackgroundQueue\Exception\WaitingException;
@@ -39,6 +40,7 @@ class BackgroundQueue
 	private int $bulkSize = 1;
 	private array $bulkBrokerCallbacks = [];
 	private array $bulkDatabaseEntities = [];
+	private bool $shouldDie = false;
 
 	/**
 	 * @throws \Doctrine\DBAL\Exception
@@ -285,6 +287,9 @@ class BackgroundQueue
 			switch (true) {
 				case $e instanceof SkipException:
 					break;
+				case $e instanceof DieException:
+					// Záměrně propadávací case - pokud chceme ukončit consumera, chceme proces označit za permanentní chybu
+					$this->shouldDie = true;
 				case $e instanceof PermanentErrorException:
 				case $e instanceof TypeError:
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
@@ -958,6 +963,12 @@ class BackgroundQueue
 			'notRealPeak' => memory_get_peak_usage(),
 			'realPeak' => memory_get_peak_usage(true),
 		];
+	}
+
+	public function dieIfNecessary() {
+		if ($this->shouldDie) {
+			die();
+		}
 	}
 
 }

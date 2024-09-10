@@ -162,13 +162,20 @@ Pokud callback vyhodí `ADT\BackgroundQueue\Exception\PermanentErrorException`, 
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, záznam se uloží ve stavu `WAITING` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Počítadlo pokusů se nezvyšuje.
 
-Pokud callback vyhodí `ADT\BackgroundQueue\Exception\DieException`, zpracuje se vše dál jako při `ADT\BackgroundQueue\Exception\PermanentErrorException`, ale pokud je konzumer volán s parametrem `-j` vetším než 1, před další iterací je konzumer ukončen.
+Pokud callback vyhodí `ADT\BackgroundQueue\Exception\DieException`, zpracuje se vše dál podle exception, která je v `->getPrevious()` (a pokud žádná není, tak jako při `ADT\BackgroundQueue\Exception\PermanentErrorException`). Poté je (už před další iterací) konzumer ukončen.
 Toho lze využít například v `onError`, pokud v aplikaci dojde k uzavření Doctrine Entity manageru a další iterace konzumera by opět skončili chybou.
 
 ```php
 public function onError(\Throwable $exception) {
+
+	// Příklad 1: Bude to neopakovatelná chyba a konzumer se před další iterací ukončí.
 	if (!$this->entityManager->isOpen()) {
-		throw new \ADT\BackgroundQueue\Exception\DieException('Uzavřený EM.');
+		throw new \ADT\BackgroundQueue\Exception\DieException('EM is closed.');
+	}
+
+	// Příklad 2: Bude se zpracovávat dle toho, co je v $exception, tedy pokud je $exception instanceof TemporaryErrorException, tak to bude opakovatelná chyba, ale konzumer se také před další iterací ukončí. Používá se například pri deadlocku.
+	if (!$this->entityManager->isOpen()) {
+		throw new \ADT\BackgroundQueue\DieException('EM is closed. Reason: ' . $exception->getMessage(), $exception->getCode(), $exception);
 	}
 }
 ```

@@ -18,13 +18,16 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		$this->manager = $manager;
 	}
 
-	public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void
-	{
+	public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void {
 		$queue = $this->manager->getQueueWithPriority($queue, $priority);
+		$this->publishToBroker($id, $queue, $expiration);
+	}
+
+	private function publishToBroker(string $id, string $queue, ?int $expiration = null): void
+	{
 		$exchange = $queue;
 
-		$this->manager->createExchange($exchange);
-		$this->manager->createQueue($queue, $exchange);
+		$this->manager->createQueueWithExchange($queue, $exchange);
 		if ($expiration) {
 			$additionalArguments = [
 				'x-dead-letter-exchange' => ['S', $exchange],
@@ -48,7 +51,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 
 	public function publishDie(string $queue): void
 	{
-		$this->publish(self::DIE, $queue, Manager::QUEUE_TOP_PRIORITY);
+		$this->publishToBroker(self::DIE, $this->manager->getQueueDedicated($queue));
 	}
 
 	private function createMessage(string $body): AMQPMessage

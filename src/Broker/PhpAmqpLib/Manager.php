@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
 
+use ADT\BackgroundQueue\BackgroundQueue;
 use Exception;
 use PhpAmqpLib\Channel\AMQPChannel;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
@@ -9,10 +10,10 @@ use PhpAmqpLib\Message\AMQPMessage;
 
 class Manager
 {
-	const QUEUE_TOP_PRIORITY = 0;
 
 	private array $connectionParams;
 	private array $queueParams;
+	private BackgroundQueue $backgroundQueue;
 
 	private ?AMQPStreamConnection $connection = null;
 	private ?AMQPChannel $channel = null;
@@ -22,10 +23,11 @@ class Manager
 	private array $initExchanges;
 	private  bool $initQos = false;
 
-	public function __construct(array $connectionParams, array $queueParams)
+	public function __construct(array $connectionParams, array $queueParams, BackgroundQueue $backgroundQueue)
 	{
 		$this->connectionParams = $connectionParams;
 		$this->queueParams = $queueParams;
+		$this->backgroundQueue = $backgroundQueue;
 	}
 
 	private function getConnection(): AMQPStreamConnection
@@ -126,6 +128,12 @@ class Manager
 		$this->initQueues[$queue] = true;
 	}
 
+	public function createQueueWithExchange(string $queue, string $exchange) {
+		$this->createExchange($exchange);
+		$this->createQueue($queue, $exchange);
+	}
+
+
 	public function setupQos()
 	{
 		if ($this->initQos) {
@@ -144,6 +152,11 @@ class Manager
 	public function getQueueWithPriority(string $queue, int $priority): string
 	{
 		return $queue . '_' . $priority;
+	}
+
+	public function getQueueDedicated(string $queue): string
+	{
+		return $queue . '_ded-' . $this->backgroundQueue->getConsumerId();
 	}
 
 	public function parseQueueAndPriority(string $queueWithPriority): array

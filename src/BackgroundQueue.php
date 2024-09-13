@@ -74,6 +74,9 @@ class BackgroundQueue
 		if (min($config['priorities']) < 0 || max($config['priorities']) > 999) {
 			throw new Exception('There are value out of range 0-999 in priorities list: ' . implode(',', $config['priorities']));
 		}
+		if (!isset($config['consumerId'])) {
+			$config['consumerId'] = '0';
+		}
 		if (!isset($config['bulkSize'])) {
 			$config['bulkSize'] = 1;
 		}
@@ -284,15 +287,12 @@ class BackgroundQueue
 				} catch (Throwable $e) {}
 			}
 
-			if ($e instanceof DieException && $e->getPrevious()) {
-				$e = $e->getPrevious(); // Dále se řídíme podle té, kvůli které to vzniklo
-				$this->shouldDie = true;
-			}
-
 			switch (true) {
 				case $e instanceof SkipException:
 					break;
-				case $e instanceof DieException:    // Pokud to došlo sem, tak ta DieException nemá $e->getPrevious(), takže ji označíme jako STATE_PERMANENTLY_FAILED
+				case $e instanceof DieException:
+					// Záměrně propadávací case - pokud chceme ukončit consumera, chceme proces označit za permanentní chybu
+					$this->shouldDie = true;
 				case $e instanceof PermanentErrorException:
 				case $e instanceof TypeError:
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
@@ -366,6 +366,11 @@ class BackgroundQueue
 	public function getConfig(): array
 	{
 		return $this->config;
+	}
+
+	public function getConsumerId(): string
+	{
+		return $this->config['consumerId'];
 	}
 
 

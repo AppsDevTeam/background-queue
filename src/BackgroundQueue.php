@@ -4,7 +4,6 @@ namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Broker\Producer;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
-use ADT\BackgroundQueue\Exception\DieException;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\SkipException;
 use ADT\BackgroundQueue\Exception\WaitingException;
@@ -40,7 +39,6 @@ class BackgroundQueue
 	private int $bulkSize = 1;
 	private array $bulkBrokerCallbacks = [];
 	private array $bulkDatabaseEntities = [];
-	private bool $shouldDie = false;
 
 	/**
 	 * @throws \Doctrine\DBAL\Exception
@@ -284,15 +282,9 @@ class BackgroundQueue
 				} catch (Throwable $e) {}
 			}
 
-			if ($e instanceof DieException && $e->getPrevious()) {
-				$e = $e->getPrevious(); // Dále se řídíme podle té, kvůli které to vzniklo
-				$this->shouldDie = true;
-			}
-
 			switch (true) {
 				case $e instanceof SkipException:
 					break;
-				case $e instanceof DieException:    // Pokud to došlo sem, tak ta DieException nemá $e->getPrevious(), takže ji označíme jako STATE_PERMANENTLY_FAILED
 				case $e instanceof PermanentErrorException:
 				case $e instanceof TypeError:
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
@@ -684,7 +676,7 @@ class BackgroundQueue
 		$table->addIndex(['identifier']);
 		$table->addIndex(['state']);
 
-		if ($this->createSchemaManager()->tablesExist($this->config['tableName'])) {
+		if ($this->createSchemaManager()->tablesExist([$this->config['tableName']])) {
 			$tableDiff = (new Comparator())->diffTable($this->createSchemaManager()->listTableDetails($this->config['tableName']), $table);
 			$sqls = $tableDiff ? $this->createSchemaManager()->getDatabasePlatform()->getAlterTableSQL($tableDiff) : [];
 		} else {
@@ -966,12 +958,6 @@ class BackgroundQueue
 			'notRealPeak' => memory_get_peak_usage(),
 			'realPeak' => memory_get_peak_usage(true),
 		];
-	}
-
-	public function dieIfNecessary() {
-		if ($this->shouldDie) {
-			die();
-		}
 	}
 
 }

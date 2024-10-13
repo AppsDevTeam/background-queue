@@ -684,8 +684,9 @@ class BackgroundQueue
 		$table->addIndex(['identifier']);
 		$table->addIndex(['state']);
 
-		if ($this->createSchemaManager()->tablesExist([$this->config['tableName']])) {
-			$tableDiff = (new Comparator())->diffTable($this->createSchemaManager()->listTableDetails($this->config['tableName']), $table);
+		$schemaManager = $this->createSchemaManager();
+		if ($schemaManager->tablesExist([$this->config['tableName']])) {
+			$tableDiff = $schemaManager->createComparator()->compareTables($this->createSchemaManager()->listTableDetails($this->config['tableName']), $table);
 			$sqls = $tableDiff ? $this->createSchemaManager()->getDatabasePlatform()->getAlterTableSQL($tableDiff) : [];
 		} else {
 			$sqls = $this->createSchemaManager()->getDatabasePlatform()->getCreateTableSQL($table);

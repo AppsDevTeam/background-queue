@@ -686,10 +686,10 @@ class BackgroundQueue
 
 		$schemaManager = $this->createSchemaManager();
 		if ($schemaManager->tablesExist([$this->config['tableName']])) {
-			$tableDiff = $schemaManager->createComparator()->compareTables($this->createSchemaManager()->listTableDetails($this->config['tableName']), $table);
-			$sqls = $tableDiff ? $this->createSchemaManager()->getDatabasePlatform()->getAlterTableSQL($tableDiff) : [];
+			$tableDiff = $schemaManager->createComparator()->compareTables($this->createSchemaManager()->introspectTable($this->config['tableName']), $table);
+			$sqls = $tableDiff ? $this->connection->getDatabasePlatform()->getAlterTableSQL($tableDiff) : [];
 		} else {
-			$sqls = $this->createSchemaManager()->getDatabasePlatform()->getCreateTableSQL($table);
+			$sqls = $this->connection->getDatabasePlatform()->getCreateTableSQL($table);
 		}
 		foreach ($sqls as $sql) {
 			$this->executeStatement($sql);

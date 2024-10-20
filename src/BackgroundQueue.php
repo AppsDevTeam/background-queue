@@ -615,7 +615,7 @@ class BackgroundQueue
 		$setToSql = implode(', ', $set);
 		$sql = "INSERT INTO $table ($columnsToSql) VALUES $setToSql";
 
-		return $this->connection->executeUpdate($sql, $values);
+		return $this->connection->executeStatement($sql, $values);
 	}
 
 	/**
@@ -660,17 +660,17 @@ class BackgroundQueue
 		$table = $schema->createTable($this->config['tableName']);
 
 		$table->addColumn('id', Types::BIGINT, ['unsigned' => true])->setAutoincrement(true)->setNotnull(true);
-		$table->addColumn('queue', Types::STRING)->setNotnull(true);
+		$table->addColumn('queue', Types::STRING, ['length' => 255])->setNotnull(true);
 		$table->addColumn('priority', Types::INTEGER)->setNotnull(false);
-		$table->addColumn('callback_name', Types::STRING)->setNotnull(true);
+		$table->addColumn('callback_name', Types::STRING, ['length' => 255])->setNotnull(true);
 		$table->addColumn('parameters', Types::BLOB)->setNotnull(true);
 		$table->addColumn('state', Types::SMALLINT)->setNotnull(true);
 		$table->addColumn('created_at', Types::DATETIME_IMMUTABLE)->setNotnull(true);
 		$table->addColumn('last_attempt_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
 		$table->addColumn('number_of_attempts', Types::INTEGER)->setNotnull(true)->setDefault(0);
 		$table->addColumn('error_message', Types::TEXT)->setNotnull(false);
-		$table->addColumn('serial_group', Types::STRING)->setNotnull(false);
-		$table->addColumn('identifier', Types::STRING)->setNotnull(false);
+		$table->addColumn('serial_group', Types::STRING, ['length' => 255])->setNotnull(false);
+		$table->addColumn('identifier', Types::STRING, ['length' => 255])->setNotnull(false);
 		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 		$table->addColumn('postponed_by', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);

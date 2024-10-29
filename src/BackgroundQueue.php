@@ -465,9 +465,9 @@ class BackgroundQueue
 	/**
 	 * @throws Exception
 	 */
-	private function fetch(QueryBuilder $qb, bool $toEntity = true): ?BackgroundJob
+	private function fetch(QueryBuilder $qb): ?BackgroundJob
 	{
-		return ($entities = $this->fetchAll($qb, 1, $toEntity)) ? $entities[0]: null;
+		return ($entities = $this->fetchAll($qb, 1)) ? $entities[0]: null;
 	}
 
 	/**
@@ -487,8 +487,7 @@ class BackgroundQueue
 			return false;
 		}
 
-		$qb = $this->createQueryBuilder()
-			->select('id');
+		$qb = $this->createQueryBuilder();
 
 		$qb->andWhere('identifier = :identifier')
 			->setParameter('identifier', $entity->getIdentifier());
@@ -496,7 +495,7 @@ class BackgroundQueue
 		$qb->andWhere('id < :id')
 			->setParameter('id', $entity->getId());
 
-		return (bool) $this->fetch($qb, false);
+		return (bool) $this->fetch($qb);
 	}
 
 	/**

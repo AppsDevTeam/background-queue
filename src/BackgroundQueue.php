@@ -107,7 +107,7 @@ class BackgroundQueue
 		set_error_handler($warningHandler, E_WARNING);
 
 		try {
-			if (!$this->connection->ping()) {
+			if (!$this->databasePing()) {
 				$this->connection->close();
 				$this->connection->connect();
 			}
@@ -120,6 +120,27 @@ class BackgroundQueue
 		}
 	}
 
+	private function databasePing(): bool
+	{
+		set_error_handler(function ($severity, $message) {
+			throw new \PDOException($message, $severity);
+		});
+
+		try {
+			$this->connection->query($this->connection->getDatabasePlatform()->getDummySelectSQL());
+			restore_error_handler();
+
+			return true;
+
+		} catch (\Doctrine\DBAL\DBALException $e) {
+			restore_error_handler();
+			return false;
+
+		} catch (\Exception $e) {
+			restore_error_handler();
+			throw $e;
+		}
+	}
 
 	/**
 	 * @throws Exception

@@ -133,6 +133,8 @@ final class BackgroundJob
 	 */
 	public function getParameters(): array
 	{
+		$this->parameters = is_resource($this->parameters) ? stream_get_contents($this->parameters) : $this->parameters;
+		
 		if (substr($this->parameters, 0, 2) === 'a:') {
 			return unserialize($this->parameters);
 		}

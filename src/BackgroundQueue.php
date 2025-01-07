@@ -101,7 +101,7 @@ class BackgroundQueue
 		$warningHandler = function($errno, $errstr) {
 			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (warning): code(' . $errno . ') ' . $errstr, 0));
 			$this->connection->close();
-			$this->connection->connect();
+			$this->connection->getNativeConnection();
 		};
 
 		set_error_handler($warningHandler, E_WARNING);
@@ -109,12 +109,12 @@ class BackgroundQueue
 		try {
 			if (!$this->databasePing()) {
 				$this->connection->close();
-				$this->connection->connect();
+				$this->connection->getNativeConnection();
 			}
 		} catch (\Exception $e) {
 			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (exception): ' . $e->getMessage(), 0, $e));
 			$this->connection->close();
-			$this->connection->connect();
+			$this->connection->getNativeConnection();
 		} finally {
 			restore_error_handler();
 		}
@@ -127,7 +127,7 @@ class BackgroundQueue
 		});
 
 		try {
-			$this->connection->query($this->connection->getDatabasePlatform()->getDummySelectSQL());
+			$this->connection->executeQuery($this->connection->getDatabasePlatform()->getDummySelectSQL());
 			restore_error_handler();
 
 			return true;

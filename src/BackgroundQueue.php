@@ -11,19 +11,16 @@ use ADT\BackgroundQueue\Exception\WaitingException;
 use ADT\Utils\FileSystem;
 use DateTimeInterface;
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
-use Doctrine\DBAL\Schema\Comparator;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\SchemaException;
 use Doctrine\DBAL\Types\Types;
 use Exception;
 use InvalidArgumentException;
+use PDOException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
-use ReflectionException;
-use ReflectionMethod;
 use RuntimeException;
 use Throwable;
 use TypeError;
@@ -36,20 +33,17 @@ class BackgroundQueue
 	private Connection $connection;
 	private LoggerInterface $logger;
 	private ?Producer $producer = null;
-	private bool $transaction = false;
 	private int $bulkSize = 1;
 	private array $bulkBrokerCallbacks = [];
 	private array $bulkDatabaseEntities = [];
 	private bool $shouldDie = false;
+	private EventManager $eventManager;
 
 	/**
-	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
 	 */
 	public function __construct(array $config)
 	{
-		if (is_string($config['connection'])) {
-			$config['connection'] = $this->parseDsn($config['connection']);
-		}
 		if (empty($config['waitingJobExpiration'])) {
 			$config['waitingJobExpiration'] = 1000;
 		}
@@ -85,7 +79,7 @@ class BackgroundQueue
 		}
 
 		$this->config = $config;
-		$this->connection = DriverManager::getConnection($config['connection']);
+		$this->connection = $config['connection'];
 		$this->logger = $config['logger'] ?: new NullLogger();
 		if ($config['producer']) {
 			$this->producer = $config['producer'];
@@ -95,6 +89,7 @@ class BackgroundQueue
 	/**
 	 * Bezpečně ověříme, že nedošlo ke ztrátě spojení k DB.
 	 * Pokud ano, připojíme se znovu.
+	 * @throws \Doctrine\DBAL\Exception
 	 */
 	private function databaseConnectionCheckAndReconnect(): void
 	{
@@ -111,7 +106,7 @@ class BackgroundQueue
 				$this->connection->close();
 				$this->connection->getNativeConnection();
 			}
-		} catch (\Exception $e) {
+		} catch (Exception $e) {
 			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (exception): ' . $e->getMessage(), 0, $e));
 			$this->connection->close();
 			$this->connection->getNativeConnection();
@@ -120,10 +115,13 @@ class BackgroundQueue
 		}
 	}
 
+	/**
+	 * @throws Exception
+	 */
 	private function databasePing(): bool
 	{
 		set_error_handler(function ($severity, $message) {
-			throw new \PDOException($message, $severity);
+			throw new PDOException($message, $severity);
 		});
 
 		try {
@@ -132,18 +130,18 @@ class BackgroundQueue
 
 			return true;
 
-		} catch (\Doctrine\DBAL\DBALException $e) {
+		} catch (\Doctrine\DBAL\Exception) {
 			restore_error_handler();
 			return false;
 
-		} catch (\Exception $e) {
+		} catch (Exception $e) {
 			restore_error_handler();
 			throw $e;
 		}
 	}
 
 	/**
-	 * @throws Exception
+	 * @throws Exception|\Doctrine\DBAL\Exception
 	 */
 	public function publish(
 		string $callbackName,
@@ -166,8 +164,6 @@ class BackgroundQueue
 		if (!$identifier && $isUnique) {
 			throw new Exception('Parameter "identifier" has to be set if "isUnique" is true.');
 		}
-
-		$this->checkArguments($parameters, $this->getCallback($callbackName));
 
 		$priority = $this->getPriority($priority, $callbackName);
 
@@ -195,11 +191,11 @@ class BackgroundQueue
 			return;
 		}
 
-		$this->bulkBrokerCallbacks[] = function() use ($entity) {
+		$this->bulkBrokerCallbacks[] = function () use ($entity) {
 			try {
 				// Pokud mám u callbacku nastavenou frontu, v DB zůstává původní, ale do brokera použiju tu z konfigu.
 				// Tedy řadím do různých front pro různé consumery, ale z pohledu záznamů v DB se jedná o stejnou frontu.
-				$this->producer->publish((string) $entity->getId(), $this->getQueueForEntityIncludeCallback($entity), $entity->getPriority(), $entity->getPostponedBy());
+				$this->producer->publish((string)$entity->getId(), $this->getQueueForEntityIncludeCallback($entity), $entity->getPriority(), $entity->getPostponedBy());
 			} catch (Exception $e) {
 				$entity->setState(BackgroundJob::STATE_BROKER_FAILED)
 					->setErrorMessage($e->getMessage());
@@ -208,13 +204,17 @@ class BackgroundQueue
 				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 			}
 		};
-		if (!$this->transaction && count($this->bulkBrokerCallbacks) >= $this->bulkSize) {
+		if (!$this->connection->isTransactionActive() && count($this->bulkBrokerCallbacks) >= $this->bulkSize) {
 			$this->doPublishToBroker();
 		}
 	}
 
-	private function doPublishToBroker()
+	/**
+	 * @internal
+	 */
+	public function doPublishToBroker(): void
 	{
+		bd (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS));
 		foreach ($this->bulkBrokerCallbacks as $_closure) {
 			$_closure();
 		}
@@ -222,13 +222,12 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @internal
-	 *
-	 * @param int|BackgroundJob $entity
-	 * @return void
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
+	 * @internal
 	 */
-	public function process($entity, string $queue, int $priority): void
+	public function process(int|BackgroundJob $entity, string $queue, int $priority): void
 	{
 		if (!$entity instanceof BackgroundJob) {
 			if (!$entity = $this->getEntity($entity, $queue, $priority)) {
@@ -264,13 +263,6 @@ class BackgroundQueue
 
 		if (!is_callable($callback)) {
 			$this->logException('Method "' . $callback[0] . '::' . $callback[1] . '" does not exist or is not callable.', $entity);
-			return;
-		}
-
-		try {
-			$this->checkArguments($entity->getParameters(), $callback);
-		} catch (Exception $e) {
-			$this->logException($e, $entity);
 			return;
 		}
 
@@ -383,6 +375,7 @@ class BackgroundQueue
 
 	/**
 	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Exception
 	 */
 	public function getUnfinishedJobIdentifiers(array $identifiers = [], bool $excludeProcessing = false): array
 	{
@@ -436,7 +429,7 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @throws Exception
+	 * @throws Exception|\Doctrine\DBAL\Exception
 	 * @internal
 	 */
 	public function fetchAll(QueryBuilder $qb, int $maxResults = null, $toEntity = true): array
@@ -459,61 +452,24 @@ class BackgroundQueue
 		return $entities;
 	}
 
-	public function startBulk()
+	public function startBulk(): void
 	{
 		$this->bulkSize = $this->config['bulkSize'];
-		if ($this->transaction) {
-			$this->connection->beginTransaction();
-		}
 	}
 
-	public function endBulk()
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws SchemaException
+	 */
+	public function endBulk(): void
 	{
 		$this->doPublishToDatabase();
-		if ($this->transaction) {
-			$this->connection->commit();
-		}
 		$this->doPublishToBroker();
 		$this->bulkSize = 1;
 	}
 
 	/**
-	 * @throws \Doctrine\DBAL\Exception
-	 * @throws Exception
-	 */
-	public function startTransaction()
-	{
-		if ($this->transaction) {
-			throw new Exception('Nested transactions not implemented.');
-		}
-		$this->transaction = true;
-		$this->startBulk();
-	}
-
-	/**
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	public function commitTransaction()
-	{
-		$this->endBulk();
-		$this->transaction = false;
-	}
-
-	public function rollbackTransaction()
-	{
-		if (!$this->transaction) {
-			return;
-		}
-
-		$this->connection->rollBack();
-		$this->transaction = false;
-		$this->bulkDatabaseEntities = [];
-		$this->bulkBrokerCallbacks = [];
-		$this->bulkSize = 1;
-	}
-
-	/**
-	 * @throws Exception
+	 * @throws Exception|\Doctrine\DBAL\Exception
 	 */
 	private function fetch(QueryBuilder $qb): ?BackgroundJob
 	{
@@ -521,7 +477,7 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @throws Exception
+	 * @throws Exception|\Doctrine\DBAL\Exception
 	 */
 	private function count(QueryBuilder $qb): int
 	{
@@ -530,6 +486,7 @@ class BackgroundQueue
 
 	/**
 	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Exception
 	 */
 	private function isRedundant(BackgroundJob $entity): bool
 	{
@@ -549,7 +506,8 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @throws Exception
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
 	 */
 	private function getPreviousUnfinishedJob(BackgroundJob $entity): ?BackgroundJob
 	{
@@ -584,29 +542,29 @@ class BackgroundQueue
 		$this->databaseConnectionCheckAndReconnect();
 		$this->updateSchema();
 
-		try {
-			if (!$entity->getId()) {
-				if ($this->producer) {
-					$entity->setProcessedByBroker(true);
-				}
-
-				$this->bulkDatabaseEntities[] = $entity;
-
-				if (count($this->bulkDatabaseEntities) >= $this->bulkSize) {
-					$this->doPublishToDatabase();
-				}
-			} else {
-				$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
+		if (!$entity->getId()) {
+			if ($this->producer) {
+				$entity->setProcessedByBroker(true);
 			}
-		} catch (Exception $e) {
-			$this->rollbackTransaction();
-			throw $e;
+
+			$this->bulkDatabaseEntities[] = $entity;
+
+			if (count($this->bulkDatabaseEntities) >= $this->bulkSize) {
+				$this->doPublishToDatabase();
+			}
+		} else {
+			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
 		}
 	}
 
-	private function doPublishToDatabase() {
+	/**
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function doPublishToDatabase(): void
+	{
 		if (empty($this->bulkDatabaseEntities)) {
-			return null;
+			return;
 		}
 
 		// Protože vkládám více záznamů najednou, potřebuju si vše uzavřít do transakce, abych si bezpečně získal seznam vložených ID a nastavil je vloženým entitám.
@@ -635,16 +593,17 @@ class BackgroundQueue
 
 	/**
 	 * Podporuje INSERT s více VALUES v jednom příkazu.
-	 * Vychází z @link \Doctrine\DBAL\Connection::insert
+	 * Vychází z @param BackgroundJob[] $entities
+	 * @throws \Doctrine\DBAL\Exception
+	 * @link Connection::insert
 	 *
-	 * @param BackgroundJob[] $entities
 	 */
-	private function insertMultipleEntities(array $entities)
+	private function insertMultipleEntities(array $entities): void
 	{
 		$table = $this->config['tableName'];
 
 		if (empty($entities)) {
-			return null;
+			return;
 		}
 
 		$columns = array_keys($entities[0]->getDatabaseValues());
@@ -665,7 +624,7 @@ class BackgroundQueue
 		$setToSql = implode(', ', $set);
 		$sql = "INSERT INTO $table ($columnsToSql) VALUES $setToSql";
 
-		return $this->connection->executeStatement($sql, $values);
+		$this->connection->executeStatement($sql, $values);
 	}
 
 	/**
@@ -737,7 +696,7 @@ class BackgroundQueue
 		$schemaManager = $this->createSchemaManager();
 		if ($schemaManager->tablesExist([$this->config['tableName']])) {
 			$tableDiff = $schemaManager->createComparator()->compareTables($this->createSchemaManager()->introspectTable($this->config['tableName']), $table);
-			$sqls = $tableDiff ? $this->connection->getDatabasePlatform()->getAlterTableSQL($tableDiff) : [];
+			$sqls = $this->connection->getDatabasePlatform()->getAlterTableSQL($tableDiff);
 		} else {
 			$sqls = $this->connection->getDatabasePlatform()->getCreateTableSQL($table);
 		}
@@ -864,7 +823,8 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @throws Exception
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
 	 */
 	private function checkUnfinishedJobs(BackgroundJob $entity): bool
 	{
@@ -882,110 +842,6 @@ class BackgroundQueue
 		}
 
 		return true;
-	}
-
-	/**
-	 * @throws ReflectionException
-	 */
-	private function checkArguments(?array $args, $callback)
-	{
-		return; // TODO
-
-		// Create a ReflectionFunction object based on the provided callback
-		$reflection = new ReflectionMethod($callback[0], $callback[1]);
-
-		// Retrieve the parameters of the method
-		$params = $reflection->getParameters();
-
-		$builtInTypesMapping = [
-			'integer' => 'int',
-			'boolean' => 'bool',
-			'double' => 'float',
-		];
-
-		if (version_compare(PHP_VERSION, '8.0', '<')) {
-			$requiredParams = 0;
-			foreach ($params as $_param) {
-				if (!$_param->isOptional()) {
-					$requiredParams++;
-				}
-			}
-
-			// Check the number of arguments
-			if (count($args) < $requiredParams) {
-				throw new InvalidArgumentException("Number of arguments does not match.");
-			}
-
-			$argsValues = array_values($args);
-			// For PHP lower than 8.0
-			foreach ($params as $index => $param) {
-				$type = $param->getType();
-
-				$argument = $argsValues[$index];
-
-				// For nullable parameters
-				if ($param->isOptional() && is_null($argument)) {
-					continue;
-				}
-
-				// For other parameters
-				if ($type) {
-					$expectedType = $type->getName();
-					if ($type->isBuiltin()) {
-						$actualType = gettype($argument);
-						$actualType = $builtInTypesMapping[$actualType] ?? $actualType;
-						if (gettype($argument) !== $expectedType) {
-							throw new InvalidArgumentException("Parameter type does not match at index $index: expected $expectedType, got " . gettype($argument));
-						}
-					} else {
-						if (!is_a($argument, $expectedType)) {
-							throw new InvalidArgumentException("Parameter type does not match at index $index: expected $expectedType or subtype, got " . get_class($argument));
-						}
-					}
-				}
-			}
-		} else {
-			$paramNames = [];
-			foreach ($params as $param) {
-				$paramNames[$param->getName()] = $param->getName();
-			}
-
-			foreach ($args as $_name => $_value) {
-				if (!array_key_exists($_name, $paramNames)) {
-					throw new InvalidArgumentException("Missing parameter for the argument $_name.");
-				}
-			}
-
-			foreach ($params as $param) {
-				$name = $param->getName();
-				$type = $param->getType();
-
-				if (!array_key_exists($name, $args)) {
-					if (!$param->isOptional()) {
-						throw new InvalidArgumentException("Missing argument for the parameter $name.");
-					}
-
-					continue;
-				}
-
-				$argument = $args[$name];
-
-				if ($type) {
-					$expectedType = $type->getName();
-					if ($type->isBuiltin()) {
-						$actualType = gettype($argument);
-						$actualType = $builtInTypesMapping[$actualType] ?? $actualType;
-						if ($actualType !== $expectedType) {
-							throw new InvalidArgumentException("Parameter $name type does not match: expected $expectedType, got " . gettype($argument));
-						}
-					} else {
-						if (!is_a($argument, $expectedType)) {
-							throw new InvalidArgumentException("Parameter $name type does not match: expected $expectedType or subtype, got " . get_class($argument));
-						}
-					}
-				}
-			}
-		}
 	}
 
 	private function getPriority(?int $priority, string $callbackName): int
@@ -1021,10 +877,10 @@ class BackgroundQueue
 		];
 	}
 
-	public function dieIfNecessary() {
+	public function dieIfNecessary(): void
+	{
 		if ($this->shouldDie) {
 			die();
 		}
 	}
-
 }

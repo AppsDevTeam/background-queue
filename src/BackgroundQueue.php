@@ -214,7 +214,6 @@ class BackgroundQueue
 	 */
 	public function doPublishToBroker(): void
 	{
-		bd (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS));
 		foreach ($this->bulkBrokerCallbacks as $_closure) {
 			$_closure();
 		}

@@ -37,7 +37,7 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	]
 	'notifyOnNumberOfAttempts' => 5, // počet pokusů o zpracování záznamu před zalogováním
 	'tempDir' => $tempDir, // cesta pro uložení zámku proti vícenásobnému spuštění commandu
-	'connection' => $connection, // pole parametru predavane do Doctrine\Dbal\Connection nebo DSN
+	'connection' => $connection, // Doctrine\Dbal\Connection
 	'queue' => $_ENV['PROJECT_NAME'], // název fronty, do které se ukládají a ze které se vybírají záznamy
 	'bulkSize' => 1, // velikost dávky při vkládání více záznamů najednou
 	'tableName' => 'background_job', // nepovinné, název tabulky, do které se budou ukládat jednotlivé joby
@@ -82,7 +82,7 @@ and then run:
 composer require php-amqplib/php-amqplib
 ```
 
-This make sures you avoid BC break when upgrading `php-amqplib/php-amqplib` in the future.
+This makes sure you avoid BC break when upgrading `php-amqplib/php-amqplib` in the future.
 
 
 #### 1.3.1 php-amqplib configuration

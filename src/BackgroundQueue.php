@@ -431,7 +431,7 @@ class BackgroundQueue
 	 * @throws Exception|\Doctrine\DBAL\Exception
 	 * @internal
 	 */
-	public function fetchAll(QueryBuilder $qb, int $maxResults = null, $toEntity = true): array
+	public function fetchAll(QueryBuilder $qb, ?int $maxResults = null, $toEntity = true): array
 	{
 		$sql = $qb->setMaxResults($maxResults)->getSQL();
 		$parameters = $qb->getParameters();

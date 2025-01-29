@@ -230,6 +230,7 @@ class BackgroundQueue
 	 */
 	public function process(int|BackgroundJob $entity, string $queue, int $priority): void
 	{
+		// pri zpracovani chceme vlastni connection, abychom obesli pripadne transakce
 		$this->createConnection();
 
 		if (!$entity instanceof BackgroundJob) {
@@ -379,7 +380,6 @@ class BackgroundQueue
 	private function createConnection(): void
 	{
 		if (!$this->connectionCreated) {
-			// pri zpracovani chceme vlastni connection, aby jsme obesli pripadne transakce
 			$this->connection = DriverManager::getConnection($this->connection->getParams());
 			$this->connectionCreated = true;
 		}

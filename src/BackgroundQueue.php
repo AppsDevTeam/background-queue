@@ -230,7 +230,7 @@ class BackgroundQueue
 	 */
 	public function process(int|BackgroundJob $entity, string $queue, int $priority): void
 	{
-		// pri zpracovani chceme vlastni connection, abychom obesli pripadne transakce
+		// U publishera chceme transakci stejnou s flush, proto používáme stejné connection jako je v aplikaci. Ale u consumera chceme vlastní connection, aby když se revertne aplikační transakce, tak aby consumer mohl zapsat chybový stav k BackgroundJob.
 		$this->createConnection();
 
 		if (!$entity instanceof BackgroundJob) {

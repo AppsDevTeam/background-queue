@@ -11,6 +11,7 @@ use ADT\BackgroundQueue\Exception\WaitingException;
 use ADT\Utils\FileSystem;
 use DateTimeInterface;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Schema;
@@ -30,6 +31,7 @@ class BackgroundQueue
 	const UNEXPECTED_ERROR_MESSAGE = 'Unexpected error occurred.';
 
 	private array $config;
+	private bool $connectionCreated = false;
 	private Connection $connection;
 	private LoggerInterface $logger;
 	private ?Producer $producer = null;
@@ -228,6 +230,9 @@ class BackgroundQueue
 	 */
 	public function process(int|BackgroundJob $entity, string $queue, int $priority): void
 	{
+		// U publishera chceme transakci stejnou s flush, proto používáme stejné connection jako je v aplikaci. Ale u consumera chceme vlastní connection, aby když se revertne aplikační transakce, tak aby consumer mohl zapsat chybový stav k BackgroundJob.
+		$this->createConnection();
+
 		if (!$entity instanceof BackgroundJob) {
 			if (!$entity = $this->getEntity($entity, $queue, $priority)) {
 				return;
@@ -369,6 +374,14 @@ class BackgroundQueue
 			}
 		} catch (Exception $innerEx) {
 			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $innerEx);
+		}
+	}
+
+	private function createConnection(): void
+	{
+		if (!$this->connectionCreated) {
+			$this->connection = DriverManager::getConnection($this->connection->getParams());
+			$this->connectionCreated = true;
 		}
 	}
 

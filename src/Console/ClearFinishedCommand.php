@@ -55,7 +55,7 @@ class ClearFinishedCommand extends Command
 				->setParameter('ago', (new DateTime('midnight'))->modify('-' . $input->getArgument("days") . ' days')->format('Y-m-d H:i:s'));
 		}
 
-		$qb->execute();
+		$qb->executeStatement();
 
 		return 0;
 	}

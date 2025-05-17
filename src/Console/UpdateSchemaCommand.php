@@ -34,10 +34,11 @@ class UpdateSchemaCommand extends Command
 	/**
 	 * @throws SchemaException
 	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Exception
 	 */
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
-		$this->backgroundQueue->updateSchema($input->getOption('force'));
+		$this->backgroundQueue->updateSchema($input->getOption('force'), ignoreAutoUpdateSchema: true);
 
 		return 0;
 	}

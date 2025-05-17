@@ -39,7 +39,6 @@ class BackgroundQueue
 	private array $bulkBrokerCallbacks = [];
 	private array $bulkDatabaseEntities = [];
 	private bool $shouldDie = false;
-	private EventManager $eventManager;
 
 	/**
 	 * @throws Exception
@@ -670,9 +669,9 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @internal
 	 */
-	public function updateSchema(bool $force = false): void
+	public function updateSchema(bool $force = false, bool $ignoreAutoUpdateSchema = false): void
 	{
-		if (!$this->config['autoUpdateSchema']) {
+		if (!$ignoreAutoUpdateSchema && !$this->config['autoUpdateSchema']) {
 			return;
 		}
 

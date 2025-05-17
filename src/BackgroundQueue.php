@@ -47,9 +47,6 @@ class BackgroundQueue
 	 */
 	public function __construct(array $config)
 	{
-		if (is_string($config['connection'])) {
-			$config['connection'] = $this->parseDsn($config['connection']);
-		}
 		if (empty($config['waitingJobExpiration'])) {
 			$config['waitingJobExpiration'] = 1000;
 		}
@@ -85,7 +82,7 @@ class BackgroundQueue
 		}
 
 		$this->config = $config;
-		$this->connection = DriverManager::getConnection($config['connection']);
+		$this->connection = $config['connection'];
 		$this->logger = $config['logger'] ?: new NullLogger();
 		if ($config['producer']) {
 			$this->producer = $config['producer'];

@@ -672,7 +672,11 @@ class BackgroundQueue
 	 */
 	public function updateSchema(bool $force = false): void
 	{
-		if (!$force && !FileSystem::createDirAtomically($this->config['tempDir'] . '/background_queue_schema_generated')) {
+		if (!$this->config['autoUpdateSchema']) {
+			return;
+		}
+
+		if (!$force && !FileSystem::createDirAtomically($this->config['locksDir'] . '/background_queue_schema_generated')) {
 			return;
 		}
 

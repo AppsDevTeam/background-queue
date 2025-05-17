@@ -666,7 +666,11 @@ class BackgroundQueue
 		$setToSql = implode(', ', $set);
 		$sql = "INSERT INTO $table ($columnsToSql) VALUES $setToSql";
 
-		return $this->connection->executeStatement($sql, $values);
+		if (method_exists($this->connection, 'executeStatement')) {
+			return $this->connection->executeStatement($sql, $values);
+		} else {
+			return $this->connection->executeUpdate($sql, $values);
+		}
 	}
 
 	/**

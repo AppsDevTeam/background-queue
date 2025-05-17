@@ -430,7 +430,9 @@ class BackgroundQueue
 	 */
 	public function createQueryBuilder(): QueryBuilder
 	{
-		$this->updateSchema();
+		if ($this->config['autoUpdateSchema']) {
+			$this->updateSchema();
+		}
 
 		return $this->connection->createQueryBuilder()
 			->select('*')
@@ -551,7 +553,9 @@ class BackgroundQueue
 	public function save(BackgroundJob $entity): void
 	{
 		$this->databaseConnectionCheckAndReconnect();
-		$this->updateSchema();
+		if ($this->config['autoUpdateSchema']) {
+			$this->updateSchema();
+		}
 
 		if (!$entity->getId()) {
 			if ($this->producer) {
@@ -669,12 +673,8 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @internal
 	 */
-	public function updateSchema(bool $force = false, bool $ignoreAutoUpdateSchema = false): void
+	public function updateSchema(bool $force = false): void
 	{
-		if (!$ignoreAutoUpdateSchema && !$this->config['autoUpdateSchema']) {
-			return;
-		}
-
 		if (!$force && !FileSystem::createDirAtomically($this->config['locksDir'] . '/background_queue_schema_generated')) {
 			return;
 		}

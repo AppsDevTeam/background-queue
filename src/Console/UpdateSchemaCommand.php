@@ -38,7 +38,7 @@ class UpdateSchemaCommand extends Command
 	 */
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
-		$this->backgroundQueue->updateSchema($input->getOption('force'), ignoreAutoUpdateSchema: true);
+		$this->backgroundQueue->updateSchema($input->getOption('force'));
 
 		return 0;
 	}

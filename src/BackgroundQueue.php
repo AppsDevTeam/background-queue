@@ -699,9 +699,9 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @internal
 	 */
-	public function updateSchema(bool $force = false): void
+	public function updateSchema(bool $force = false, bool $ignoreAutoUpdateSchema = false): void
 	{
-		if (!$this->config['autoUpdateSchema']) {
+		if (!$ignoreAutoUpdateSchema && !$this->config['autoUpdateSchema']) {
 			return;
 		}
 

@@ -34,6 +34,7 @@ class UpdateSchemaCommand extends Command
 	/**
 	 * @throws SchemaException
 	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Exception
 	 */
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{

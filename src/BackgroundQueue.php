@@ -39,7 +39,6 @@ class BackgroundQueue
 	private array $bulkBrokerCallbacks = [];
 	private array $bulkDatabaseEntities = [];
 	private bool $shouldDie = false;
-	private EventManager $eventManager;
 
 	/**
 	 * @throws Exception
@@ -431,7 +430,9 @@ class BackgroundQueue
 	 */
 	public function createQueryBuilder(): QueryBuilder
 	{
-		$this->updateSchema();
+		if ($this->config['autoUpdateSchema']) {
+			$this->updateSchema();
+		}
 
 		return $this->connection->createQueryBuilder()
 			->select('*')
@@ -552,7 +553,9 @@ class BackgroundQueue
 	public function save(BackgroundJob $entity): void
 	{
 		$this->databaseConnectionCheckAndReconnect();
-		$this->updateSchema();
+		if ($this->config['autoUpdateSchema']) {
+			$this->updateSchema();
+		}
 
 		if (!$entity->getId()) {
 			if ($this->producer) {

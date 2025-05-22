@@ -2,10 +2,12 @@
 
 namespace ADT\BackgroundQueue\Doctrine;
 
+use ADT\BackgroundQueue\BackgroundQueue;
+
 trait Connection
 {
-	abstract protected function getBackgroundQueue();
-	
+	abstract protected function getBackgroundQueue(): BackgroundQueue;
+
 	protected int $transactionNestingLevel = 0;
 
 	public function beginTransaction(): void

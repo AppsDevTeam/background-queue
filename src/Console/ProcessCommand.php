@@ -6,9 +6,11 @@ use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use DateTime;
 use Exception;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
+#[AsCommand(name: 'background-queue:process')]
 class ProcessCommand extends Command
 {
 	protected static $defaultName = 'background-queue:process';

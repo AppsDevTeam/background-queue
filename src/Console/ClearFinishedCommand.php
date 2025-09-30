@@ -7,10 +7,12 @@ use ADT\BackgroundQueue\Entity\BackgroundJob;
 use DateTime;
 use Doctrine\DBAL\Exception;
 use Doctrine\DBAL\Schema\SchemaException;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputArgument;
 
+#[AsCommand(name: 'background-queue:clear-finished')]
 class ClearFinishedCommand extends Command
 {
 	protected static $defaultName = 'background-queue:clear-finished';

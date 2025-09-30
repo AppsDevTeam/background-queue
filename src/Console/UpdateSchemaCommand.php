@@ -5,10 +5,12 @@ namespace ADT\BackgroundQueue\Console;
 use ADT\BackgroundQueue\BackgroundQueue;
 use Doctrine\DBAL\Schema\SchemaException;
 use Exception;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 
+#[AsCommand(name: 'background-queue:update-schema')]
 class UpdateSchemaCommand extends Command
 {
 	protected static $defaultName = 'background-queue:update-schema';

@@ -3,10 +3,12 @@
 namespace ADT\BackgroundQueue\Console;
 
 use ADT\BackgroundQueue\Broker\Producer;
+use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
+#[AsCommand(name: 'background-queue:reload-consumers')]
 class ReloadConsumersCommand extends Command
 {
 	protected static $defaultName = 'background-queue:reload-consumers';

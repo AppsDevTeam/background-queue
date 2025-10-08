@@ -73,7 +73,7 @@ class BackgroundQueue
 			$config['bulkSize'] = 1;
 		}
 		if (!isset($config['parametersFormat'])) {
-			$config['parametersFormat'] = BackgroundJob::PARAMETERS_FORMAT_SERIALIZE;
+			$config['parametersFormat'] = BackgroundJob::PARAMETERS_FORMAT_JSON;
 		}
 		if (!in_array($config['parametersFormat'], BackgroundJob::PARAMETERS_FORMATS, true)) {
 			throw new Exception('Unsupported parameters format: ' . $config['parametersFormat']);
@@ -691,7 +691,8 @@ class BackgroundQueue
 		$table->addColumn('queue', Types::STRING, ['length' => 255])->setNotnull(true);
 		$table->addColumn('priority', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('callback_name', Types::STRING, ['length' => 255])->setNotnull(true);
-		$table->addColumn('parameters', Types::BLOB)->setNotnull(true);
+		$table->addColumn('parameters', Types::BLOB)->setNotnull(false);
+		$table->addColumn('parameters_json', Types::JSON)->setNotnull(false);
 		$table->addColumn('state', Types::SMALLINT)->setNotnull(true);
 		$table->addColumn('created_at', Types::DATETIME_IMMUTABLE)->setNotnull(true);
 		$table->addColumn('last_attempt_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);

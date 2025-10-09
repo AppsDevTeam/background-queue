@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Entity;
 
+use ADT\Utils\Utils;
 use DateTime;
 use DateTimeImmutable;
 use Exception;
@@ -44,6 +45,7 @@ final class BackgroundJob
 	private ?int $priority;
 	private string $callbackName;
 	private $parameters; /** @see self::setParameters() */
+	private $parameters_json = null; /** @see self::setParameters() */
 	private int $state = self::STATE_READY;
 	private DateTimeImmutable $createdAt;
 	private ?DateTimeImmutable $lastAttemptAt = null;
@@ -134,19 +136,26 @@ final class BackgroundJob
 	public function getParameters(): array
 	{
 		$this->parameters = is_resource($this->parameters) ? stream_get_contents($this->parameters) : $this->parameters;
-		
-		if (substr($this->parameters, 0, 2) === 'a:') {
+
+		if (!is_null($this->parameters)) {
 			return unserialize($this->parameters);
 		}
 
-		return json_decode($this->parameters, true);
+		$parametersJson = json_decode($this->parameters_json, true);
+		$parameters = [];
+		foreach ($parametersJson as $key => $value) {
+			$parameters[$key] = Utils::getDateTimeFromArray($value, true);
+		}
+		return $parameters;
 	}
 
 	/**
 	 * Parametry ukládá jako serializované pole nebo jako json.
 	 * Formát určuje parametr v BackgroundQueue `parametersFormat`.
 	 *   - `serialize` => ukládá jako serializované pole a je bez omezení
-	 *   - `json` => parametry mohou obsahovat pouze skalární typy, pole a NULL
+	 *   - `json` => ukládá jako json
+	 *      - parametry mohou obsahovat pouze skalární typy, pole, NULL a \DateTimeInterface
+	 *      - pokud je nějaký z parametrů objekt, automaticky se použije "serialize"
 	 *
 	 * @param object|array|string|int|float|bool|null $parameters
 	 * @param string $parametersFormat
@@ -156,17 +165,23 @@ final class BackgroundJob
 	{
 		$parameters = is_array($parameters) ? $parameters : [$parameters];
 
+		if ($parametersFormat == self::PARAMETERS_FORMAT_JSON) {
+			foreach ($parameters as $parameter) {
+				if (!is_scalar($parameter) && !is_array($parameter) && !is_null($parameter) && !($parameter instanceof \DateTimeInterface)) {
+					$parametersFormat = self::PARAMETERS_FORMAT_SERIALIZE;
+					break;
+				}
+			}
+		}
+
 		switch ($parametersFormat) {
 			case self::PARAMETERS_FORMAT_SERIALIZE:
 				$this->parameters = serialize($parameters);
+				$this->parameters_json = null;
 				break;
 			case self::PARAMETERS_FORMAT_JSON:
-				foreach ($parameters as $idx => $parameter) {
-					if (!is_scalar($parameter) && !is_array($parameter) && !is_null($parameter)) {
-						throw new Exception("Unsupported type '" . gettype($parameter) . "' for \$parameters[$idx] using parametersFormat = " . self::PARAMETERS_FORMAT_JSON);
-					}
-				}
-				$this->parameters = json_encode($parameters);
+				$this->parameters = null;
+				$this->parameters_json = json_encode($parameters);
 				break;
 			default:
 				throw new Exception("Unsupported parameters format: $parametersFormat");
@@ -327,6 +342,7 @@ final class BackgroundJob
 		$entity->priority = $values['priority'];
 		$entity->callbackName = $values['callback_name'];
 		$entity->parameters = $values['parameters'];
+		$entity->parameters_json = $values['parameters_json'];
 		$entity->state = $values['state'];
 		$entity->createdAt = new DateTimeImmutable($values['created_at']);
 		$entity->lastAttemptAt = $values['last_attempt_at'] ? new DateTimeImmutable($values['last_attempt_at']) : null;
@@ -353,6 +369,7 @@ final class BackgroundJob
 			'priority' => $this->priority,
 			'callback_name' => $this->callbackName,
 			'parameters' => $this->parameters,
+			'parameters_json' => $this->parameters_json,
 			'state' => $this->state,
 			'created_at' => $this->createdAt->format('Y-m-d H:i:s'),
 			'last_attempt_at' => $this->lastAttemptAt ? $this->lastAttemptAt->format('Y-m-d H:i:s') : null,

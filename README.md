@@ -192,7 +192,7 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 `background-queue:clear-finished 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
 
-`background-queue:reload-consumers QUEUE NUMBER` Reloadne NUMBER consumerů pro danou QUEUE.
+`background-queue:reload-consumers QUEUE [LABEL1,LABEL2,...]` Reloadne consumery označené jedním z labelů, viz `background-queue:consume`.
 
 `background-queue:update-schema` Aktualizuje databázové schéma, pokud je potřeba.
 
@@ -281,6 +281,8 @@ Ale pokud by se vyskytlo více požadavků na zasílání emailů, po nějaké d
 
 Dále máme možnost prioritu nastavenou pro callback přetížit při vkládání záznamu v metodě `publish`. Například víme, že se jedná o rozesílání newsletterů.
 Tedy se jedná o zasílání emailů, ale s nízkou prioritou zpracování.
+
+Příkaz `background-queue:consume` má také volitelný parametr `-l`, kterým konzumerovi nastavíme příslušný label. Při restartu konzumerů pomocí `background-queue:reload-consumers` pak máme možnost temito labely zvolit, které konzumery chceme restartovat.
 
 ```
 $priority = null; // aplikuje se priorita 10 z nastavení pro callback

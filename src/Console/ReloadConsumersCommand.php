@@ -27,17 +27,24 @@ class ReloadConsumersCommand extends Command
 			'A queue whose consumers are to reload.'
 		);
 		$this->addArgument(
-			"number",
-			InputArgument::REQUIRED,
-			'Number of consumers to reload.'
+			"consumers-labels",
+			InputArgument::OPTIONAL,
+			'Labels of consumers to restart separated by comma.'
 		);
-		$this->setDescription('Creates the specified number of noop messages to reload consumers consuming specified queue.');
+		$this->setDescription('Restart specified consumers by lables on specified queue.');
 	}
 
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
-		for ($i = 0; $i < $input->getArgument("number"); $i++) {
-			$this->producer->publishDie($input->getArgument("queue"));
+		$consumersLabels = $input->getArgument("consumers-labels");
+		if ($consumersLabels) {
+			$consumersLabels = explode(',', $consumersLabels);
+		} else {
+			$consumersLabels = [null];
+		}
+
+		foreach ($consumersLabels as $consumerLabel) {
+			$this->producer->publishDie($input->getArgument("queue"), $consumerLabel);
 		}
 
 		return 0;

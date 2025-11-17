@@ -147,8 +147,12 @@ final class BackgroundJob
 	/**
 	 * @throws JsonException
 	 */
-	public function setParameters(array $parameters): self
+	public function setParameters(?array $parameters): self
 	{
+		if (!$parameters) {
+			return $this;
+		}
+
 		if ($this->isJsonable($parameters)) {
 			$this->parametersJson = Json::encode($parameters);
 		} else {

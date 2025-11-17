@@ -961,7 +961,7 @@ class BackgroundQueue
 	 */
 	private function cloneAndPublish(BackgroundJob $entity): void
 	{
-		if ($this->getUnfinishedJobIdentifiers([$entity->getIdentifier()])) {
+		if (!$this->getUnfinishedJobIdentifiers([$entity->getIdentifier()])) {
 			$this->publish($entity->getCallbackName(), $entity->getParameters(), $entity->getSerialGroup(), $entity->getIdentifier(), $entity->getMode(), $this->config['waitingJobExpiration'], $entity->getPriority());
 		}
 	}

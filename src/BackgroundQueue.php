@@ -470,6 +470,39 @@ class BackgroundQueue
 		}
 	}
 
+	/**
+	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	public function getUnfinishedJobIdentifiers(array $identifiers = [], bool $excludeProcessing = false): array
+	{
+		$qb = $this->createQueryBuilder();
+
+		$states = BackgroundJob::FINISHED_STATES;
+		if ($excludeProcessing) {
+			$states[BackgroundJob::STATE_PROCESSING] = BackgroundJob::STATE_PROCESSING;
+		}
+
+		$qb->andWhere('state NOT IN (:state)')
+			->setParameter('state', $states);
+
+		if ($identifiers) {
+			$qb->andWhere('identifier IN (:identifier)')
+				->setParameter('identifier', $identifiers);
+		} else {
+			$qb->andWhere('identifier IS NOT NULL');
+		}
+
+		$qb->select('identifier')->groupBy('identifier');
+
+		$unfinishedJobIdentifiers = [];
+		foreach ($this->fetchAll($qb, null, false) as $_entity) {
+			$unfinishedJobIdentifiers[] = $_entity['identifier'];
+		}
+
+		return $unfinishedJobIdentifiers;
+	}
+
 	public static function parseDsn($dsn): array
 	{
 		// Parse the DSN string
@@ -512,39 +545,6 @@ class BackgroundQueue
 			$this->connection = DriverManager::getConnection($this->connection->getParams());
 			$this->connectionCreated = true;
 		}
-	}
-
-	/**
-	 * @throws Exception
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	private function getUnfinishedJobIdentifiers(array $identifiers = [], bool $excludeProcessing = false): array
-	{
-		$qb = $this->createQueryBuilder();
-
-		$states = BackgroundJob::FINISHED_STATES;
-		if ($excludeProcessing) {
-			$states[BackgroundJob::STATE_PROCESSING] = BackgroundJob::STATE_PROCESSING;
-		}
-
-		$qb->andWhere('state NOT IN (:state)')
-			->setParameter('state', $states);
-
-		if ($identifiers) {
-			$qb->andWhere('identifier IN (:identifier)')
-				->setParameter('identifier', $identifiers);
-		} else {
-			$qb->andWhere('identifier IS NOT NULL');
-		}
-
-		$qb->select('identifier')->groupBy('identifier');
-
-		$unfinishedJobIdentifiers = [];
-		foreach ($this->fetchAll($qb, null, false) as $_entity) {
-			$unfinishedJobIdentifiers[] = $_entity['identifier'];
-		}
-
-		return $unfinishedJobIdentifiers;
 	}
 
 	/**

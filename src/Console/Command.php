@@ -16,7 +16,7 @@ abstract class Command extends \Symfony\Component\Console\Command\Command
 
 	abstract protected function executeCommand(InputInterface $input, OutputInterface $output): int;
 
-	public function setLocksDir(string $locksDir)
+	public function setLocksDir(string $locksDir): void
 	{
 		$this->locksDir = $locksDir;
 	}

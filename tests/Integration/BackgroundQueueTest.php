@@ -203,7 +203,7 @@ class BackgroundQueueTest extends Unit
 
 		/** @var BackgroundJob[] $backgroundJobs */
 		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
-		$backgroundQueue->process($backgroundJobs[0]);
+		$backgroundQueue->processJob($backgroundJobs[0]->getId());
 		$this->tester->assertEquals($expectedState, $backgroundJobs[0]->getState());
 	}
 

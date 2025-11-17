@@ -8,20 +8,15 @@ use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
-#[AsCommand(name: 'background-queue:reload-consumers')]
+#[AsCommand(name: 'background-queue:reload-consumers', description: 'Creates the specified number of noop messages to reload consumers consuming specified queue.')]
 class ReloadConsumersCommand extends Command
 {
-	protected static $defaultName = 'background-queue:reload-consumers';
-
-	protected Producer $producer;
-	
-	public function __construct(Producer $producer)
+	public function __construct(private readonly Producer $producer)
 	{
 		parent::__construct();
-		$this->producer = $producer;
 	}
 
-	protected function configure()
+	protected function configure(): void
 	{
 		$this->addArgument(
 			"queue",
@@ -33,7 +28,6 @@ class ReloadConsumersCommand extends Command
 			InputArgument::REQUIRED,
 			'Number of consumers to reload.'
 		);
-		$this->setDescription('Creates the specified number of noop messages to reload consumers consuming specified queue.');
 	}
 
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
@@ -42,6 +36,6 @@ class ReloadConsumersCommand extends Command
 			$this->producer->publishDie($input->getArgument("queue"));
 		}
 
-		return 0;
+		return self::SUCCESS;
 	}
 }

@@ -37,6 +37,9 @@ class Manager
 		return $this->connection;
 	}
 
+	/**
+	 * @throws Exception
+	 */
 	public function closeConnection(bool $hard = false): void
 	{
 		$this->closeChannel($hard);
@@ -82,7 +85,7 @@ class Manager
 		$this->initQos = false;
 	}
 
-	public function createExchange(string $exchange)
+	public function createExchange(string $exchange): void
 	{
 		if (isset($this->initExchanges[$exchange])) {
 			return;
@@ -99,7 +102,7 @@ class Manager
 		$this->initExchanges[$exchange] = true;
 	}
 
-	public function createQueue(string $queue, ?string $exchange = null, array $additionalArguments = [])
+	public function createQueue(string $queue, ?string $exchange = null, array $additionalArguments = []): void
 	{
 		if (isset($this->initQueues[$queue])) {
 			return;
@@ -126,7 +129,7 @@ class Manager
 		$this->initQueues[$queue] = true;
 	}
 
-	public function setupQos()
+	public function setupQos(): void
 	{
 		if ($this->initQos) {
 			return;
@@ -139,31 +142,5 @@ class Manager
 		);
 
 		$this->initQos = true;
-	}
-
-	public function getQueueWithPriority(string $queue, int $priority): string
-	{
-		return $queue . '_' . $priority;
-	}
-
-	public function parseQueueAndPriority(string $queueWithPriority): array
-	{
-		$parts = explode('_', $queueWithPriority);
-
-		if (count($parts) === 2) {
-			return [$parts[0], $parts[1]];
-		} elseif (count($parts) > 2) {
-			$nameParts = [];
-			while (true) {
-				$part = array_shift($parts);
-				if (is_numeric($part)) {
-					return [implode('_', $nameParts), $part];
-				} else {
-					$nameParts[] = $part;
-				}
-			}
-		} else {
-			throw new \Exception('Missing priority in queue name.');
-		}
 	}
 }

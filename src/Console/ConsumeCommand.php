@@ -23,7 +23,7 @@ class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 
 	protected function configure(): void
 	{
-		$this->addArgument('queue', InputArgument::REQUIRED);
+		$this->addArgument('queue', InputArgument::OPTIONAL);
 		$this->addOption('jobs', 'j', InputOption::VALUE_REQUIRED, 'Number of jobs consumed by one consumer in one process', 1);
 		$this->addOption('priorities', 'p', InputOption::VALUE_REQUIRED, 'Priorities for consume (e.g. 10, 20-40, 25-, -20)');
 	}

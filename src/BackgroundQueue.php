@@ -22,6 +22,7 @@ use Doctrine\DBAL\Schema\SchemaException;
 use Doctrine\DBAL\Types\Types;
 use Exception;
 use InvalidArgumentException;
+use Nette\Utils\JsonException;
 use PDOException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -123,7 +124,7 @@ class BackgroundQueue
 		$priority = $this->getPriority($priority, $callbackName);
 
 		$entity = new BackgroundJob();
-		$entity->setQueue($this->config['queue'] . trim($this->config['callbacks'][$callbackName]['queue'] ?? '', '_'));
+		$entity->setQueue($this->getQueue($this->config['callbacks'][$callbackName]['queue'] ?? null));
 		$entity->setPriority($priority);
 		$entity->setCallbackName($callbackName);
 		$entity->setParameters($parameters);
@@ -961,9 +962,25 @@ class BackgroundQueue
 
 	/**
 	 * @throws \Doctrine\DBAL\Exception
+	 * @throws JsonException
 	 */
 	private function cloneAndPublish(BackgroundJob $entity): void
 	{
 		$this->publish($entity->getCallbackName(), $entity->getParameters(), $entity->getSerialGroup(), $entity->getIdentifier(), $entity->getMode(), $this->config['waitingJobExpiration'], $entity->getPriority());
+	}
+
+	public function getQueue(?string $queue, ?int $priority = null): string
+	{
+		$result = $this->config['queue'];
+
+		if ($queue !== null) {
+			$result .= '_' . $queue;
+		}
+
+		if ($priority !== null) {
+			$result .= '_' . $priority;
+		}
+
+		return $result;
 	}
 }

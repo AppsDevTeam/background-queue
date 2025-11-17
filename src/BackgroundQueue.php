@@ -444,7 +444,6 @@ class BackgroundQueue
 		$table->addColumn('error_message', Types::TEXT)->setNotnull(false);
 		$table->addColumn('serial_group', Types::STRING, ['length' => 255])->setNotnull(false);
 		$table->addColumn('identifier', Types::STRING, ['length' => 255])->setNotnull(false);
-		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 		$table->addColumn('postponed_by', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
 		$table->addColumn('execution_time', Types::INTEGER)->setNotnull(false);
@@ -452,7 +451,7 @@ class BackgroundQueue
 		$table->addColumn('pid', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
 		$table->addColumn('memory', Types::JSON)->setNotnull(false);
-		$table->addColumn('is_recurring', Types::BOOLEAN)->setNotnull(true);
+		$table->addColumn('mode', Types::STRING)->setNotnull(true)->setDefault(ModeEnum::NORMAL->value);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);

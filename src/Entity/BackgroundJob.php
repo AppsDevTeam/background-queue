@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Entity;
 
+use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
 use ADT\Utils\Utils;
 use DateTime;
 use DateTimeImmutable;
@@ -54,7 +55,6 @@ final class BackgroundJob
 	private ?string $errorMessage = null;
 	private ?string $serialGroup = null;
 	private ?string $identifier = null;
-	private bool $isUnique = false;
 	private ?int $postponedBy = null;
 	private bool $processedByBroker = false;
 	private ?int $executionTime = null;
@@ -62,7 +62,7 @@ final class BackgroundJob
 	private ?int $pid = null; // PID supervisor consumera uvintř docker kontejneru
 	private ?string $metadata = null; // ukládá ve formátu JSON
 	private ?string $memory = null; // ukládá ve formátu JSON
-	private bool $isRecurring = false;
+	private ModeEnum $mode = ModeEnum::NORMAL;
 
 	public function __construct()
 	{
@@ -247,17 +247,6 @@ final class BackgroundJob
 		return $this;
 	}
 
-	public function isUnique(): bool
-	{
-		return $this->isUnique;
-	}
-
-	public function setIsUnique(bool $isUnique): self
-	{
-		$this->isUnique = $isUnique;
-		return $this;
-	}
-
 	public function getPostponedBy(): ?int
 	{
 		return $this->postponedBy;
@@ -348,7 +337,7 @@ final class BackgroundJob
 		$entity->errorMessage = $values['error_message'];
 		$entity->serialGroup = $values['serial_group'];
 		$entity->identifier = $values['identifier'];
-		$entity->isUnique = $values['is_unique'];
+		$entity->mode = ModeEnum::from($values['mode']);
 		$entity->postponedBy = $values['postponed_by'];
 		$entity->processedByBroker = $values['processed_by_broker'];
 		$entity->executionTime = $values['execution_time'];
@@ -375,7 +364,7 @@ final class BackgroundJob
 			'error_message' => $this->errorMessage,
 			'serial_group' => $this->serialGroup,
 			'identifier' => $this->identifier,
-			'is_unique' => (int) $this->isUnique,
+			'mode' => $this->mode->value,
 			'postponed_by' => $this->postponedBy,
 			'processed_by_broker' => (int) $this->processedByBroker,
 			'execution_time' => (int) $this->executionTime,
@@ -405,13 +394,23 @@ final class BackgroundJob
 		return $this;
 	}
 
-	public function getIsRecurring(): bool
+	public function getMode(): ModeEnum
 	{
-		return $this->isRecurring;
+		return $this->mode;
 	}
 
-	public function setIsRecurring(bool $isRecurring): void
+	public function setMode(ModeEnum $mode): void
 	{
-		$this->isRecurring = $isRecurring;
+		$this->mode = $mode;
+	}
+
+	public function isModeUnique(): bool
+	{
+		return $this->mode === ModeEnum::UNIQUE;
+	}
+
+	public function isModeRecurring(): bool
+	{
+		return $this->mode === ModeEnum::RECURRING;
 	}
 }

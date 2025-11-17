@@ -5,6 +5,7 @@ namespace ADT\BackgroundQueue;
 use ADT\BackgroundQueue\Broker\Producer;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use ADT\BackgroundQueue\Entity\Enums\CallbackNameEnum;
+use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
 use ADT\BackgroundQueue\Exception\DieException;
 use ADT\BackgroundQueue\Exception\JobNotFoundException;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
@@ -104,10 +105,9 @@ class BackgroundQueue
 		?array $parameters = null,
 		?string $serialGroup = null,
 		?string $identifier = null,
-		bool $isUnique = false,
+		ModeEnum $mode = ModeEnum::NORMAL,
 		?int $postponeBy = null,
 		?int $priority = null,
-		bool $isRecurring = false,
 	): void
 	{
 		if (!$callbackName) {
@@ -118,8 +118,12 @@ class BackgroundQueue
 			throw new Exception('Callback "' . $callbackName . '" does not exist.');
 		}
 
-		if (!$identifier && $isUnique) {
-			throw new Exception('Parameter "identifier" has to be set if "isUnique" is true.');
+		if (!$identifier && $mode === ModeEnum::UNIQUE) {
+			throw new Exception('Parameter "identifier" has to be set if "mode" is unique.');
+		}
+
+		if (!$identifier && $mode === ModeEnum::RECURRING) {
+			throw new Exception('Parameter "identifier" has to be set if "mode" is recurring.');
 		}
 
 		$priority = $this->getPriority($priority, $callbackName);
@@ -131,9 +135,8 @@ class BackgroundQueue
 		$entity->setParameters($parameters, $this->config['parametersFormat']);
 		$entity->setSerialGroup($serialGroup);
 		$entity->setIdentifier($identifier);
-		$entity->setIsUnique($isUnique);
+		$entity->setMode($mode);
 		$entity->setPostponedBy($postponeBy);
-		$entity->setIsRecurring($isRecurring);
 
 		$this->save($entity);
 		$this->publishToBroker($entity);
@@ -191,7 +194,7 @@ class BackgroundQueue
 			unset ($states[BackgroundJob::STATE_WAITING]);
 
 			if (!$this->getUnfinishedJobIdentifiers([CallbackNameEnum::PROCESS_WAITING_JOBS->value])) {
-				$this->publish(CallbackNameEnum::PROCESS_WAITING_JOBS->value, identifier: CallbackNameEnum::PROCESS_WAITING_JOBS->value);
+				$this->publish(CallbackNameEnum::PROCESS_WAITING_JOBS->value, identifier: CallbackNameEnum::PROCESS_WAITING_JOBS->value, mode: ModeEnum::RECURRING);
 			}
 
 		} else {
@@ -356,10 +359,10 @@ class BackgroundQueue
 			$entity->setState($state)
 				->setErrorMessage($e ? $e->getMessage() : null);
 			$this->save($entity);
-			if (in_array($state, [BackgroundJob::STATE_TEMPORARILY_FAILED], true)) {
+			if ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				$this->publishToBroker($entity);
 			}
-			if ($entity->getIsRecurring()) {
+			if ($entity->isModeRecurring()) {
 				$this->cloneAndPublish($entity);
 			}
 
@@ -569,7 +572,7 @@ class BackgroundQueue
 	 */
 	private function isRedundant(BackgroundJob $entity): bool
 	{
-		if (!$entity->isUnique()) {
+		if (!$entity->isModeUnique()) {
 			return false;
 		}
 
@@ -968,6 +971,6 @@ class BackgroundQueue
 	 */
 	private function cloneAndPublish(BackgroundJob $entity): void
 	{
-		$this->publish($entity->getCallbackName(), $entity->getParameters(), $entity->getSerialGroup(), $entity->getIdentifier(), $entity->isUnique(), $this->config['waitingJobExpiration'], $entity->getPriority());
+		$this->publish($entity->getCallbackName(), $entity->getParameters(), $entity->getSerialGroup(), $entity->getIdentifier(), $entity->getMode(), $this->config['waitingJobExpiration'], $entity->getPriority());
 	}
 }

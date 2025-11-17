@@ -767,6 +767,8 @@ class BackgroundQueue
 				continue;
 			}
 
+			$_entity->setState(BackgroundJob::STATE_READY);
+			$this->save($_entity);
 			$this->publishToBroker($_entity);
 		}
 

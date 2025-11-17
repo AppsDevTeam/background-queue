@@ -106,7 +106,8 @@ class BackgroundQueue
 		?string $identifier = null,
 		bool $isUnique = false,
 		?int $postponeBy = null,
-		?int $priority = null
+		?int $priority = null,
+		bool $isRecurring = false,
 	): void
 	{
 		if (!$callbackName) {
@@ -132,6 +133,7 @@ class BackgroundQueue
 		$entity->setIdentifier($identifier);
 		$entity->setIsUnique($isUnique);
 		$entity->setPostponedBy($postponeBy);
+		$entity->setIsRecurring($isRecurring);
 
 		$this->save($entity);
 		$this->publishToBroker($entity);
@@ -340,8 +342,7 @@ class BackgroundQueue
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
 					break;
 				case $e instanceof WaitingException:
-					$state = BackgroundJob::STATE_WAITING;
-					$entity->setPostponedBy($this->config['waitingJobExpiration']);
+					$this->cloneAndPublish($entity);
 					break;
 				default:
 					$state = BackgroundJob::STATE_TEMPORARILY_FAILED;
@@ -357,6 +358,9 @@ class BackgroundQueue
 			$this->save($entity);
 			if (in_array($state, [BackgroundJob::STATE_TEMPORARILY_FAILED], true)) {
 				$this->publishToBroker($entity);
+			}
+			if ($entity->getIsRecurring()) {
+				$this->cloneAndPublish($entity);
 			}
 
 			if ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
@@ -445,6 +449,7 @@ class BackgroundQueue
 		$table->addColumn('pid', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
 		$table->addColumn('memory', Types::JSON)->setNotnull(false);
+		$table->addColumn('is_recurring', Types::BOOLEAN)->setNotnull(true);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);
@@ -956,5 +961,10 @@ class BackgroundQueue
 			restore_error_handler();
 			throw $e;
 		}
+	}
+
+	private function cloneAndPublish(BackgroundJob $entity): void
+	{
+		$this->publish($entity->getCallbackName(), $entity->getParameters(), $entity->getSerialGroup(), $entity->getIdentifier(), $entity->isUnique(), $this->config['waitingJobExpiration'], $entity->getPriority());
 	}
 }

@@ -62,6 +62,7 @@ final class BackgroundJob
 	private ?int $pid = null; // PID supervisor consumera uvintř docker kontejneru
 	private ?string $metadata = null; // ukládá ve formátu JSON
 	private ?string $memory = null; // ukládá ve formátu JSON
+	private bool $isRecurring = false;
 
 	public function __construct()
 	{
@@ -402,5 +403,15 @@ final class BackgroundJob
 	{
 		$this->executionTime = $executionTime;
 		return $this;
+	}
+
+	public function getIsRecurring(): bool
+	{
+		return $this->isRecurring;
+	}
+
+	public function setIsRecurring(bool $isRecurring): void
+	{
+		$this->isRecurring = $isRecurring;
 	}
 }

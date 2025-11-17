@@ -6,8 +6,9 @@ use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
 use ADT\Utils\Utils;
 use DateTime;
 use DateTimeImmutable;
-use DateTimeInterface;
 use Exception;
+use JsonException;
+use Nette\Utils\Json;
 use ReflectionClass;
 
 final class BackgroundJob
@@ -35,19 +36,12 @@ final class BackgroundJob
 		self::STATE_REDUNDANT => self::STATE_REDUNDANT,
 	];
 
-	const PARAMETERS_FORMAT_SERIALIZE = 'serialize';
-	const PARAMETERS_FORMAT_JSON = 'json';
-	const PARAMETERS_FORMATS = [
-		self::PARAMETERS_FORMAT_SERIALIZE,
-		self::PARAMETERS_FORMAT_JSON,
-	];
-
 	private ?int $id = null;
 	private string $queue;
 	private ?int $priority;
 	private string $callbackName;
-	private $parameters; /** @see self::setParameters() */
-	private $parameters_json = null; /** @see self::setParameters() */
+	private ?string $parameters = null; /** @see self::setParameters() */
+	private ?string $parametersJson = null; /** @see self::setParameters() */
 	private int $state = self::STATE_READY;
 	private DateTimeImmutable $createdAt;
 	private ?DateTimeImmutable $lastAttemptAt = null;
@@ -130,59 +124,34 @@ final class BackgroundJob
 	}
 
 	/**
-	 * Při získávání parametrů detekujeme automaticky formát uložení.
-	 * Tedy při přechodu z self::PARAMETERS_FORMAT_SERIALIZE na self::PARAMETERS_FORMAT_JSON nedojde k výpadku.
-	 * Také je možné v případě ladění chyb data v DB ručně upravit ze serializovaného pole do json formátu, i když pro ukládání používáme self::PARAMETERS_FORMAT_SERIALIZE
 	 * @return array
+	 * @throws \Nette\Utils\JsonException
 	 */
 	public function getParameters(): array
 	{
+		if ($this->parametersJson) {
+			return array_map(function ($value) {
+				return Utils::getDateTimeFromArray($value, true);
+			}, Json::decode($this->parametersJson, forceArrays: true));
+		}
+
 		$this->parameters = is_resource($this->parameters) ? stream_get_contents($this->parameters) : $this->parameters;
 
 		if (!is_null($this->parameters)) {
 			return unserialize($this->parameters);
 		}
 
-		$parametersJson = json_decode($this->parameters_json, true);
-		return array_map(function ($value) {
-			return Utils::getDateTimeFromArray($value, true);
-		}, $parametersJson);
+		return [];
 	}
 
-	/**
-	 * Parametry ukládá jako serializované pole nebo jako json.
-	 * Formát určuje parametr v BackgroundQueue `parametersFormat`.
-	 *   - `serialize` => ukládá jako serializované pole a je bez omezení
-	 *   - `json` => ukládá jako json
-	 *      - parametry mohou obsahovat pouze skalární typy, pole, NULL a \DateTimeInterface
-	 *      - pokud je nějaký z parametrů objekt, automaticky se použije "serialize"
-	 *
-	 * @throws Exception
-	 */
-	public function setParameters(float|object|int|bool|array|string|null $parameters, string $parametersFormat): self
+	public function setParameters(mixed $parameters): self
 	{
 		$parameters = is_array($parameters) ? $parameters : [$parameters];
 
-		if ($parametersFormat == self::PARAMETERS_FORMAT_JSON) {
-			foreach ($parameters as $parameter) {
-				if (!is_scalar($parameter) && !is_array($parameter) && !is_null($parameter) && !($parameter instanceof DateTimeInterface)) {
-					$parametersFormat = self::PARAMETERS_FORMAT_SERIALIZE;
-					break;
-				}
-			}
-		}
-
-		switch ($parametersFormat) {
-			case self::PARAMETERS_FORMAT_SERIALIZE:
-				$this->parameters = serialize($parameters);
-				$this->parameters_json = null;
-				break;
-			case self::PARAMETERS_FORMAT_JSON:
-				$this->parameters = null;
-				$this->parameters_json = json_encode($parameters);
-				break;
-			default:
-				throw new Exception("Unsupported parameters format: $parametersFormat");
+		try {
+			$this->parametersJson = Json::encode($parameters);
+		} catch (JsonException) {
+			$this->parameters = serialize($parameters);
 		}
 
 		return $this;
@@ -329,7 +298,7 @@ final class BackgroundJob
 		$entity->priority = $values['priority'];
 		$entity->callbackName = $values['callback_name'];
 		$entity->parameters = $values['parameters'];
-		$entity->parameters_json = $values['parameters_json'];
+		$entity->parametersJson = $values['parameters_json'];
 		$entity->state = $values['state'];
 		$entity->createdAt = new DateTimeImmutable($values['created_at']);
 		$entity->lastAttemptAt = $values['last_attempt_at'] ? new DateTimeImmutable($values['last_attempt_at']) : null;
@@ -356,7 +325,7 @@ final class BackgroundJob
 			'priority' => $this->priority,
 			'callback_name' => $this->callbackName,
 			'parameters' => $this->parameters,
-			'parameters_json' => $this->parameters_json,
+			'parameters_json' => $this->parametersJson,
 			'state' => $this->state,
 			'created_at' => $this->createdAt->format('Y-m-d H:i:s'),
 			'last_attempt_at' => $this->lastAttemptAt?->format('Y-m-d H:i:s'),

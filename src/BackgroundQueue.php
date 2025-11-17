@@ -75,12 +75,6 @@ class BackgroundQueue
 		if (!isset($config['bulkSize'])) {
 			$config['bulkSize'] = 1;
 		}
-		if (!isset($config['parametersFormat'])) {
-			$config['parametersFormat'] = BackgroundJob::PARAMETERS_FORMAT_JSON;
-		}
-		if (!in_array($config['parametersFormat'], BackgroundJob::PARAMETERS_FORMATS, true)) {
-			throw new Exception('Unsupported parameters format: ' . $config['parametersFormat']);
-		}
 		if ($config['producer']) {
 			$config['callbacks'][CallbackNameEnum::PROCESS_WAITING_JOBS->value] = [
 				'callback' => [$this, trim(CallbackNameEnum::PROCESS_WAITING_JOBS->value, '_')],
@@ -132,7 +126,7 @@ class BackgroundQueue
 		$entity->setQueue($this->config['queue'] . trim($this->config['callbacks'][$callbackName]['queue'] ?? '', '_'));
 		$entity->setPriority($priority);
 		$entity->setCallbackName($callbackName);
-		$entity->setParameters($parameters, $this->config['parametersFormat']);
+		$entity->setParameters($parameters);
 		$entity->setSerialGroup($serialGroup);
 		$entity->setIdentifier($identifier);
 		$entity->setMode($mode);

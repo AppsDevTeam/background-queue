@@ -144,13 +144,11 @@ final class BackgroundJob
 		return [];
 	}
 
-	public function setParameters(mixed $parameters): self
+	public function setParameters(array $parameters): self
 	{
-		$parameters = is_array($parameters) ? $parameters : [$parameters];
-
-		try {
+		if ($this->isJsonable($parameters)) {
 			$this->parametersJson = Json::encode($parameters);
-		} catch (JsonException) {
+		} else {
 			$this->parameters = serialize($parameters);
 		}
 
@@ -381,5 +379,20 @@ final class BackgroundJob
 	public function isModeRecurring(): bool
 	{
 		return $this->mode === ModeEnum::RECURRING;
+	}
+
+	private function isJsonable(array $value): bool
+	{
+		foreach ($value as $item) {
+			if (is_array($item)) {
+				if (!$this->isJsonable($item)) {
+					return false;
+				}
+			} elseif (is_object($item) && !$item instanceof \DateTimeInterface) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 }

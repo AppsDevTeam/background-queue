@@ -7,8 +7,8 @@ use ADT\Utils\Utils;
 use DateTime;
 use DateTimeImmutable;
 use Exception;
-use JsonException;
 use Nette\Utils\Json;
+use Nette\Utils\JsonException;
 use ReflectionClass;
 
 final class BackgroundJob
@@ -125,7 +125,7 @@ final class BackgroundJob
 
 	/**
 	 * @return array
-	 * @throws \Nette\Utils\JsonException
+	 * @throws JsonException
 	 */
 	public function getParameters(): array
 	{
@@ -144,6 +144,9 @@ final class BackgroundJob
 		return [];
 	}
 
+	/**
+	 * @throws JsonException
+	 */
 	public function setParameters(array $parameters): self
 	{
 		if ($this->isJsonable($parameters)) {

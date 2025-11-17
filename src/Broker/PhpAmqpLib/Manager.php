@@ -143,4 +143,9 @@ class Manager
 
 		$this->initQos = true;
 	}
+
+	public function getQueueWithPriority(string $queue, int $priority): string
+	{
+		return $queue . '_' . $priority;
+	}
 }

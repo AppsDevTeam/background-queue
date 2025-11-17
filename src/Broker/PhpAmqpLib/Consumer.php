@@ -6,15 +6,10 @@ use ADT\BackgroundQueue\BackgroundQueue;
 use Exception;
 use PhpAmqpLib\Message\AMQPMessage;
 
-class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
+readonly class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 {
-	private BackgroundQueue $backgroundQueue;
-	private Manager $manager;
-
-	public function __construct(Manager $manager, BackgroundQueue $backgroundQueue)
+	public function __construct(private Manager $manager, private BackgroundQueue $backgroundQueue)
 	{
-		$this->manager = $manager;
-		$this->backgroundQueue = $backgroundQueue;
 	}
 
 	/**
@@ -31,7 +26,7 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 		// Sestavíme si seznam názvů front v RabbitMQ (tedy včetně priorit) a všechny inicializujeme
 		$queuesWithPriorities = [];
 		foreach ($priorities as $priority) {
-			$queueWithPriority = $this->backgroundQueue->getQueue($queue, $priority);
+			$queueWithPriority = $this->manager->getQueueWithPriority($queue, $priority);
 			$queuesWithPriorities[] = $queueWithPriority;
 			$this->manager->createExchange($queueWithPriority);
 			$this->manager->createQueue($queueWithPriority, $queueWithPriority);

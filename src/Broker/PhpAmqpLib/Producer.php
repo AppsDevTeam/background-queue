@@ -2,17 +2,16 @@
 
 namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
 
-use ADT\BackgroundQueue\BackgroundQueue;
 use Exception;
 use PhpAmqpLib\Exception\AMQPChannelClosedException;
 use PhpAmqpLib\Exception\AMQPConnectionClosedException;
 use PhpAmqpLib\Message\AMQPMessage;
 
-class Producer implements \ADT\BackgroundQueue\Broker\Producer
+readonly class Producer implements \ADT\BackgroundQueue\Broker\Producer
 {
 	const DIE = 'die';
 
-	public function __construct(private readonly BackgroundQueue $backgroundQueue, private readonly Manager $manager)
+	public function __construct(private Manager $manager)
 	{
 	}
 
@@ -21,7 +20,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	 */
 	public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void
 	{
-		$queue = $this->backgroundQueue->getQueue($queue, $priority);
+		$queue = $this->manager->getQueueWithPriority($queue, $priority);
 		$exchange = $queue;
 
 		$this->manager->createExchange($exchange);

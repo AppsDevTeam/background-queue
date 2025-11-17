@@ -178,6 +178,7 @@ class BackgroundQueue
 	/**
 	 * @throws SchemaException
 	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
 	 */
 	public function process(): void
 	{

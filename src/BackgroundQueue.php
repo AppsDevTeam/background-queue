@@ -773,10 +773,6 @@ class BackgroundQueue
 			$this->save($_entity);
 			$this->publishToBroker($_entity);
 		}
-
-		if (!$this->getUnfinishedJobIdentifiers([CallbackNameEnum::PROCESS_WAITING_JOBS->value], excludeProcessing: true)) {
-			$this->publish(CallbackNameEnum::PROCESS_WAITING_JOBS->value, identifier: CallbackNameEnum::PROCESS_WAITING_JOBS->value);
-		}
 	}
 
 	private function createQueryBuilder(): QueryBuilder

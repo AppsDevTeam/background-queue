@@ -451,7 +451,7 @@ class BackgroundQueue
 		$table->addColumn('pid', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
 		$table->addColumn('memory', Types::JSON)->setNotnull(false);
-		$table->addColumn('mode', Types::STRING)->setNotnull(true)->setDefault(ModeEnum::NORMAL->value);
+		$table->addColumn('mode', Types::STRING, ['length' => 255])->setNotnull(true)->setDefault(ModeEnum::NORMAL->value);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);

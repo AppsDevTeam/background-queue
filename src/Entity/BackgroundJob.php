@@ -5,6 +5,7 @@ namespace ADT\BackgroundQueue\Entity;
 use ADT\Utils\Utils;
 use DateTime;
 use DateTimeImmutable;
+use DateTimeInterface;
 use Exception;
 use ReflectionClass;
 
@@ -142,11 +143,9 @@ final class BackgroundJob
 		}
 
 		$parametersJson = json_decode($this->parameters_json, true);
-		$parameters = [];
-		foreach ($parametersJson as $key => $value) {
-			$parameters[$key] = Utils::getDateTimeFromArray($value, true);
-		}
-		return $parameters;
+		return array_map(function ($value) {
+			return Utils::getDateTimeFromArray($value, true);
+		}, $parametersJson);
 	}
 
 	/**
@@ -157,17 +156,15 @@ final class BackgroundJob
 	 *      - parametry mohou obsahovat pouze skalární typy, pole, NULL a \DateTimeInterface
 	 *      - pokud je nějaký z parametrů objekt, automaticky se použije "serialize"
 	 *
-	 * @param object|array|string|int|float|bool|null $parameters
-	 * @param string $parametersFormat
 	 * @throws Exception
 	 */
-	public function setParameters($parameters, string $parametersFormat): self
+	public function setParameters(float|object|int|bool|array|string|null $parameters, string $parametersFormat): self
 	{
 		$parameters = is_array($parameters) ? $parameters : [$parameters];
 
 		if ($parametersFormat == self::PARAMETERS_FORMAT_JSON) {
 			foreach ($parameters as $parameter) {
-				if (!is_scalar($parameter) && !is_array($parameter) && !is_null($parameter) && !($parameter instanceof \DateTimeInterface)) {
+				if (!is_scalar($parameter) && !is_array($parameter) && !is_null($parameter) && !($parameter instanceof DateTimeInterface)) {
 					$parametersFormat = self::PARAMETERS_FORMAT_SERIALIZE;
 					break;
 				}
@@ -372,7 +369,7 @@ final class BackgroundJob
 			'parameters_json' => $this->parameters_json,
 			'state' => $this->state,
 			'created_at' => $this->createdAt->format('Y-m-d H:i:s'),
-			'last_attempt_at' => $this->lastAttemptAt ? $this->lastAttemptAt->format('Y-m-d H:i:s') : null,
+			'last_attempt_at' => $this->lastAttemptAt?->format('Y-m-d H:i:s'),
 			'number_of_attempts' => $this->numberOfAttempts,
 			'error_message' => $this->errorMessage,
 			'serial_group' => $this->serialGroup,
@@ -381,7 +378,7 @@ final class BackgroundJob
 			'postponed_by' => $this->postponedBy,
 			'processed_by_broker' => (int) $this->processedByBroker,
 			'execution_time' => (int) $this->executionTime,
-			'finished_at' => $this->finishedAt ? $this->finishedAt->format('Y-m-d H:i:s') : null,
+			'finished_at' => $this->finishedAt?->format('Y-m-d H:i:s'),
 			'pid' => $this->pid,
 			'metadata' => $this->metadata,
 			'memory' => $this->memory,

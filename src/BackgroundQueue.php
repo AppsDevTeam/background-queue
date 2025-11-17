@@ -354,21 +354,20 @@ class BackgroundQueue
 			$entity->setState($state)
 				->setErrorMessage($e ? $e->getMessage() : null);
 			$this->save($entity);
-			if ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
-				$this->publishToBroker($entity);
-			}
-			if ($entity->isModeRecurring()) {
-				$this->cloneAndPublish($entity);
-			}
-
-			if ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
-				// odeslání emailu o chybě v callbacku
-				$this->logException('Permanent error occured.', $entity, $e);
+			if ($state === BackgroundJob::STATE_FINISHED) {
+				if ($entity->isModeRecurring()) {
+					$this->cloneAndPublish($entity);
+				}
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
+				$this->publishToBroker($entity);
+
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
 					$this->logException('Number of attempts reached "' . $entity->getNumberOfAttempts() . '".', $entity, $e);
 				}
+			} elseif ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
+				// odeslání emailu o chybě v callbacku
+				$this->logException('Permanent error occured.', $entity, $e);
 			}
 		} catch (Exception $innerEx) {
 			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $innerEx);
@@ -962,7 +961,9 @@ class BackgroundQueue
 	 */
 	private function cloneAndPublish(BackgroundJob $entity): void
 	{
-		$this->publish($entity->getCallbackName(), $entity->getParameters(), $entity->getSerialGroup(), $entity->getIdentifier(), $entity->getMode(), $this->config['waitingJobExpiration'], $entity->getPriority());
+		if ($this->getUnfinishedJobIdentifiers([$entity->getIdentifier()])) {
+			$this->publish($entity->getCallbackName(), $entity->getParameters(), $entity->getSerialGroup(), $entity->getIdentifier(), $entity->getMode(), $this->config['waitingJobExpiration'], $entity->getPriority());
+		}
 	}
 
 	public function getQueue(?string $queue, ?int $priority = null): string

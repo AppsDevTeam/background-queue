@@ -15,7 +15,7 @@ readonly class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 	/**
 	 * @throws Exception
 	 */
-	public function consume(?string $queue = null, array $priorities = []): void
+	public function consume(string $queue, array $priorities): void
 	{
 		// TODO Do budoucna cheme podporovat libovolné priority a ne pouze jejich výčet.
 		//      Zde si musíme vytáhnout seznam existujících front. To lze přes HTTP API pomocí CURL.

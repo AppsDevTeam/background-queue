@@ -586,7 +586,7 @@ class BackgroundQueue
 	 */
 	private function getPreviousUnfinishedJobId(BackgroundJob $entity): ?int
 	{
-		foreach ($this->findOldestUnfinishedJobIdsByGroup($entity) as $id) {
+		foreach ($this->findOldestUnfinishedJobIdsByGroup(array_merge(BackgroundJob::READY_TO_PROCESS_STATES, [BackgroundJob::STATE_PROCESSING]), $entity) as $id) {
 			return $id;
 		}
 		return null;
@@ -596,14 +596,14 @@ class BackgroundQueue
 	 * @throws SchemaException
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private function findOldestUnfinishedJobIdsByGroup(?BackgroundJob $entity = null): iterable
+	private function findOldestUnfinishedJobIdsByGroup(array|string $state, ?BackgroundJob $entity = null): iterable
 	{
 		$qb = $this->createQueryBuilder();
 
 		$qb->select('MIN(id) as id');
 
-		$qb->andWhere('state NOT IN (:state)')
-			->setParameter('state', BackgroundJob::FINISHED_STATES);
+		$qb->andWhere('state IN (:state)')
+			->setParameter('state', $state);
 
 		if ($entity) {
 			$qb->andWhere('serial_group = :serialGroup')
@@ -761,12 +761,8 @@ class BackgroundQueue
 	 */
 	private function processWaitingJobs(): void
 	{
-		foreach ($this->findOldestUnfinishedJobIdsByGroup() as $id) {
+		foreach ($this->findOldestUnfinishedJobIdsByGroup(BackgroundJob::STATE_WAITING) as $id) {
 			$_entity = $this->getEntity($id);
-
-			if ($_entity->getState() === BackgroundJob::STATE_PROCESSING) {
-				continue;
-			}
 
 			$_entity->setState(BackgroundJob::STATE_READY);
 			$this->save($_entity);
@@ -966,16 +962,12 @@ class BackgroundQueue
 		}
 	}
 
-	public function getQueue(?string $queue, ?int $priority = null): string
+	public function getQueue(?string $queue): string
 	{
 		$result = $this->config['queue'];
 
 		if ($queue !== null) {
 			$result .= '_' . $queue;
-		}
-
-		if ($priority !== null) {
-			$result .= '_' . $priority;
 		}
 
 		return $result;

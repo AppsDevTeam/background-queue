@@ -124,7 +124,7 @@ class BackgroundQueue
 		$priority = $this->getPriority($priority, $callbackName);
 
 		$entity = new BackgroundJob();
-		$entity->setQueue($this->config['callbacks'][$callbackName]['queue'] ?? $this->config['queue']);
+		$entity->setQueue($this->config['queue'] . trim($this->config['callbacks'][$callbackName]['queue'] ?? '', '_'));
 		$entity->setPriority($priority);
 		$entity->setCallbackName($callbackName);
 		$entity->setParameters($parameters, $this->config['parametersFormat']);

@@ -963,6 +963,9 @@ class BackgroundQueue
 		}
 	}
 
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
 	private function cloneAndPublish(BackgroundJob $entity): void
 	{
 		$this->publish($entity->getCallbackName(), $entity->getParameters(), $entity->getSerialGroup(), $entity->getIdentifier(), $entity->isUnique(), $this->config['waitingJobExpiration'], $entity->getPriority());

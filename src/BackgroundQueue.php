@@ -447,7 +447,7 @@ class BackgroundQueue
 		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
 		$table->addColumn('memory', Types::JSON)->setNotnull(false);
 		$table->addColumn('mode', Types::STRING, ['length' => 255])->setNotnull(true)->setDefault(ModeEnum::NORMAL->value);
-		$table->addColumn('updated_at', Types::DATETIME_IMMUTABLE)->setNotnull(true);
+		$table->addColumn('updated_at', Types::DATETIME_IMMUTABLE)->setNotnull(true)->setDefault('CURRENT_TIMESTAMP');
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);

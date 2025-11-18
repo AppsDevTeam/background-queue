@@ -62,6 +62,7 @@ final class BackgroundJob
 	public function __construct()
 	{
 		$this->createdAt = new DateTimeImmutable();
+		$this->updatedAt = new DateTimeImmutable();
 	}
 
 	public function __clone()

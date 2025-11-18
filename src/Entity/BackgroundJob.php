@@ -57,6 +57,7 @@ final class BackgroundJob
 	private ?string $metadata = null; // ukládá ve formátu JSON
 	private ?string $memory = null; // ukládá ve formátu JSON
 	private ModeEnum $mode = ModeEnum::NORMAL;
+	private DateTimeImmutable $updatedAt;
 
 	public function __construct()
 	{
@@ -319,6 +320,7 @@ final class BackgroundJob
 		$entity->pid = $values['pid'];
 		$entity->metadata = $values['metadata'];
 		$entity->memory = $values['memory'];
+		$entity->updatedAt = new DateTimeImmutable($values['updated_at']);
 
 		return $entity;
 	}
@@ -346,6 +348,7 @@ final class BackgroundJob
 			'pid' => $this->pid,
 			'metadata' => $this->metadata,
 			'memory' => $this->memory,
+			'updated_at' => $this->updatedAt->format('Y-m-d H:i:s')
 		];
 	}
 
@@ -401,5 +404,15 @@ final class BackgroundJob
 		}
 
 		return true;
+	}
+
+	public function getUpdatedAt(): DateTimeImmutable
+	{
+		return $this->updatedAt;
+	}
+
+	public function setUpdatedAt(DateTimeImmutable $updatedAt): void
+	{
+		$this->updatedAt = $updatedAt;
 	}
 }

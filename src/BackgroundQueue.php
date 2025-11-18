@@ -12,6 +12,7 @@ use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\SkipException;
 use ADT\BackgroundQueue\Exception\WaitingException;
 use DateTime;
+use DateTimeImmutable;
 use DateTimeInterface;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
@@ -446,6 +447,7 @@ class BackgroundQueue
 		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
 		$table->addColumn('memory', Types::JSON)->setNotnull(false);
 		$table->addColumn('mode', Types::STRING, ['length' => 255])->setNotnull(true)->setDefault(ModeEnum::NORMAL->value);
+		$table->addColumn('updated_at', Types::DATETIME_IMMUTABLE)->setNotnull(true);
 
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);
@@ -642,6 +644,7 @@ class BackgroundQueue
 				$this->doPublishToDatabase();
 			}
 		} else {
+			$entity->setUpdatedAt(new DateTimeImmutable());
 			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
 		}
 	}

@@ -644,7 +644,9 @@ class BackgroundQueue
 				$this->doPublishToDatabase();
 			}
 		} else {
-			$entity->setUpdatedAt(new DateTimeImmutable());
+			if ($entity->getState() === BackgroundJob::STATE_READY) {
+				$entity->setUpdatedAt(new DateTimeImmutable());
+			}
 			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
 		}
 	}

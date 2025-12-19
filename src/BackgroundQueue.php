@@ -550,18 +550,6 @@ class BackgroundQueue
 	}
 
 	/**
-	 * @throws Exception|\Doctrine\DBAL\Exception
-	 */
-	private function fetch(QueryBuilder $qb): BackgroundJob
-	{
-		if (!$entities = $this->fetchAll($qb, 1)) {
-			throw new JobNotFoundException();
-		}
-
-		return $entities[0];
-	}
-
-	/**
 	 * @throws Exception
 	 * @throws \Doctrine\DBAL\Exception
 	 */
@@ -579,7 +567,7 @@ class BackgroundQueue
 		$qb->andWhere('id < :id')
 			->setParameter('id', $entity->getId());
 
-		return (bool) $this->fetch($qb);
+		return (bool) $this->fetchAll($qb, 1);
 	}
 
 	/**
@@ -699,11 +687,11 @@ class BackgroundQueue
 			->andWhere('id = :id')
 			->setParameter('id',  $id);
 
-		if (!$entity = $this->fetch($qb)) {
-			throw new JobNotFoundException('Job ' . $id . ' not found.');
+		if (!$entities = $this->fetchAll($qb, 1)) {
+			throw new JobNotFoundException();
 		}
 
-		return $entity;
+		return $entities[0];
 	}
 
 	/**

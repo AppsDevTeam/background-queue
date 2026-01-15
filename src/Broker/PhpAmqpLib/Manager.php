@@ -10,6 +10,7 @@ use PhpAmqpLib\Message\AMQPMessage;
 class Manager
 {
 	const QUEUE_TOP_PRIORITY = 0;
+	const QUEUE_NAME_PARTS_DELIMITER = '_';
 
 	private array $connectionParams;
 	private array $queueParams;
@@ -141,14 +142,38 @@ class Manager
 		$this->initQos = true;
 	}
 
-	public function getQueueWithPriority(string $queue, int $priority): string
+	public function getQueueWithPriority(string $queue, string $priority): string
 	{
-		return $queue . '_' . $priority;
+		if (strpos($queue, self::QUEUE_NAME_PARTS_DELIMITER) !== false) {
+			throw new \Exception('Priority cannot contains "' . self::QUEUE_NAME_PARTS_DELIMITER . '".');
+		}
+		return $queue . self::QUEUE_NAME_PARTS_DELIMITER . $priority;
 	}
+
+	public function includeTopPriority(array $priorities, ?string $label = null): array
+	{
+		array_unshift($priorities, $this->getTopPriorityName($label));
+		return $priorities;
+	}
+
+	public function getTopPriorityName(?string $label = null): string
+	{
+		$topPriority = self::QUEUE_TOP_PRIORITY;
+		if (!is_null($label)) {
+			if (strpos($label, self::QUEUE_NAME_PARTS_DELIMITER) !== false) {
+				throw new \Exception('Label cannot contains "' . self::QUEUE_NAME_PARTS_DELIMITER . '".');
+			}
+
+			$topPriority .= self::QUEUE_NAME_PARTS_DELIMITER . $label;
+		}
+
+		return $topPriority;
+	}
+
 
 	public function parseQueueAndPriority(string $queueWithPriority): array
 	{
-		$parts = explode('_', $queueWithPriority);
+		$parts = explode(self::QUEUE_NAME_PARTS_DELIMITER, $queueWithPriority);
 
 		if (count($parts) === 2) {
 			return [$parts[0], $parts[1]];
@@ -157,7 +182,7 @@ class Manager
 			while (true) {
 				$part = array_shift($parts);
 				if (is_numeric($part)) {
-					return [implode('_', $nameParts), $part];
+					return [implode(self::QUEUE_NAME_PARTS_DELIMITER, $nameParts), $part];
 				} else {
 					$nameParts[] = $part;
 				}

@@ -28,6 +28,7 @@ class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 		$this->addArgument('queue', InputArgument::REQUIRED);
 		$this->addOption('jobs', 'j', InputOption::VALUE_REQUIRED, 'Number of jobs consumed by one consumer in one process', 1);
 		$this->addOption('priorities', 'p', InputOption::VALUE_REQUIRED, 'Priorities for consume (e.g. 10, 20-40, 25-, -20)');
+		$this->addOption('label', 'l', InputOption::VALUE_OPTIONAL, 'Consumer label for restart it by reload command');
 		$this->setDescription('Start consumer.');
 	}
 
@@ -35,6 +36,7 @@ class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 	{
 		$jobs = $input->getOption('jobs');
 		$priorities = $this->getPrioritiesListBasedConfig($input->getOption('priorities'));
+		$label = $input->getOption('label');
 
 		if (!is_numeric($jobs)) {
 			$output->writeln("<error>Option --jobs has to be integer</error>");
@@ -43,7 +45,7 @@ class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 
 		for ($i = 0; $i < (int)$jobs; $i++) {
 			$this->backgroundQueue->dieIfNecessary();
-			$this->consumer->consume($input->getArgument('queue'), $priorities);
+			$this->consumer->consume($input->getArgument('queue'), $priorities, $label);
 		}
 
 		return 0;

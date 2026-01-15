@@ -3,6 +3,7 @@
 namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
 
 use ADT\BackgroundQueue\BackgroundQueue;
+use ADT\BackgroundQueue\Console\ReloadConsumersCommand;
 use Exception;
 use PhpAmqpLib\Exception\AMQPProtocolChannelException;
 use PhpAmqpLib\Message\AMQPMessage;
@@ -21,13 +22,12 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 	/**
 	 * @throws Exception
 	 */
-	public function consume(string $queue, array $priorities): void
+	public function consume(string $queue, array $priorities, ?string $consumerLabel = null): void
 	{
 		// TODO Do budoucna cheme podporovat libovolné priority a ne pouze jejich výčet.
 		//      Zde si musíme vytáhnout seznam existujících front. To lze přes HTTP API pomocí CURL.
 
-		// Nejprve se chceme kouknout, jestli není zaslána zpráva k ukončení, proto na první místo dáme TOP_PRIORITY frontu.
-		array_unshift($priorities, Manager::QUEUE_TOP_PRIORITY);
+		$priorities = $this->manager->includeTopPriority($priorities, $consumerLabel);
 
 		// Sestavíme si seznam názvů front v RabbitMQ (tedy včetně priorit) a všechny inicializujeme
 		$queuesWithPriorities = [];

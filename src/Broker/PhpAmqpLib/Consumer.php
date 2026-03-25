@@ -4,18 +4,12 @@ namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
 
 use ADT\BackgroundQueue\BackgroundQueue;
 use Exception;
-use PhpAmqpLib\Exception\AMQPProtocolChannelException;
 use PhpAmqpLib\Message\AMQPMessage;
 
-class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
+readonly class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 {
-	private BackgroundQueue $backgroundQueue;
-	private Manager $manager;
-
-	public function __construct(Manager $manager, BackgroundQueue $backgroundQueue)
+	public function __construct(private Manager $manager, private BackgroundQueue $backgroundQueue)
 	{
-		$this->manager = $manager;
-		$this->backgroundQueue = $backgroundQueue;
 	}
 
 	/**
@@ -56,9 +50,7 @@ class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 					die();
 				}
 
-				$queuesWithPriority = $msg->getConsumerTag();
-				list($queue, $priority) = $this->manager->parseQueueAndPriority($queuesWithPriority);
-				$this->backgroundQueue->process((int)$msg->getBody(), $queue, $priority);
+				$this->backgroundQueue->processJob((int)$msg->getBody());
 			});
 		}
 

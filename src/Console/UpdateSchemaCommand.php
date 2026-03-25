@@ -7,30 +7,14 @@ use Doctrine\DBAL\Schema\SchemaException;
 use Exception;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 
-#[AsCommand(name: 'background-queue:update-schema')]
+#[AsCommand(name: 'background-queue:update-schema', description: 'Update table schema if needed.')]
 class UpdateSchemaCommand extends Command
 {
-	protected static $defaultName = 'background-queue:update-schema';
-
-	private BackgroundQueue $backgroundQueue;
-
-	/**
-	 * @throws Exception
-	 */
-	public function __construct(BackgroundQueue $backgroundQueue)
+	public function __construct(private readonly BackgroundQueue $backgroundQueue)
 	{
 		parent::__construct();
-		$this->backgroundQueue = $backgroundQueue;
-	}
-
-	protected function configure()
-	{
-		$this->setName('background-queue:update-schema');
-		$this->setDescription('Update table schema if needed.');
-		$this->addOption('force', 'f', InputOption::VALUE_NONE, 'Force schema update');
 	}
 
 	/**
@@ -40,8 +24,8 @@ class UpdateSchemaCommand extends Command
 	 */
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
-		$this->backgroundQueue->updateSchema($input->getOption('force'));
+		$this->backgroundQueue->updateSchema();
 
-		return 0;
+		return self::SUCCESS;
 	}
 }

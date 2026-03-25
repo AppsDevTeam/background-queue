@@ -7,6 +7,7 @@ namespace ADT\BackgroundQueue\Middleware;
 use ADT\BackgroundQueue\BackgroundQueue;
 use Doctrine\DBAL\Driver\Connection as ConnectionInterface;
 use Doctrine\DBAL\Driver\Middleware\AbstractConnectionMiddleware;
+use Doctrine\DBAL\Exception;
 
 final class Connection extends AbstractConnectionMiddleware
 {
@@ -31,6 +32,10 @@ final class Connection extends AbstractConnectionMiddleware
 		$this->transactionNestingLevel--;
 	}
 
+	/**
+	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Driver\Exception
+	 */
 	public function commit(): void
 	{
 		parent::commit();

@@ -2,10 +2,13 @@
 
 namespace ADT\BackgroundQueue\Entity;
 
+use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
 use ADT\Utils\Utils;
 use DateTime;
 use DateTimeImmutable;
 use Exception;
+use Nette\Utils\Json;
+use Nette\Utils\JsonException;
 use ReflectionClass;
 
 final class BackgroundJob
@@ -33,19 +36,12 @@ final class BackgroundJob
 		self::STATE_REDUNDANT => self::STATE_REDUNDANT,
 	];
 
-	const PARAMETERS_FORMAT_SERIALIZE = 'serialize';
-	const PARAMETERS_FORMAT_JSON = 'json';
-	const PARAMETERS_FORMATS = [
-		self::PARAMETERS_FORMAT_SERIALIZE,
-		self::PARAMETERS_FORMAT_JSON,
-	];
-
 	private ?int $id = null;
 	private string $queue;
 	private ?int $priority;
 	private string $callbackName;
-	private $parameters; /** @see self::setParameters() */
-	private $parameters_json = null; /** @see self::setParameters() */
+	private ?string $parameters = null; /** @see self::setParameters() */
+	private ?string $parametersJson = null; /** @see self::setParameters() */
 	private int $state = self::STATE_READY;
 	private DateTimeImmutable $createdAt;
 	private ?DateTimeImmutable $lastAttemptAt = null;
@@ -53,7 +49,6 @@ final class BackgroundJob
 	private ?string $errorMessage = null;
 	private ?string $serialGroup = null;
 	private ?string $identifier = null;
-	private bool $isUnique = false;
 	private ?int $postponedBy = null;
 	private bool $processedByBroker = false;
 	private ?int $executionTime = null;
@@ -61,10 +56,13 @@ final class BackgroundJob
 	private ?int $pid = null; // PID supervisor consumera uvintř docker kontejneru
 	private ?string $metadata = null; // ukládá ve formátu JSON
 	private ?string $memory = null; // ukládá ve formátu JSON
+	private ModeEnum $mode = ModeEnum::NORMAL;
+	private DateTimeImmutable $updatedAt;
 
 	public function __construct()
 	{
 		$this->createdAt = new DateTimeImmutable();
+		$this->updatedAt = new DateTimeImmutable();
 	}
 
 	public function __clone()
@@ -128,63 +126,39 @@ final class BackgroundJob
 	}
 
 	/**
-	 * Při získávání parametrů detekujeme automaticky formát uložení.
-	 * Tedy při přechodu z self::PARAMETERS_FORMAT_SERIALIZE na self::PARAMETERS_FORMAT_JSON nedojde k výpadku.
-	 * Také je možné v případě ladění chyb data v DB ručně upravit ze serializovaného pole do json formátu, i když pro ukládání používáme self::PARAMETERS_FORMAT_SERIALIZE
 	 * @return array
+	 * @throws JsonException
 	 */
 	public function getParameters(): array
 	{
+		if ($this->parametersJson) {
+			return array_map(function ($value) {
+				return Utils::getDateTimeFromArray($value, true);
+			}, Json::decode($this->parametersJson, forceArrays: true));
+		}
+
 		$this->parameters = is_resource($this->parameters) ? stream_get_contents($this->parameters) : $this->parameters;
 
 		if (!is_null($this->parameters)) {
 			return unserialize($this->parameters);
 		}
 
-		$parametersJson = json_decode($this->parameters_json, true);
-		$parameters = [];
-		foreach ($parametersJson as $key => $value) {
-			$parameters[$key] = Utils::getDateTimeFromArray($value, true);
-		}
-		return $parameters;
+		return [];
 	}
 
 	/**
-	 * Parametry ukládá jako serializované pole nebo jako json.
-	 * Formát určuje parametr v BackgroundQueue `parametersFormat`.
-	 *   - `serialize` => ukládá jako serializované pole a je bez omezení
-	 *   - `json` => ukládá jako json
-	 *      - parametry mohou obsahovat pouze skalární typy, pole, NULL a \DateTimeInterface
-	 *      - pokud je nějaký z parametrů objekt, automaticky se použije "serialize"
-	 *
-	 * @param object|array|string|int|float|bool|null $parameters
-	 * @param string $parametersFormat
-	 * @throws Exception
+	 * @throws JsonException
 	 */
-	public function setParameters($parameters, string $parametersFormat): self
+	public function setParameters(?array $parameters): self
 	{
-		$parameters = is_array($parameters) ? $parameters : [$parameters];
-
-		if ($parametersFormat == self::PARAMETERS_FORMAT_JSON) {
-			foreach ($parameters as $parameter) {
-				if (!is_scalar($parameter) && !is_array($parameter) && !is_null($parameter) && !($parameter instanceof \DateTimeInterface)) {
-					$parametersFormat = self::PARAMETERS_FORMAT_SERIALIZE;
-					break;
-				}
-			}
+		if (!$parameters) {
+			return $this;
 		}
 
-		switch ($parametersFormat) {
-			case self::PARAMETERS_FORMAT_SERIALIZE:
-				$this->parameters = serialize($parameters);
-				$this->parameters_json = null;
-				break;
-			case self::PARAMETERS_FORMAT_JSON:
-				$this->parameters = null;
-				$this->parameters_json = json_encode($parameters);
-				break;
-			default:
-				throw new Exception("Unsupported parameters format: $parametersFormat");
+		if ($this->isJsonable($parameters)) {
+			$this->parametersJson = Json::encode($parameters);
+		} else {
+			$this->parameters = serialize($parameters);
 		}
 
 		return $this;
@@ -246,17 +220,6 @@ final class BackgroundJob
 	public function setIdentifier(?string $identifier): self
 	{
 		$this->identifier = $identifier;
-		return $this;
-	}
-
-	public function isUnique(): bool
-	{
-		return $this->isUnique;
-	}
-
-	public function setIsUnique(bool $isUnique): self
-	{
-		$this->isUnique = $isUnique;
 		return $this;
 	}
 
@@ -342,7 +305,7 @@ final class BackgroundJob
 		$entity->priority = $values['priority'];
 		$entity->callbackName = $values['callback_name'];
 		$entity->parameters = $values['parameters'];
-		$entity->parameters_json = $values['parameters_json'];
+		$entity->parametersJson = $values['parameters_json'];
 		$entity->state = $values['state'];
 		$entity->createdAt = new DateTimeImmutable($values['created_at']);
 		$entity->lastAttemptAt = $values['last_attempt_at'] ? new DateTimeImmutable($values['last_attempt_at']) : null;
@@ -350,7 +313,7 @@ final class BackgroundJob
 		$entity->errorMessage = $values['error_message'];
 		$entity->serialGroup = $values['serial_group'];
 		$entity->identifier = $values['identifier'];
-		$entity->isUnique = $values['is_unique'];
+		$entity->mode = ModeEnum::from($values['mode']);
 		$entity->postponedBy = $values['postponed_by'];
 		$entity->processedByBroker = $values['processed_by_broker'];
 		$entity->executionTime = $values['execution_time'];
@@ -358,6 +321,7 @@ final class BackgroundJob
 		$entity->pid = $values['pid'];
 		$entity->metadata = $values['metadata'];
 		$entity->memory = $values['memory'];
+		$entity->updatedAt = new DateTimeImmutable($values['updated_at']);
 
 		return $entity;
 	}
@@ -369,22 +333,23 @@ final class BackgroundJob
 			'priority' => $this->priority,
 			'callback_name' => $this->callbackName,
 			'parameters' => $this->parameters,
-			'parameters_json' => $this->parameters_json,
+			'parameters_json' => $this->parametersJson,
 			'state' => $this->state,
 			'created_at' => $this->createdAt->format('Y-m-d H:i:s'),
-			'last_attempt_at' => $this->lastAttemptAt ? $this->lastAttemptAt->format('Y-m-d H:i:s') : null,
+			'last_attempt_at' => $this->lastAttemptAt?->format('Y-m-d H:i:s'),
 			'number_of_attempts' => $this->numberOfAttempts,
 			'error_message' => $this->errorMessage,
 			'serial_group' => $this->serialGroup,
 			'identifier' => $this->identifier,
-			'is_unique' => (int) $this->isUnique,
+			'mode' => $this->mode->value,
 			'postponed_by' => $this->postponedBy,
 			'processed_by_broker' => (int) $this->processedByBroker,
 			'execution_time' => (int) $this->executionTime,
-			'finished_at' => $this->finishedAt ? $this->finishedAt->format('Y-m-d H:i:s') : null,
+			'finished_at' => $this->finishedAt?->format('Y-m-d H:i:s'),
 			'pid' => $this->pid,
 			'metadata' => $this->metadata,
 			'memory' => $this->memory,
+			'updated_at' => $this->updatedAt->format('Y-m-d H:i:s')
 		];
 	}
 
@@ -405,5 +370,50 @@ final class BackgroundJob
 	{
 		$this->executionTime = $executionTime;
 		return $this;
+	}
+
+	public function getMode(): ModeEnum
+	{
+		return $this->mode;
+	}
+
+	public function setMode(ModeEnum $mode): void
+	{
+		$this->mode = $mode;
+	}
+
+	public function isModeUnique(): bool
+	{
+		return $this->mode === ModeEnum::UNIQUE;
+	}
+
+	public function isModeRecurring(): bool
+	{
+		return $this->mode === ModeEnum::RECURRING;
+	}
+
+	private function isJsonable(array $value): bool
+	{
+		foreach ($value as $item) {
+			if (is_array($item)) {
+				if (!$this->isJsonable($item)) {
+					return false;
+				}
+			} elseif (is_object($item) && !$item instanceof \DateTimeInterface) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	public function getUpdatedAt(): DateTimeImmutable
+	{
+		return $this->updatedAt;
+	}
+
+	public function setUpdatedAt(DateTimeImmutable $updatedAt): void
+	{
+		$this->updatedAt = $updatedAt;
 	}
 }

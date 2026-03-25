@@ -4,11 +4,15 @@ namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Broker\Producer;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
+use ADT\BackgroundQueue\Entity\Enums\CallbackNameEnum;
+use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
 use ADT\BackgroundQueue\Exception\DieException;
+use ADT\BackgroundQueue\Exception\JobNotFoundException;
 use ADT\BackgroundQueue\Exception\PermanentErrorException;
 use ADT\BackgroundQueue\Exception\SkipException;
 use ADT\BackgroundQueue\Exception\WaitingException;
-use ADT\Utils\FileSystem;
+use DateTime;
+use DateTimeImmutable;
 use DateTimeInterface;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
@@ -19,6 +23,7 @@ use Doctrine\DBAL\Schema\SchemaException;
 use Doctrine\DBAL\Types\Types;
 use Exception;
 use InvalidArgumentException;
+use Nette\Utils\JsonException;
 use PDOException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -36,7 +41,7 @@ class BackgroundQueue
 	private LoggerInterface $logger;
 	private ?Producer $producer = null;
 	private int $bulkSize = 1;
-	private array $bulkBrokerCallbacks = [];
+	private array $entitiesToPublish = [];
 	private array $bulkDatabaseEntities = [];
 	private bool $shouldDie = false;
 
@@ -72,11 +77,12 @@ class BackgroundQueue
 		if (!isset($config['bulkSize'])) {
 			$config['bulkSize'] = 1;
 		}
-		if (!isset($config['parametersFormat'])) {
-			$config['parametersFormat'] = BackgroundJob::PARAMETERS_FORMAT_JSON;
-		}
-		if (!in_array($config['parametersFormat'], BackgroundJob::PARAMETERS_FORMATS, true)) {
-			throw new Exception('Unsupported parameters format: ' . $config['parametersFormat']);
+		if ($config['producer']) {
+			$config['callbacks'][CallbackNameEnum::PROCESS_WAITING_JOBS->value] = [
+				'callback' => [$this, trim(CallbackNameEnum::PROCESS_WAITING_JOBS->value, '_')],
+				'queue' => null,
+				'priority' => null
+			];
 		}
 
 		$this->config = $config;
@@ -88,60 +94,6 @@ class BackgroundQueue
 	}
 
 	/**
-	 * Bezpečně ověříme, že nedošlo ke ztrátě spojení k DB.
-	 * Pokud ano, připojíme se znovu.
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	private function databaseConnectionCheckAndReconnect(): void
-	{
-		$warningHandler = function($errno, $errstr) {
-			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (warning): code(' . $errno . ') ' . $errstr, 0));
-			$this->connection->close();
-			$this->connection->getNativeConnection();
-		};
-
-		set_error_handler($warningHandler, E_WARNING);
-
-		try {
-			if (!$this->databasePing()) {
-				$this->connection->close();
-				$this->connection->getNativeConnection();
-			}
-		} catch (Exception $e) {
-			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (exception): ' . $e->getMessage(), 0, $e));
-			$this->connection->close();
-			$this->connection->getNativeConnection();
-		} finally {
-			restore_error_handler();
-		}
-	}
-
-	/**
-	 * @throws Exception
-	 */
-	private function databasePing(): bool
-	{
-		set_error_handler(function ($severity, $message) {
-			throw new PDOException($message, $severity);
-		});
-
-		try {
-			$this->connection->executeQuery($this->connection->getDatabasePlatform()->getDummySelectSQL());
-			restore_error_handler();
-
-			return true;
-
-		} catch (\Doctrine\DBAL\Exception) {
-			restore_error_handler();
-			return false;
-
-		} catch (Exception $e) {
-			restore_error_handler();
-			throw $e;
-		}
-	}
-
-	/**
 	 * @throws Exception|\Doctrine\DBAL\Exception
 	 */
 	public function publish(
@@ -149,33 +101,37 @@ class BackgroundQueue
 		?array $parameters = null,
 		?string $serialGroup = null,
 		?string $identifier = null,
-		bool $isUnique = false,
+		ModeEnum $mode = ModeEnum::NORMAL,
 		?int $postponeBy = null,
-		?int $priority = null
+		?int $priority = null,
 	): void
 	{
 		if (!$callbackName) {
 			throw new Exception('The job does not have the required parameter "callbackName" set.');
 		}
 
-		if (!isset($this->config['callbacks'][$callbackName])) {
+		if (!$this->getCallback($callbackName)) {
 			throw new Exception('Callback "' . $callbackName . '" does not exist.');
 		}
 
-		if (!$identifier && $isUnique) {
-			throw new Exception('Parameter "identifier" has to be set if "isUnique" is true.');
+		if (!$identifier && $mode === ModeEnum::UNIQUE) {
+			throw new Exception('Parameter "identifier" has to be set if "mode" is unique.');
+		}
+
+		if (!$identifier && $mode === ModeEnum::RECURRING) {
+			throw new Exception('Parameter "identifier" has to be set if "mode" is recurring.');
 		}
 
 		$priority = $this->getPriority($priority, $callbackName);
 
 		$entity = new BackgroundJob();
-		$entity->setQueue($this->config['queue']);
+		$entity->setQueue($this->getQueue($this->config['callbacks'][$callbackName]['queue'] ?? null));
 		$entity->setPriority($priority);
 		$entity->setCallbackName($callbackName);
-		$entity->setParameters($parameters, $this->config['parametersFormat']);
+		$entity->setParameters($parameters);
 		$entity->setSerialGroup($serialGroup);
 		$entity->setIdentifier($identifier);
-		$entity->setIsUnique($isUnique);
+		$entity->setMode($mode);
 		$entity->setPostponedBy($postponeBy);
 
 		$this->save($entity);
@@ -184,6 +140,7 @@ class BackgroundQueue
 
 	/**
 	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Exception
 	 * @internal
 	 */
 	public function publishToBroker(BackgroundJob $entity): void
@@ -192,33 +149,78 @@ class BackgroundQueue
 			return;
 		}
 
-		$this->bulkBrokerCallbacks[] = function () use ($entity) {
-			try {
-				// Pokud mám u callbacku nastavenou frontu, v DB zůstává původní, ale do brokera použiju tu z konfigu.
-				// Tedy řadím do různých front pro různé consumery, ale z pohledu záznamů v DB se jedná o stejnou frontu.
-				$this->producer->publish((string)$entity->getId(), $this->getQueueForEntityIncludeCallback($entity), $entity->getPriority(), $entity->getPostponedBy());
-			} catch (Exception $e) {
-				$entity->setState(BackgroundJob::STATE_BROKER_FAILED)
-					->setErrorMessage($e->getMessage());
-				$this->save($entity);
+		$this->entitiesToPublish[] = $entity;
 
-				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
-			}
-		};
-		if (!$this->connection->isTransactionActive() && count($this->bulkBrokerCallbacks) >= $this->bulkSize) {
+		if (!$this->connection->isTransactionActive() && count($this->entitiesToPublish) >= $this->bulkSize) {
 			$this->doPublishToBroker();
 		}
 	}
 
 	/**
+	 * @throws \Doctrine\DBAL\Exception
 	 * @internal
 	 */
 	public function doPublishToBroker(): void
 	{
-		foreach ($this->bulkBrokerCallbacks as $_closure) {
-			$_closure();
+		foreach ($this->entitiesToPublish as $_entity) {
+			try {
+				$this->producer->publish((string)$_entity->getId(), $_entity->getQueue(), $_entity->getPriority(), $_entity->getPostponedBy());
+			} catch (Exception $e) {
+				$_entity->setState(BackgroundJob::STATE_BROKER_FAILED)
+					->setErrorMessage($e->getMessage());
+				$this->save($_entity);
+
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $_entity, $e);
+			}
 		}
-		$this->bulkBrokerCallbacks = [];
+		$this->entitiesToPublish = [];
+	}
+
+	/**
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	public function process(): void
+	{
+		$states = BackgroundJob::READY_TO_PROCESS_STATES;
+		if ($this->getConfig()['producer']) {
+			unset ($states[BackgroundJob::STATE_READY]);
+			unset ($states[BackgroundJob::STATE_TEMPORARILY_FAILED]);
+			unset ($states[BackgroundJob::STATE_WAITING]);
+
+			if (!$this->getUnfinishedJobIdentifiers([CallbackNameEnum::PROCESS_WAITING_JOBS->value])) {
+				$this->publish(CallbackNameEnum::PROCESS_WAITING_JOBS->value, identifier: CallbackNameEnum::PROCESS_WAITING_JOBS->value, mode: ModeEnum::RECURRING);
+			}
+
+		} else {
+			// Nemáme producera
+
+			unset ($states[BackgroundJob::STATE_BACK_TO_BROKER]);
+		}
+
+		$qb = $this->createQueryBuilder()
+			->andWhere('state IN (:state)')
+			->setParameter('state',  $states);
+
+		/** @var BackgroundJob $_entity */
+		foreach ($this->fetchAll($qb) as $_entity) {
+			if (
+				$this->getConfig()['producer']
+				&&
+				$_entity->getState() !== BackgroundJob::STATE_BROKER_FAILED
+			) {
+				$_entity->setState(BackgroundJob::STATE_READY);
+				$this->save($_entity);
+				$this->publishToBroker($_entity);
+			} else {
+				if (!$_entity->getProcessedByBroker() && $_entity->getAvailableFrom() > new DateTime()) {
+					continue;
+				}
+				$_entity->setProcessedByBroker(false);
+				$this->processJob($_entity->getId());
+			}
+		}
 	}
 
 	/**
@@ -227,16 +229,12 @@ class BackgroundQueue
 	 * @throws Exception
 	 * @internal
 	 */
-	public function process(int|BackgroundJob $entity, string $queue, int $priority): void
+	public function processJob(int $id): void
 	{
 		// U publishera chceme transakci stejnou s flush, proto používáme stejné connection jako je v aplikaci. Ale u consumera chceme vlastní connection, aby když se revertne aplikační transakce, tak aby consumer mohl zapsat chybový stav k BackgroundJob.
 		$this->createConnection();
 
-		if (!$entity instanceof BackgroundJob) {
-			if (!$entity = $this->getEntity($entity, $queue, $priority)) {
-				return;
-			}
-		}
+		$entity = $this->getEntity($id);
 
 		// Zpráva není ke zpracování v případě, že nemá stav READY nebo ERROR_REPEATABLE
 		// Pokud při zpracování zprávy nastane chyba, zpráva zůstane ve stavu PROCESSING a consumer se ukončí.
@@ -343,8 +341,7 @@ class BackgroundQueue
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
 					break;
 				case $e instanceof WaitingException:
-					$state = BackgroundJob::STATE_WAITING;
-					$entity->setPostponedBy($this->config['waitingJobExpiration']);
+					$this->cloneAndPublish($entity);
 					break;
 				default:
 					$state = BackgroundJob::STATE_TEMPORARILY_FAILED;
@@ -358,29 +355,120 @@ class BackgroundQueue
 			$entity->setState($state)
 				->setErrorMessage($e ? $e->getMessage() : null);
 			$this->save($entity);
-			if (in_array($state, [BackgroundJob::STATE_TEMPORARILY_FAILED, BackgroundJob::STATE_WAITING], true)) {
-				$this->publishToBroker($entity);
-			}
-
-			if ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
-				// odeslání emailu o chybě v callbacku
-				$this->logException('Permanent error occured.', $entity, $e);
+			if ($state === BackgroundJob::STATE_FINISHED) {
+				if ($entity->isModeRecurring()) {
+					$this->cloneAndPublish($entity);
+				}
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
+				$this->publishToBroker($entity);
+
 				// pri urcitem mnozstvi neuspesnych pokusu posilat email
 				if ($this->config['notifyOnNumberOfAttempts'] && $this->config['notifyOnNumberOfAttempts'] === $entity->getNumberOfAttempts()) {
 					$this->logException('Number of attempts reached "' . $entity->getNumberOfAttempts() . '".', $entity, $e);
 				}
+			} elseif ($state === BackgroundJob::STATE_PERMANENTLY_FAILED) {
+				// odeslání emailu o chybě v callbacku
+				$this->logException('Permanent error occured.', $entity, $e);
 			}
 		} catch (Exception $innerEx) {
 			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $innerEx);
 		}
 	}
 
-	private function createConnection(): void
+	public function getConfig(): array
 	{
-		if (!$this->connectionCreated) {
-			$this->connection = DriverManager::getConnection($this->connection->getParams());
-			$this->connectionCreated = true;
+		return $this->config;
+	}
+
+	public function startBulk(): void
+	{
+		$this->bulkSize = $this->config['bulkSize'];
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws SchemaException
+	 */
+	public function endBulk(): void
+	{
+		$this->doPublishToDatabase();
+		$this->doPublishToBroker();
+		$this->bulkSize = 1;
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	public function clearFinishedJobs(?int $days = null): void
+	{
+		$qb = $this->createQueryBuilder()
+			->delete($this->getConfig()['tableName'])
+			->andWhere('state = :state')
+			->setParameter('state', BackgroundJob::STATE_FINISHED);
+
+		if ($days) {
+			$qb->andWhere('created_at <= :ago')
+				->setParameter('ago', (new DateTime('midnight'))->modify('-' . $days . ' days')->format('Y-m-d H:i:s'));
+		}
+
+		$qb->executeStatement();
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws SchemaException*
+	 * @throws Exception
+	 * @internal
+	 */
+	public function updateSchema(): void
+	{
+		$schema = new Schema([], [], $this->createSchemaManager()->createSchemaConfig());
+
+		$table = $schema->createTable($this->config['tableName']);
+
+		$table->addColumn('id', Types::BIGINT, ['unsigned' => true])->setAutoincrement(true)->setNotnull(true);
+		$table->addColumn('queue', Types::STRING, ['length' => 255])->setNotnull(true);
+		$table->addColumn('priority', Types::INTEGER)->setNotnull(false);
+		$table->addColumn('callback_name', Types::STRING, ['length' => 255])->setNotnull(true);
+		$table->addColumn('parameters', Types::BLOB)->setNotnull(false);
+		$table->addColumn('parameters_json', Types::JSON)->setNotnull(false);
+		$table->addColumn('state', Types::SMALLINT)->setNotnull(true);
+		$table->addColumn('created_at', Types::DATETIME_IMMUTABLE)->setNotnull(true);
+		$table->addColumn('last_attempt_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
+		$table->addColumn('number_of_attempts', Types::INTEGER)->setNotnull(true)->setDefault(0);
+		$table->addColumn('error_message', Types::TEXT)->setNotnull(false);
+		$table->addColumn('serial_group', Types::STRING, ['length' => 255])->setNotnull(false);
+		$table->addColumn('identifier', Types::STRING, ['length' => 255])->setNotnull(false);
+		$table->addColumn('postponed_by', Types::INTEGER)->setNotnull(false);
+		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
+		$table->addColumn('execution_time', Types::INTEGER)->setNotnull(false);
+		$table->addColumn('finished_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
+		$table->addColumn('pid', Types::INTEGER)->setNotnull(false);
+		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
+		$table->addColumn('memory', Types::JSON)->setNotnull(false);
+		$table->addColumn('mode', Types::STRING, ['length' => 255])->setNotnull(true)->setDefault(ModeEnum::NORMAL->value);
+		$table->addColumn('updated_at', Types::DATETIME_IMMUTABLE)->setNotnull(true)->setDefault('CURRENT_TIMESTAMP');
+
+		$table->setPrimaryKey(['id']);
+		$table->addIndex(['identifier']);
+		$table->addIndex(['state']);
+
+		$schemaManager = $this->createSchemaManager();
+		if ($schemaManager->tablesExist([$this->config['tableName']])) {
+			$tableDiff = $schemaManager->createComparator()->compareTables($this->createSchemaManager()->introspectTable($this->config['tableName']), $table);
+			$sqls = $this->connection->getDatabasePlatform()->getAlterTableSQL($tableDiff);
+		} else {
+			$sqls = $this->connection->getDatabasePlatform()->getCreateTableSQL($table);
+		}
+		foreach ($sqls as $sql) {
+			$this->executeStatement($sql);
+		}
+	}
+
+	public function dieIfNecessary(): void
+	{
+		if ($this->shouldDie) {
+			die();
 		}
 	}
 
@@ -417,31 +505,277 @@ class BackgroundQueue
 		return $unfinishedJobIdentifiers;
 	}
 
-	public function getConfig(): array
+	public static function parseDsn($dsn): array
 	{
-		return $this->config;
+		// Parse the DSN string
+		$parsedDsn = parse_url($dsn);
+
+		if ($parsedDsn === false || !isset($parsedDsn['scheme'], $parsedDsn['host'], $parsedDsn['path'])) {
+			throw new RuntimeException("Invalid DSN: " . $dsn);
+		}
+
+		// Convert DSN scheme to Doctrine DBAL driver name
+		$driversMap = [
+			'mysql' => 'pdo_mysql',
+			'pgsql' => 'pdo_pgsql',
+			'sqlsrv' => 'pdo_sqlsrv',
+		];
+
+		if (!isset($driversMap[$parsedDsn['scheme']])) {
+			throw new RuntimeException("Unknown DSN scheme: " . $parsedDsn['scheme']);
+		}
+
+		// Convert DSN components to Doctrine DBAL connection parameters
+		$dbParams = [
+			'driver'   => $driversMap[$parsedDsn['scheme']],
+			'user'     => $parsedDsn['user'] ?? null,
+			'password' => $parsedDsn['pass'] ?? null,
+			'host'     => $parsedDsn['host'],
+			'dbname'   => ltrim($parsedDsn['path'], '/'),
+		];
+
+		if (isset($parsedDsn['port'])) {
+			$dbParams['port'] = $parsedDsn['port'];
+		}
+
+		return $dbParams;
 	}
 
+	private function createConnection(): void
+	{
+		if (!$this->connectionCreated) {
+			$this->connection = DriverManager::getConnection($this->connection->getParams());
+			$this->connectionCreated = true;
+		}
+	}
 
 	/**
-	 * @internal
+	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function isRedundant(BackgroundJob $entity): bool
+	{
+		if (!$entity->isModeUnique()) {
+			return false;
+		}
+
+		$qb = $this->createQueryBuilder();
+
+		$qb->andWhere('identifier = :identifier')
+			->setParameter('identifier', $entity->getIdentifier());
+
+		$qb->andWhere('id < :id')
+			->setParameter('id', $entity->getId());
+
+		return (bool) $this->fetchAll($qb, 1);
+	}
+
+	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws SchemaException
 	 */
-	public function createQueryBuilder(): QueryBuilder
+	private function getPreviousUnfinishedJobId(BackgroundJob $entity): ?int
+	{
+		foreach ($this->findOldestUnfinishedJobIdsByGroup(array_merge(BackgroundJob::READY_TO_PROCESS_STATES, [BackgroundJob::STATE_PROCESSING]), $entity) as $id) {
+			return $id;
+		}
+		return null;
+	}
+
+	/**
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function findOldestUnfinishedJobIdsByGroup(array|string $state, ?BackgroundJob $entity = null): iterable
+	{
+		$qb = $this->createQueryBuilder();
+
+		$qb->select('MIN(id) as id');
+
+		$qb->andWhere('state IN (:state)')
+			->setParameter('state', $state);
+
+		if ($entity) {
+			$qb->andWhere('serial_group = :serialGroup')
+				->setParameter('serialGroup', $entity->getSerialGroup());
+
+			$qb->andWhere('id < :id')
+				->setParameter('id', $entity->getId());
+		}
+
+		$qb->groupBy('serial_group');
+
+		$qb->orderBy('id', 'ASC');
+
+		foreach ($this->fetchAll($qb, toEntity: false) as $row) {
+			yield $row['id'];
+		}
+
+		return [];
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function save(BackgroundJob $entity): void
+	{
+		$this->databaseConnectionCheckAndReconnect();
+
+		if (!$entity->getId()) {
+			if ($this->producer) {
+				$entity->setProcessedByBroker(true);
+			}
+
+			$this->bulkDatabaseEntities[] = $entity;
+
+			if (count($this->bulkDatabaseEntities) >= $this->bulkSize) {
+				$this->doPublishToDatabase();
+			}
+		} else {
+			if ($entity->getState() === BackgroundJob::STATE_READY) {
+				$entity->setUpdatedAt(new DateTimeImmutable());
+			}
+			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
+		}
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function createSchemaManager(): AbstractSchemaManager
+	{
+		return method_exists($this->connection, 'createSchemaManager')
+			? $this->connection->createSchemaManager()
+			: $this->connection->getSchemaManager();
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function executeStatement(string $sql): void
+	{
+		method_exists($this->connection, 'executeStatement')
+			? $this->connection->executeStatement($sql)
+			: $this->connection->exec($sql);
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function fetchAllAssociative(string $sql, array $parameters): array
+	{
+		return method_exists($this->connection, 'fetchAllAssociative')
+			? $this->connection->fetchAllAssociative($sql, $parameters)
+			: $this->connection->fetchAll($sql, $parameters);
+	}
+
+	private static function getPostponement(int $numberOfAttempts): int
+	{
+		return min(16, 2 ** ($numberOfAttempts -1)) * 1000 * 60;
+	}
+
+	/**
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	private function getEntity(int $id): BackgroundJob
+	{
+		$this->databaseConnectionCheckAndReconnect();
+
+		$qb = $this->createQueryBuilder()
+			->andWhere('id = :id')
+			->setParameter('id',  $id);
+
+		if (!$entities = $this->fetchAll($qb, 1)) {
+			throw new JobNotFoundException();
+		}
+
+		return $entities[0];
+	}
+
+	/**
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function checkUnfinishedJobs(BackgroundJob $entity): bool
+	{
+		if (!$entity->getSerialGroup()) {
+			return true;
+		}
+
+		if ($previousEntityId = $this->getPreviousUnfinishedJobId($entity)) {
+			try {
+				$entity->setState(BackgroundJob::STATE_WAITING);
+				$entity->setErrorMessage('Waiting for job ID ' . $previousEntityId);
+				$entity->setPostponedBy($this->config['waitingJobExpiration']);
+				$this->save($entity);
+			} catch (Exception $e) {
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
+			}
+			return false;
+		}
+
+		return true;
+	}
+
+	private function getPriority(?int $priority, string $callbackName): int
+	{
+		if (is_null($priority)) {
+			$priority = $this->config['callbacks'][$callbackName]['priority'] ?? array_values($this->config['priorities'])[0];
+		}
+
+		if (!in_array($priority, $this->config['priorities'])) {
+			throw new InvalidArgumentException("Priority $priority for callback $callbackName is not in available priorities: " . implode(',', $this->config['priorities']));
+		}
+
+		return $priority;
+	}
+
+	private function getCallback($callback): callable
+	{
+		return $this->config['callbacks'][$callback]['callback'] ?? $this->config['callbacks'][$callback];
+	}
+
+	private function getMemories(): array
+	{
+		return [
+			'notRealActual' => memory_get_usage(),
+			'realActual' => memory_get_usage(true),
+			'notRealPeak' => memory_get_peak_usage(),
+			'realPeak' => memory_get_peak_usage(true),
+		];
+	}
+
+	/**
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	private function processWaitingJobs(): void
+	{
+		foreach ($this->findOldestUnfinishedJobIdsByGroup(BackgroundJob::STATE_WAITING) as $id) {
+			$_entity = $this->getEntity($id);
+
+			$_entity->setState(BackgroundJob::STATE_READY);
+			$this->save($_entity);
+			$this->publishToBroker($_entity);
+		}
+	}
+
+	private function createQueryBuilder(): QueryBuilder
 	{
 		return $this->connection->createQueryBuilder()
 			->select('*')
 			->from($this->config['tableName'])
-			->andWhere('queue = :queue')
-			->setParameter('queue', $this->config['queue']);
+			->andWhere('queue LIKE :queue')
+			->setParameter('queue', $this->config['queue'] . '%');
 	}
 
 	/**
 	 * @throws Exception|\Doctrine\DBAL\Exception
-	 * @internal
 	 */
-	public function fetchAll(QueryBuilder $qb, ?int $maxResults = null, $toEntity = true): array
+	private function fetchAll(QueryBuilder $qb, ?int $maxResults = null, $toEntity = true): array
 	{
 		$sql = $qb->setMaxResults($maxResults)->getSQL();
 		$parameters = $qb->getParameters();
@@ -459,110 +793,6 @@ class BackgroundQueue
 		}
 
 		return $entities;
-	}
-
-	public function startBulk(): void
-	{
-		$this->bulkSize = $this->config['bulkSize'];
-	}
-
-	/**
-	 * @throws \Doctrine\DBAL\Exception
-	 * @throws SchemaException
-	 */
-	public function endBulk(): void
-	{
-		$this->doPublishToDatabase();
-		$this->doPublishToBroker();
-		$this->bulkSize = 1;
-	}
-
-	/**
-	 * @throws Exception|\Doctrine\DBAL\Exception
-	 */
-	private function fetch(QueryBuilder $qb): ?BackgroundJob
-	{
-		return ($entities = $this->fetchAll($qb, 1)) ? $entities[0]: null;
-	}
-
-	/**
-	 * @throws Exception|\Doctrine\DBAL\Exception
-	 */
-	private function count(QueryBuilder $qb): int
-	{
-		return count($this->fetchAll($qb, 1, false));
-	}
-
-	/**
-	 * @throws Exception
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	private function isRedundant(BackgroundJob $entity): bool
-	{
-		if (!$entity->isUnique()) {
-			return false;
-		}
-
-		$qb = $this->createQueryBuilder();
-
-		$qb->andWhere('identifier = :identifier')
-			->setParameter('identifier', $entity->getIdentifier());
-
-		$qb->andWhere('id < :id')
-			->setParameter('id', $entity->getId());
-
-		return (bool) $this->fetch($qb);
-	}
-
-	/**
-	 * @throws SchemaException
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	private function getPreviousUnfinishedJob(BackgroundJob $entity): ?BackgroundJob
-	{
-		if (!$entity->getSerialGroup()) {
-			return null;
-		}
-
-		$qb = $this->createQueryBuilder();
-
-		$qb->andWhere('state NOT IN (:state)')
-			->setParameter('state', BackgroundJob::FINISHED_STATES);
-
-		$qb->andWhere('serial_group = :serial_group')
-			->setParameter('serial_group', $entity->getSerialGroup());
-
-		if ($entity->getId()) {
-			$qb->andWhere('id < :id')
-				->setParameter('id', $entity->getId());
-		}
-
-		$qb->orderBy('id');
-
-		return $this->fetch($qb);
-	}
-
-	/**
-	 * @internal
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	public function save(BackgroundJob $entity): void
-	{
-		$this->databaseConnectionCheckAndReconnect();
-
-		if (!$entity->getId()) {
-			if ($this->producer) {
-				$entity->setProcessedByBroker(true);
-			}
-
-			$this->bulkDatabaseEntities[] = $entity;
-
-			if (count($this->bulkDatabaseEntities) >= $this->bulkSize) {
-				$this->doPublishToDatabase();
-			}
-		} else {
-			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
-		}
 	}
 
 	/**
@@ -661,231 +891,78 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Bezpečně ověříme, že nedošlo ke ztrátě spojení k DB.
+	 * Pokud ano, připojíme se znovu.
 	 * @throws \Doctrine\DBAL\Exception
-	 * @throws SchemaException*
-	 * @throws Exception
-	 * @internal
 	 */
-	public function updateSchema(): void
+	private function databaseConnectionCheckAndReconnect(): void
 	{
-		$schema = new Schema([], [], $this->createSchemaManager()->createSchemaConfig());
+		$warningHandler = function($errno, $errstr) {
+			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (warning): code(' . $errno . ') ' . $errstr, 0));
+			$this->connection->close();
+			$this->connection->getNativeConnection();
+		};
 
-		$table = $schema->createTable($this->config['tableName']);
+		set_error_handler($warningHandler, E_WARNING);
 
-		$table->addColumn('id', Types::BIGINT, ['unsigned' => true])->setAutoincrement(true)->setNotnull(true);
-		$table->addColumn('queue', Types::STRING, ['length' => 255])->setNotnull(true);
-		$table->addColumn('priority', Types::INTEGER)->setNotnull(false);
-		$table->addColumn('callback_name', Types::STRING, ['length' => 255])->setNotnull(true);
-		$table->addColumn('parameters', Types::BLOB)->setNotnull(false);
-		$table->addColumn('parameters_json', Types::JSON)->setNotnull(false);
-		$table->addColumn('state', Types::SMALLINT)->setNotnull(true);
-		$table->addColumn('created_at', Types::DATETIME_IMMUTABLE)->setNotnull(true);
-		$table->addColumn('last_attempt_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
-		$table->addColumn('number_of_attempts', Types::INTEGER)->setNotnull(true)->setDefault(0);
-		$table->addColumn('error_message', Types::TEXT)->setNotnull(false);
-		$table->addColumn('serial_group', Types::STRING, ['length' => 255])->setNotnull(false);
-		$table->addColumn('identifier', Types::STRING, ['length' => 255])->setNotnull(false);
-		$table->addColumn('is_unique', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
-		$table->addColumn('postponed_by', Types::INTEGER)->setNotnull(false);
-		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
-		$table->addColumn('execution_time', Types::INTEGER)->setNotnull(false);
-		$table->addColumn('finished_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
-		$table->addColumn('pid', Types::INTEGER)->setNotnull(false);
-		$table->addColumn('metadata', Types::JSON)->setNotnull(false);
-		$table->addColumn('memory', Types::JSON)->setNotnull(false);
-
-		$table->setPrimaryKey(['id']);
-		$table->addIndex(['identifier']);
-		$table->addIndex(['state']);
-
-		$schemaManager = $this->createSchemaManager();
-		if ($schemaManager->tablesExist([$this->config['tableName']])) {
-			$tableDiff = $schemaManager->createComparator()->compareTables($this->createSchemaManager()->introspectTable($this->config['tableName']), $table);
-			$sqls = $this->connection->getDatabasePlatform()->getAlterTableSQL($tableDiff);
-		} else {
-			$sqls = $this->connection->getDatabasePlatform()->getCreateTableSQL($table);
-		}
-		foreach ($sqls as $sql) {
-			$this->executeStatement($sql);
+		try {
+			if (!$this->databasePing()) {
+				$this->connection->close();
+				$this->connection->getNativeConnection();
+			}
+		} catch (Exception $e) {
+			$this->logger->log('critical', new Exception('BackgroundQueue - database connection lost (exception): ' . $e->getMessage(), 0, $e));
+			$this->connection->close();
+			$this->connection->getNativeConnection();
+		} finally {
+			restore_error_handler();
 		}
 	}
 
 	/**
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	private function createSchemaManager(): AbstractSchemaManager
-	{
-		return method_exists($this->connection, 'createSchemaManager')
-			? $this->connection->createSchemaManager()
-			: $this->connection->getSchemaManager();
-	}
-
-	/**
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	private function executeStatement(string $sql): void
-	{
-		method_exists($this->connection, 'executeStatement')
-			? $this->connection->executeStatement($sql)
-			: $this->connection->exec($sql);
-	}
-
-	/**
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	private function fetchAllAssociative(string $sql, array $parameters): array
-	{
-		return method_exists($this->connection, 'fetchAllAssociative')
-			? $this->connection->fetchAllAssociative($sql, $parameters)
-			: $this->connection->fetchAll($sql, $parameters);
-	}
-
-	private static function getPostponement(int $numberOfAttempts): int
-	{
-		return min(16, 2 ** ($numberOfAttempts -1)) * 1000 * 60;
-	}
-
-	public static function parseDsn($dsn): array
-	{
-		// Parse the DSN string
-		$parsedDsn = parse_url($dsn);
-
-		if ($parsedDsn === false || !isset($parsedDsn['scheme'], $parsedDsn['host'], $parsedDsn['path'])) {
-			throw new RuntimeException("Invalid DSN: " . $dsn);
-		}
-
-		// Convert DSN scheme to Doctrine DBAL driver name
-		$driversMap = [
-			'mysql' => 'pdo_mysql',
-			'pgsql' => 'pdo_pgsql',
-			'sqlsrv' => 'pdo_sqlsrv',
-		];
-
-		if (!isset($driversMap[$parsedDsn['scheme']])) {
-			throw new RuntimeException("Unknown DSN scheme: " . $parsedDsn['scheme']);
-		}
-
-		// Convert DSN components to Doctrine DBAL connection parameters
-		$dbParams = [
-			'driver'   => $driversMap[$parsedDsn['scheme']],
-			'user'     => $parsedDsn['user'] ?? null,
-			'password' => $parsedDsn['pass'] ?? null,
-			'host'     => $parsedDsn['host'],
-			'dbname'   => ltrim($parsedDsn['path'], '/'),
-		];
-
-		if (isset($parsedDsn['port'])) {
-			$dbParams['port'] = $parsedDsn['port'];
-		}
-
-		return $dbParams;
-	}
-
-	/**
-	 * @throws SchemaException
-	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
 	 */
-	private function getEntity(int $id, string $queue, int $priority): ?BackgroundJob
+	private function databasePing(): bool
 	{
-		$this->databaseConnectionCheckAndReconnect();
+		set_error_handler(function ($severity, $message) {
+			throw new PDOException($message, $severity);
+		});
 
-		$entity = $this->fetch(
-			$this->createQueryBuilder()
-				->andWhere('id = :id')
-				->setParameter('id',  $id)
-		);
+		try {
+			$this->connection->executeQuery($this->connection->getDatabasePlatform()->getDummySelectSQL());
+			restore_error_handler();
 
-		if (!$entity) {
-			if ($this->producer) {
-				// pokud je to rabbit fungujici v clusteru na vice serverech,
-				// tak jeste nemusi byt syncnuta master master databaze
+			return true;
 
-				// coz si overime tak, ze v db neexistuje vetsi id
-				if (!$this->count($this->createQueryBuilder()->select('id')->andWhere('id > :id')->setParameter('id', $id))) {
-					// pridame znovu do queue
-					try {
-						// Zde máme $queue a $priority, ze kterých bylo vytaženo z brokera, tedy dáváme znovu do té stejné fronty a priority
-						$this->producer->publish((string) $id, $queue, $priority, $this->config['waitingJobExpiration']);
-					} catch (Exception $e) {
-						$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
-
-						$entity->setState(BackgroundJob::STATE_BROKER_FAILED);
-						$this->save($entity);
-					}
-				} else {
-					// zalogovat
-					$this->logException('Job "' . $id . '" not found.');
-				}
-			} else {
-				// zalogovat
-				$this->logException('Job "' . $id . '" not found.');
-			}
-			return null;
-		}
-
-		return $entity;
-	}
-
-	/**
-	 * @throws SchemaException
-	 * @throws \Doctrine\DBAL\Exception
-	 */
-	private function checkUnfinishedJobs(BackgroundJob $entity): bool
-	{
-		if ($previousEntity = $this->getPreviousUnfinishedJob($entity)) {
-			try {
-				$entity->setState(BackgroundJob::STATE_WAITING);
-				$entity->setErrorMessage('Waiting for job ID ' . $previousEntity->getId());
-				$entity->setPostponedBy($this->config['waitingJobExpiration']);
-				$this->save($entity);
-				$this->publishToBroker($entity);
-			} catch (Exception $e) {
-				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
-			}
+		} catch (\Doctrine\DBAL\Exception) {
+			restore_error_handler();
 			return false;
+
+		} catch (Exception $e) {
+			restore_error_handler();
+			throw $e;
+		}
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws JsonException
+	 */
+	private function cloneAndPublish(BackgroundJob $entity): void
+	{
+		if (!$this->getUnfinishedJobIdentifiers([$entity->getIdentifier()])) {
+			$this->publish($entity->getCallbackName(), $entity->getParameters(), $entity->getSerialGroup(), $entity->getIdentifier(), $entity->getMode(), $this->config['waitingJobExpiration'], $entity->getPriority());
+		}
+	}
+
+	public function getQueue(?string $queue): string
+	{
+		$result = $this->config['queue'];
+
+		if ($queue !== null) {
+			$result .= '_' . $queue;
 		}
 
-		return true;
-	}
-
-	private function getPriority(?int $priority, string $callbackName): int
-	{
-		if (is_null($priority)) {
-			$priority = $this->config['callbacks'][$callbackName]['priority'] ?? array_values($this->config['priorities'])[0];
-		}
-
-		if (!in_array($priority, $this->config['priorities'])) {
-			throw new InvalidArgumentException("Priority $priority for callback $callbackName is not in available priorities: " . implode(',' , $this->config['priorities']));
-		}
-
-		return $priority;
-	}
-
-	private function getCallback($callback): callable
-	{
-		return $this->config['callbacks'][$callback]['callback'] ?? $this->config['callbacks'][$callback];
-	}
-
-	public function getQueueForEntityIncludeCallback(BackgroundJob $entity): string
-	{
-		return $this->config['callbacks'][$entity->getCallbackName()]['queue'] ?? $entity->getQueue();
-	}
-
-	private function getMemories(): array
-	{
-		return [
-			'notRealActual' => memory_get_usage(),
-			'realActual' => memory_get_usage(true),
-			'notRealPeak' => memory_get_peak_usage(),
-			'realPeak' => memory_get_peak_usage(true),
-		];
-	}
-
-	public function dieIfNecessary(): void
-	{
-		if ($this->shouldDie) {
-			die();
-		}
+		return $result;
 	}
 }

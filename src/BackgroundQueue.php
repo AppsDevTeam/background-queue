@@ -358,6 +358,11 @@ class BackgroundQueue
 			if ($state === BackgroundJob::STATE_FINISHED) {
 				if ($entity->isModeRecurring()) {
 					$this->cloneAndPublish($entity);
+
+					// Interní podpůrný job se v DB jen hromadí a jeho historie nemá hodnotu, proto dokončený záznam rovnou smažeme.
+					if ($entity->getCallbackName() === CallbackNameEnum::PROCESS_WAITING_JOBS->value) {
+						$this->deleteJob($entity->getId());
+					}
 				}
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				$this->publishToBroker($entity);
@@ -637,6 +642,14 @@ class BackgroundQueue
 			}
 			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
 		}
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function deleteJob(int $id): void
+	{
+		$this->connection->delete($this->config['tableName'], ['id' => $id]);
 	}
 
 	/**

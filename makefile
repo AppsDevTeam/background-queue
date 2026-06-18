@@ -13,7 +13,7 @@ CODECEPT=php vendor/bin/codecept
 # ------------------------------------------------------------------------------
 
 config:
-	cp .env.local .env
+	cp .env.example .env
 
 init:
 	docker exec -e COMPOSER_HOME=/var/www/html/.composer background-queue_php composer install

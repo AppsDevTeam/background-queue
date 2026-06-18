@@ -13,11 +13,17 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	public ?AMQPChannel $channel = null;
 	private array $initQueues = [];
 
+	/**
+	 * Priorita se v RabbitMQ modeluje jako samostatná fronta "<queue>_<priority>"
+	 * (viz reálný Producer / Manager::getQueueWithPriority). Helper to napodobuje,
+	 * aby šel otestovat prioritní routing i konzumace v pořadí priorit.
+	 */
 	public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void
 	{
-		$this->initQueue($queue);
+		$queueWithPriority = $queue . '_' . $priority;
+		$this->initQueue($queueWithPriority);
 
-		$this->getChannel()->basic_publish(new AMQPMessage($id, $expiration ? ['expiration' => $expiration] : []), $queue, '', true);
+		$this->getChannel()->basic_publish(new AMQPMessage($id, $expiration ? ['expiration' => $expiration] : []), $queueWithPriority, '', true);
 		$this->getChannel()->wait_for_pending_acks();
 	}
 
@@ -31,9 +37,21 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 
 	}
 
-	public function consume()
+	/**
+	 * Zkonzumuje jednu zprávu z prioritních front základní fronty "general"
+	 * v pořadí priorit (nižší číslo dřív), stejně jako reálný Consumer.
+	 * Vrátí tělo zprávy (ID jobu) nebo null, pokud žádná není k dispozici.
+	 */
+	public function consume(?string $queue = null): ?string
 	{
-		$this->getChannel()->basic_get('general', true);
+		foreach ($this->getSortedPriorityQueues($queue ?? 'general') as $priorityQueue) {
+			$message = $this->getChannel()->basic_get($priorityQueue, true);
+			if ($message !== null) {
+				return $message->getBody();
+			}
+		}
+
+		return null;
 	}
 
 	public function purge(string $queue): void
@@ -42,11 +60,39 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		$this->getChannel()->queue_purge($queue);
 	}
 
-	public function getMessageCount(string $queue)
+	/**
+	 * Vrátí počet zpráv ve frontě. Pokud je zadána základní fronta (např. "general"),
+	 * sečte všechny její prioritní podfronty ("general_1", "general_2", ...).
+	 */
+	public function getMessageCount(string $queue): int
 	{
-		list(, $messageCount,) = $this->getChannel()->queue_declare($queue, true);
+		$total = 0;
+		foreach (array_keys($this->initQueues) as $declared) {
+			if ($declared === $queue || str_starts_with($declared, $queue . '_')) {
+				list(, $messageCount,) = $this->getChannel()->queue_declare($declared, true);
+				$total += (int) $messageCount;
+			}
+		}
 
-		return $messageCount;
+		return $total;
+	}
+
+	/**
+	 * Seřadí dosud inicializované prioritní podfronty dané základní fronty vzestupně podle priority.
+	 *
+	 * @return string[]
+	 */
+	private function getSortedPriorityQueues(string $base): array
+	{
+		$queues = [];
+		foreach (array_keys($this->initQueues) as $declared) {
+			if (preg_match('/^' . preg_quote($base, '/') . '_(\d+)$/', $declared, $matches)) {
+				$queues[(int) $matches[1]] = $declared;
+			}
+		}
+		ksort($queues);
+
+		return array_values($queues);
 	}
 
 	private function initQueue($queue)

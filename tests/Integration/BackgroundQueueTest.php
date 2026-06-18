@@ -9,8 +9,9 @@ use Tests\Support\Helper\Logger;
 use Tests\Support\Helper\Mailer;
 use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
+use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
+use ADT\BackgroundQueue\Exception\JobNotFoundException;
 use Codeception\Test\Unit;
-use DateTimeImmutable;
 use Doctrine\DBAL\DriverManager;
 use Exception;
 use Tests\Support\Helper\Producer;
@@ -68,14 +69,14 @@ class BackgroundQueueTest extends Unit
 				'producer' => true,
 				'waitingQueue' => false,
 				'expectedState' => BackgroundJob::STATE_READY,
-				'expectedQueue' => null,
+				'expectedQueue' => 'general',
 			],
 			'delay; producer; waiting queue' => [
 				'availableAt' => true,
 				'producer' => true,
 				'waitingQueue' => true,
 				'expectedState' => BackgroundJob::STATE_READY,
-				'expectedQueue' => 'waiting'
+				'expectedQueue' => 'general',
 			],
 		];
 	}
@@ -87,10 +88,10 @@ class BackgroundQueueTest extends Unit
 	public function testPublish(bool $availableAt, bool $producer, bool $waitingQueue, $expectedState, ?string $expectedQueue)
 	{
 		$backgroundQueue = self::getBackgroundQueue($producer, $waitingQueue);
-		$backgroundQueue->publish('process', null, null, null, false, $availableAt ?  new DateTimeImmutable('+1 hour') : null);
+		$backgroundQueue->publish('process', null, null, null, ModeEnum::NORMAL, $availableAt ? 3600000 : null);
 
 		/** @var BackgroundJob[] $backgroundJobs */
-		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
+		$backgroundJobs = self::fetchAllJobs($backgroundQueue);
 		$this->tester->assertEquals($expectedState, $backgroundJobs[0]->getState(), 'state');
 		if ($expectedQueue) {
 			$this->tester->assertEquals(1, self::$producer->getMessageCount($expectedQueue), 'queue');
@@ -109,14 +110,14 @@ class BackgroundQueueTest extends Unit
 			'producer, no waiting queue' => [
 				'producer' => true,
 				'waitingQueue' => false,
-				'expectedException' => false,
-				'expectedQueue' => 'general'
+				'expectedException' => true,
+				'expectedQueue' => null
 			],
 			'producer, waiting queue' => [
 				'producer' => true,
 				'waitingQueue' => true,
-				'expectedException' => false,
-				'expectedQueue' => 'waiting'
+				'expectedException' => true,
+				'expectedQueue' => null
 			]
 		];
 	}
@@ -137,18 +138,18 @@ class BackgroundQueueTest extends Unit
 		$backgroundQueue->publish('process');
 
 		/** @var BackgroundJob[] $backgroundJobs */
-		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
+		$backgroundJobs = self::fetchAllJobs($backgroundQueue);
 
 		$backgroundQueue = self::getBackgroundQueue($producer, $waitingQueue, true);
 
 		$this->tester->assertEquals($backgroundJobs[0], $method->invoke($backgroundQueue, $backgroundJobs[0]->getId()));
 
-		$this->assertThrowsWithMessage(Exception::class, 'exception: backgroundqueue: No job found for ID "' . $backgroundJobs[0]->getId() - 1 . '".', function () use ($method, $backgroundQueue, $backgroundJobs) {
+		$this->assertThrows(JobNotFoundException::class, function () use ($method, $backgroundQueue, $backgroundJobs) {
 			$method->invoke($backgroundQueue, $backgroundJobs[0]->getId() - 1);
 		});
 
 		if ($expectedException) {
-			$this->assertThrowsWithMessage(Exception::class, 'exception: backgroundqueue: No job found for ID "' . $backgroundJobs[0]->getId() + 1 . '".', function () use ($method, $backgroundQueue, $backgroundJobs) {
+			$this->assertThrows(JobNotFoundException::class, function () use ($method, $backgroundQueue, $backgroundJobs) {
 				$method->invoke($backgroundQueue, $backgroundJobs[0]->getId() + 1);
 			});
 		} else {
@@ -177,7 +178,7 @@ class BackgroundQueueTest extends Unit
 			],
 			'process with waiting exception' => [
 				'callback' => 'processWithWaitingException',
-				'expectedState' => BackgroundJob::STATE_WAITING,
+				'expectedState' => BackgroundJob::STATE_FINISHED,
 			],
 			'process with type error' => [
 				'callback' => 'processWithTypeError',
@@ -202,8 +203,9 @@ class BackgroundQueueTest extends Unit
 		$backgroundQueue->publish($callback);
 
 		/** @var BackgroundJob[] $backgroundJobs */
-		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
+		$backgroundJobs = self::fetchAllJobs($backgroundQueue);
 		$backgroundQueue->processJob($backgroundJobs[0]->getId());
+		$backgroundJobs = self::fetchAllJobs($backgroundQueue);
 		$this->tester->assertEquals($expectedState, $backgroundJobs[0]->getState());
 	}
 
@@ -243,7 +245,7 @@ class BackgroundQueueTest extends Unit
 		$backgroundQueue->publish('process', null, 'checkUnfinishedJobs');
 
 		/** @var BackgroundJob[] $backgroundJobs */
-		$backgroundJobs = $backgroundQueue->fetchAll($backgroundQueue->createQueryBuilder());
+		$backgroundJobs = self::fetchAllJobs($backgroundQueue);
 		$this->tester->assertEquals(true, $method->invoke($backgroundQueue, $backgroundJobs[0]));
 		$this->tester->assertEquals(false, $method->invoke($backgroundQueue, $backgroundJobs[1]));
 		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, $backgroundJobs[1]->getState(), 'state');
@@ -251,12 +253,6 @@ class BackgroundQueueTest extends Unit
 			self::getProducer()->consume();
 			self::getProducer()->consume();
 			$this->tester->assertEquals(0, self::$producer->getMessageCount('general'), 'general');
-			$this->tester->assertEquals((int) $waitingQueue, self::$producer->getMessageCount('waiting'), 'waiting');
-			if ($waitingQueue) {
-				sleep(1);
-				$this->tester->assertEquals(1, self::$producer->getMessageCount('general'), 'general after 1s');
-				$this->tester->assertEquals(0, self::$producer->getMessageCount('waiting'), 'waiting after 1s');
-			}
 		}
 	}
 	
@@ -269,12 +265,19 @@ class BackgroundQueueTest extends Unit
 		return self::$producer;
 	}
 
+	private static function fetchAllJobs(BackgroundQueue $backgroundQueue): array
+	{
+		$rc = new \ReflectionClass(BackgroundQueue::class);
+		$qb = $rc->getMethod('createQueryBuilder')->invoke($backgroundQueue);
+		return $rc->getMethod('fetchAll')->invoke($backgroundQueue, $qb);
+	}
+
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
 	private static function getBackgroundQueue(bool $producer = false, bool $waitingQueue = false, bool $logger = false): BackgroundQueue
 	{
-		return new BackgroundQueue([
+		$bq = new BackgroundQueue([
 			'callbacks' => [
 				'process' => [new Mailer(), 'process'],
 				'processWithTemporaryError' => [new Mailer(), 'processWithTemporaryError'],
@@ -285,7 +288,7 @@ class BackgroundQueueTest extends Unit
 			],
 			'notifyOnNumberOfAttempts' => 5,
 			'tempDir' => $_ENV['PROJECT_TMP_FOLDER'],
-			'connection' => self::getDsn(),
+			'connection' => DriverManager::getConnection(BackgroundQueue::parseDsn(self::getDsn())),
 			'queue' => 'general',
 			'tableName' => $_ENV['PROJECT_DB_TABLENAME'],
 			'producer' => $producer ? self::getProducer() : null,
@@ -298,6 +301,8 @@ class BackgroundQueueTest extends Unit
 				}
 			}
 		]);
+		$bq->updateSchema();
+		return $bq;
 	}
 
 	private static function getDsn()

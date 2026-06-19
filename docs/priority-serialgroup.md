@@ -176,7 +176,7 @@ nejdřív `checkUnfinishedJobs()` (řádek 254), pak až o kus dál `setState(PR
 současně.
 
 Řešení: kolem **[checkUnfinishedJobs + zápis PROCESSING]** dát pojmenovaný zámek na
-skupinu - MySQL `GET_LOCK('bgq:'+serialGroup)` na začátku, `RELEASE_LOCK` po zápisu.
+skupinu - MySQL `GET_LOCK('bgq:'+crc32(serialGroup))` na začátku, `RELEASE_LOCK` po zápisu.
 Drží se jen pár mikrosekund (ne po dobu zpracování callbacku). `processJob` má vlastní
 `createConnection()` (řádek 235), takže connection-scoped zámek sedí. Serializuje jen
 konzumenty téže skupiny, různé skupiny se neperou.
@@ -195,25 +195,30 @@ use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 $platform = $this->connection->getDatabasePlatform();
 ```
 
+`acquireGroupLock` vrací `bool` (true = získáno, false = v limitu nezískáno) - **nevyhazuje
+výjimku**. Když se zámek nezíská, `processJob` job nezahodí: vrátí ho do brokera
+(`publishToBroker`) a zpracuje se příště (v cron módu je to no-op a job vezme příští běh
+`process()`). Tím jediná kolize zámku neshodí výjimkou celý běh `process()` / konzumenta.
+
 MySQL (`GET_LOCK` / `RELEASE_LOCK`):
 
 ```php
-private function acquireGroupLock(string $serialGroup): void
+private function acquireGroupLock(string $serialGroup): bool
 {
+    // Název zámku musí být max 64 znaků (jinak GET_LOCK vrátí NULL); serial_group je
+    // VARCHAR(255), proto skupinu hashujeme přes crc32 na stabilní krátký název.
     $acquired = $this->connection->fetchOne(
-        "SELECT GET_LOCK(?, 10)",
-        ['bgq:' . $serialGroup]
+        "SELECT GET_LOCK(?, ?)",
+        ['bgq:' . crc32($serialGroup), self::GROUP_LOCK_TIMEOUT]
     );
-    if (!$acquired) {
-        throw new \RuntimeException('Could not acquire serial group lock for: ' . $serialGroup);
-    }
+    return (int) $acquired === 1; // 1 = získáno, 0 = timeout, NULL = chyba
 }
 
 private function releaseGroupLock(string $serialGroup): void
 {
     $this->connection->executeStatement(
         "SELECT RELEASE_LOCK(?)",
-        ['bgq:' . $serialGroup]
+        ['bgq:' . crc32($serialGroup)]
     );
 }
 ```
@@ -221,32 +226,55 @@ private function releaseGroupLock(string $serialGroup): void
 PostgreSQL (`pg_advisory_lock` / `pg_advisory_unlock`):
 
 ```php
-private function acquireGroupLock(string $serialGroup): void
+private function acquireGroupLock(string $serialGroup): bool
 {
-    // pg_advisory_lock vyžaduje integer klíče - použijeme fixní namespace + crc32 skupiny.
-    // Timeout přes lock_timeout session proměnnou (platí jen pro toto volání).
-    $this->connection->executeStatement("SET LOCAL lock_timeout = '10s'");
-    $this->connection->executeStatement(
-        "SELECT pg_advisory_lock(?, ?)",
-        [self::PG_LOCK_NAMESPACE, crc32($serialGroup)]
-    );
+    // pg_advisory_lock(bigint): klíč = (namespace << 32) | crc32(skupina). Dvouargumentová
+    // varianta bere int4 a crc32 (až 2^32-1) by ji přetekla ("integer out of range"), proto
+    // jednoargumentová bigint varianta se složeným 64bit klíčem. Timeout přes lock_timeout.
+    $this->connection->executeStatement("SET lock_timeout = '" . (self::GROUP_LOCK_TIMEOUT * 1000) . "'");
+    try {
+        $this->connection->executeStatement(
+            "SELECT pg_advisory_lock(?)",
+            [(self::PG_LOCK_NAMESPACE << 32) | crc32($serialGroup)]
+        );
+    } catch (\Doctrine\DBAL\Exception $e) {
+        return false; // vypršení lock_timeout - job zpracujeme příště
+    }
+    return true;
 }
 
 private function releaseGroupLock(string $serialGroup): void
 {
     $this->connection->executeStatement(
-        "SELECT pg_advisory_unlock(?, ?)",
-        [self::PG_LOCK_NAMESPACE, crc32($serialGroup)]
+        "SELECT pg_advisory_unlock(?)",
+        [(self::PG_LOCK_NAMESPACE << 32) | crc32($serialGroup)]
     );
 }
 ```
 
-Konstanta `PG_LOCK_NAMESPACE` (např. `0x42475100` = ASCII `BGQ\0`) odděluje klíče
-background-queue od ostatních advisory locků v aplikaci. `crc32($serialGroup)` vrací
-int32 - pro jména skupin v rámci jedné aplikace je pravděpodobnost kolize zanedbatelná;
-při potřebě vyšší jistoty lze použít `abs(crc32(...))` nebo dedikovanou číselnou řadu.
+Konstanta `PG_LOCK_NAMESPACE` (`0x42475100` = ASCII `BGQ\0`) tvoří horní 32 bitů klíče a
+odděluje zámky background-queue od ostatních advisory locků v aplikaci; dolních 32 bitů je
+`crc32($serialGroup)`. Složený klíč se vejde do signed bigint (`namespace << 32` ≈ 4,8e18 <
+bigint max ~9,2e18). MySQL i PostgreSQL tak mapují skupinu na `crc32`, takže kolize nastane
+jen při kolizi crc32 dvou různých názvů skupin - viz odhad pravděpodobnosti níže. Kolize
+neohrozí korektnost, jen by dvě nezávislé skupiny zbytečně serializovala.
 
-`processJob` pak volá `acquireGroupLock` / `releaseGroupLock` beze znalosti DB platformy
+**Pravděpodobnost kolize crc32 (birthday problem, prostor 2^32).** Pro `n` současně živých
+různých názvů skupin je šance, že aspoň dvě sdílí crc32, ≈ `1 - e^(-n²/2^33)`:
+
+| různých skupin `n` | P(aspoň jedna kolize) |
+|-------------------:|----------------------:|
+| 100                | ~0,0001 % (1 z ~860 tis.) |
+| 1 000              | ~0,012 % (1 z ~8 600) |
+| 10 000             | ~1,15 % |
+| 50 000             | ~25 % |
+| 77 000             | ~50 % |
+
+V praxi je počet *současně živých* serialGroup řádově malý (jednotky až stovky), takže je
+kolize zanedbatelná. Kdyby se počet skupin blížil desítkám tisíc, šlo by přejít na 64bit
+hash (např. `crc32b` + `crc32` do dvou půlek, nebo `substr(md5(...), 0, 16)` na hex → int).
+
+`processJob` volá `acquireGroupLock` / `releaseGroupLock` beze znalosti DB platformy
 a switch logika žije pouze v těchto dvou metodách.
 
 Příklad kolize bez zámku (A má horší prioritu, B přijde dřív než A zapsal PROCESSING):
@@ -321,18 +349,80 @@ zpracovává nebo dokončil) → aktuální konzument tiše vrátí `return`. Ch
 Jde o **laciné pojistné patro navíc**: UPDATE je atomický na úrovni DB, takže i při
 dokonalém souběhu T3 a T4 může podmíněný UPDATE uspět jen jednomu z konzumentů.
 
-### Náročnost / indexy
+### Náročnost, výběr hlavy skupiny a benchmark
 
-**Souhrn:** Problém s náročností při velkém počtu nedokončených jobů existuje už dnes -
-nevzniká novým řešením. Nová podmínka (`priority`, `PROCESSING`) na tom nic nemění, protože
-jde o filtry vyhodnocené na řádcích, které už beztak vybral index `state`.
+Náročnost je třeba posoudit zvlášť pro dva dotazy, které řazení dle `(priorita, ID)`
+přepracovává.
 
-Přidané podmínky (`priority`, `PROCESSING`) jsou residual filtry na řádcích, které už
-vybral index `state` (`src/BackgroundQueue.php:457-459` zakládá indexy jen na `id`, `identifier`,
-`state`). **Žádný nový index nepotřebují, plán dotazu se nemění.** Náklad je daný počtem
-nedokončených jobů, ne velikostí tabulky. (Pokud by se nedokončené joby hromadily do
-velkých čísel, šlo by zvážit kompozitní index `(serial_group, state, priority, id)`, ale
-to je nezávislé na této opravě.)
+**a) `getPreviousUnfinishedJobId` (hot path - volá se pro každý zpracovávaný job).**
+Přidané podmínky (`priority`, `PROCESSING`) jsou jen residual filtry na řádcích, které už
+vybral index `state` (`updateSchema()` zakládá indexy na `id`, `identifier`, `state`).
+Dotaz je navíc omezen na jednu `serial_group` a stačí mu existence prvního předchůdce, proto
+má `LIMIT 1` a vrací max jeden řádek. Žádný nový index nepotřebuje.
+
+**b) `findOldestUnfinishedJobIdsByGroup` (volá `processWaitingJobs`, v broker módu zhruba
+jednou za `waitingJobExpiration`, tj. ~1×/s).** Tady "hlava skupiny" už není prosté
+`MIN(id)` jako ve staré implementaci (řazení jen dle ID), ale "nejmenší ID z nejvyšší
+přítomné priority ve skupině". To vyžaduje agregaci přes `(priorita, ID)` a právě tady
+vznikl problém s náročností. Níže zvažované varianty řeší jen tenhle dotaz.
+
+#### Zvažované varianty
+
+- **Stará implementace (před prioritou):** `SELECT MIN(id) ... GROUP BY serial_group`. Jeden
+  grupovaný průchod, ~O(W) (W = počet nedokončených jobů ve frontě). Funguje ale jen pro
+  řazení čistě podle ID, prioritu vyjádřit neumí.
+- **Mezikrok (zavržený) - dedup v PHP:** vytáhnout všechny řádky seřazené dle `(priorita, ID)`
+  a v PHP nechat první na skupinu. Jednoduché, ale do PHP táhne **všechny** WAITING joby
+  napříč skupinami - horší než stará implementace. Zamítnuto.
+- **Korelovaný poddotaz:** `... AND priority = (SELECT MIN(sub.priority) ... WHERE
+  sub.serial_group = ...)`. Agregace zpět v SQL (jeden řádek na skupinu), ale `EXPLAIN`
+  ukázal `DEPENDENT SUBQUERY` - poddotaz se vyhodnocuje pro **každý vnější řádek**, tedy
+  **O(W²)**. Bez kompozitního indexu na velkém objemu extrémně pomalé (viz benchmark).
+- **Varianta A - kompozitní index `(serial_group, state, priority, id)`:** korelovaný
+  poddotaz se s ním změní z plného skenu na `ref` lookup, tedy zpět k ~lineárnímu. Nevýhody:
+  `state` je v indexu, takže každá z mnoha změn stavu jobu navíc udržuje tenhle (široký,
+  kvůli `serial_group VARCHAR(255)` má klíč ~1 KB) index = write-amplifikace; index pokrývá
+  i řádky bez serialGroup (`serial_group IS NULL`) a pomáhá jen dvěma dotazům.
+- **Varianta B (zvolená) - JOIN s odvozenou tabulkou:** nejnižší priorita každé skupiny se
+  spočítá **jednou** v odvozené tabulce a připojí se zpět:
+
+  ```sql
+  SELECT MIN(t.id) AS id
+  FROM background_job t
+  INNER JOIN (
+      SELECT serial_group, MIN(priority) AS min_priority
+      FROM background_job
+      WHERE queue LIKE ... AND state IN (...)
+      GROUP BY serial_group
+  ) head ON head.serial_group = t.serial_group AND t.priority = head.min_priority
+  WHERE t.queue LIKE ... AND t.state IN (...)
+  GROUP BY t.serial_group
+  ORDER BY id ASC
+  ```
+
+  ~O(W) **nezávisle na indexu** - žádný nový index, žádná daň na zápisech.
+
+#### Benchmark (MySQL 8, ~20 jobů na skupinu, jen index na `state`, minimum ze 3 běhů)
+
+| řádků (W) | skupin | korelovaný poddotaz | odvozená tabulka (B) | zrychlení |
+|----------:|-------:|--------------------:|---------------------:|----------:|
+| 1 000     | 50     | 289 ms              | 1,8 ms               | ~160×     |
+| 2 000     | 100    | 1 124 ms            | 3,3 ms               | ~340×     |
+| 4 000     | 200    | 4 480 ms            | 8,8 ms               | ~510×     |
+| 8 000     | 400    | 17 893 ms           | 16,5 ms              | ~1080×    |
+| 20 000    | 1 000  | ~112 000 ms*        | 100 ms               | ~1100×    |
+
+\* korelovaný na 20k nedoměřen do konce (běžel by ~2 min/běh); hodnota je extrapolace z čisté
+O(W²) řady (každé zdvojnásobení W ≈ 4× čas). Výstupy obou variant jsou bitově shodné
+(ověřeno md5 i regresním testem, viz Test 7 níže).
+
+**Závěr:** Korelovaný poddotaz roste kvadraticky a při ~1×/s cadenci v broker módu je na 8k+
+nedokončených jobech neudržitelný (18 s/běh). Varianta B roste prakticky lineárně a zůstává
+v jednotkách až ~100 ms i na 20k, bez nutnosti indexu (a tedy bez write-amplifikace na časté
+změny stavu, kterou by přinesla varianta A). Proto je v
+`findOldestUnfinishedJobIdsByGroup` zvolena **varianta B**; hot-path `getPreviousUnfinishedJobId`
+řeší množství přes `LIMIT 1`. Kompozitní index (A) tím není potřeba - pokud by se v budoucnu
+hodil pro jiné dotazy, je to nezávislé rozhodnutí.
 
 ### Vlastnosti
 
@@ -468,11 +558,11 @@ na platformě (poběží proti MySQL z CI):
 
 - Vytvořit **dvě samostatné** DBAL connection ze stejného DSN (jako `processJob` přes
   `createConnection()`, `src/BackgroundQueue.php:235`).
-- Na connection č. 1 `acquireGroupLock('skupina')` → uspěje.
-- Na connection č. 2 `acquireGroupLock('skupina')` s krátkým timeoutem → **neuspěje /
-  zablokuje se** (u MySQL `GET_LOCK(..., timeout)` vrátí 0 → metoda vyhodí `RuntimeException`).
+- Na connection č. 1 `acquireGroupLock('skupina')` → vrátí `true` (uspěje).
+- Na connection č. 2 `acquireGroupLock('skupina')` s krátkým timeoutem → vrátí `false`
+  (u MySQL `GET_LOCK(..., timeout)` vrátí 0; metoda nevyhazuje výjimku, jen vrátí `false`).
 - Na connection č. 1 `releaseGroupLock('skupina')`.
-- Na connection č. 2 `acquireGroupLock('skupina')` → nyní **uspěje**.
+- Na connection č. 2 `acquireGroupLock('skupina')` → nyní vrátí `true` (uspěje).
 - Druhý případ: dvě **různé** skupiny se navzájem neblokují (obě connection získají zámek
   každá pro svou skupinu) - ověří, že serializujeme jen v rámci jedné skupiny.
 
@@ -529,6 +619,27 @@ Pozn.: test vyžaduje běžící RabbitMQ (běží v CI kontejneru `background-q
 je z celé sady nejdražší a nejcitlivější na časování; proto zůstává jediný svého druhu -
 konkrétní větve levněji a stabilněji pokrývají jednotkové testy 2a/3/5.
 
+### Test 7 - výběr hlavy skupiny dle (priorita, ID) v no-entity větvi
+
+Doplňkový, čistě deterministický test pro `findOldestUnfinishedJobIdsByGroup()` a navazující
+`processWaitingJobs()`. Happy-path Test 6 tuhle větev s daty neprověří (po opravě řazení se
+v něm do WAITING nic nedostane, takže `processWaitingJobs` jede naprázdno), proto ji testujeme
+cíleně - včetně skupiny s "dírou" v prioritách (žádný job na nejvyšší prioritě). Zároveň
+regresně hlídá implementaci výběru hlavy přes odvozenou tabulku (viz kapitola „Náročnost,
+výběr hlavy skupiny a benchmark").
+
+- Konfigurace `priorities` `[1, 2, 3]`, cron mód (bez produceru), callback `processRecording`.
+- Skupina `gA`: joby s prioritami 2, 1, 1 → hlava je `a2` (nejmenší ID v nejvyšší přítomné
+  prioritě 1).
+- Skupina `gB` s dírou: joby jen s prioritami 3 a 2 (žádná 1) → hlava je `b2` (priorita 2),
+  ne `b1`. Ověřuje, že "nejvyšší priorita" znamená nejmenší **přítomnou** prioritu, ne pevnou
+  hodnotu.
+- Všechny joby ručně přepnout na `STATE_WAITING`, pak reflexí:
+  1. `findOldestUnfinishedJobIdsByGroup(STATE_WAITING)` → vrátí hlavy `[a2, b2]`.
+  2. `processWaitingJobs()` → přepne právě tyhle hlavy na `READY`, zbytek zůstane `WAITING`.
+- Před starou logikou (`MIN(id)` bez priority) by hlavy vyšly `a1`/`b1` → test červeně chytí
+  regresi.
+
 ### Shrnutí pokrytí
 
 | Test | Pokrývá | Charakter |
@@ -539,3 +650,4 @@ konkrétní větve levněji a stabilněji pokrývají jednotkové testy 2a/3/5.
 | 4 | bod 3 (zámek na skupinu) | jen primitivum (race nereprodukovatelný single-process) |
 | 5 | bod 4 (podmíněný claim) | reprodukce redelivery race |
 | 6 | celá broker smyčka + `_processWaitingJobs` | end-to-end, vyžaduje RabbitMQ, nejdražší |
+| 7 | výběr hlavy skupiny dle (priorita, ID), `findOldestUnfinishedJobIdsByGroup`/`processWaitingJobs` | deterministická reprodukce, červený → zelený |

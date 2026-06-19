@@ -343,9 +343,15 @@ class BackgroundQueueTest extends Unit
 		}
 
 		// V cron módu se WAITING joby zpracují opakovaným voláním process().
+		// WAITING job dostane postponedBy = waitingJobExpiration (1 s), takže ho cron odbaví až další běh
+		// po uplynutí tohoto okna (availableFrom). Reálný cron běží jednou za minutu, takže okno dávno mine;
+		// v testu ho mezi běhy překleneme sleepem.
 		$maxIterations = 20;
 		while ($maxIterations-- > 0 && self::finishedCount('transcribe') < count($jobs)) {
 			$backgroundQueue->process();
+			if (self::finishedCount('transcribe') < count($jobs)) {
+				sleep(1);
+			}
 		}
 
 		$this->tester->assertEquals(['a', 'b', 'd', 'e', 'g', 'c', 'f'], Mailer::$processOrder, 'pořadí dle (priorita, ID)');
@@ -414,22 +420,18 @@ class BackgroundQueueTest extends Unit
 		$bq1 = self::getBackgroundQueue();
 		$bq2 = self::getBackgroundQueue();
 
-		// Stejná skupina: druhý zámek se nezíská, dokud první nepustí
-		$acquire->invoke($bq1, 'skupina');
-		$this->assertThrows(\RuntimeException::class, function () use ($acquire, $bq2) {
-			$acquire->invoke($bq2, 'skupina');
-		});
+		// Stejná skupina: druhý zámek se v limitu nezíská (vrátí false), dokud první nepustí
+		$this->tester->assertTrue($acquire->invoke($bq1, 'skupina'), 'první zámek se získá');
+		$this->tester->assertFalse($acquire->invoke($bq2, 'skupina'), 'druhý zámek na téže skupině se v limitu nezíská');
 		$release->invoke($bq1, 'skupina');
-		$acquire->invoke($bq2, 'skupina'); // po uvolnění už projde
+		$this->tester->assertTrue($acquire->invoke($bq2, 'skupina'), 'po uvolnění už projde');
 		$release->invoke($bq2, 'skupina');
 
 		// Různé skupiny se navzájem neblokují
-		$acquire->invoke($bq1, 'skupinaA');
-		$acquire->invoke($bq2, 'skupinaB');
+		$this->tester->assertTrue($acquire->invoke($bq1, 'skupinaA'), 'skupinaA se získá');
+		$this->tester->assertTrue($acquire->invoke($bq2, 'skupinaB'), 'skupinaB se získá souběžně (jiná skupina neblokuje)');
 		$release->invoke($bq1, 'skupinaA');
 		$release->invoke($bq2, 'skupinaB');
-
-		$this->tester->assertTrue(true, 'různé skupiny se neblokují');
 	}
 
 	/**
@@ -507,6 +509,61 @@ class BackgroundQueueTest extends Unit
 
 		$this->tester->assertEquals(['a', 'b', 'd', 'e', 'g', 'c', 'f'], Mailer::$processOrder, 'pořadí dle priority přes broker cestu');
 		$this->tester->assertFalse(Mailer::$serialGroupViolation, 'sériovost nesmí být porušena');
+	}
+
+	/**
+	 * Test 7 - výběr hlavy skupiny dle (priorita, ID) v no-entity větvi: findOldestUnfinishedJobIdsByGroup()
+	 * a navazující processWaitingJobs(). Happy-path Test 6 tuhle větev nepokryje (tam se do WAITING nic nedostane),
+	 * proto ji testujeme cíleně, včetně skupiny s "dírou" v prioritách (žádný job na nejvyšší prioritě).
+	 *
+	 * @see docs/priority-serialgroup.md "Test 6", poznámka o sdílení findOldestUnfinishedJobIdsByGroup()
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testProcessWaitingJobsPicksGroupHeadByPriority()
+	{
+		$backgroundQueue = self::getBackgroundQueue(priorities: [1, 2, 3]);
+
+		// gA: hlava = nejmenší ID v nejvyšší přítomné prioritě (1) => a2 (a3 je taky prio 1, ale má vyšší ID).
+		$backgroundQueue->publish('processRecording', ['a1'], 'gA', null, ModeEnum::NORMAL, null, 2);
+		$backgroundQueue->publish('processRecording', ['a2'], 'gA', null, ModeEnum::NORMAL, null, 1);
+		$backgroundQueue->publish('processRecording', ['a3'], 'gA', null, ModeEnum::NORMAL, null, 1);
+		// gB: díra v prioritách - žádný job na prioritě 1; nejvyšší přítomná je 2 => hlava je b2, ne b1 (prio 3).
+		$backgroundQueue->publish('processRecording', ['b1'], 'gB', null, ModeEnum::NORMAL, null, 3);
+		$backgroundQueue->publish('processRecording', ['b2'], 'gB', null, ModeEnum::NORMAL, null, 2);
+
+		// Namapujeme značku -> ID a všechny joby ručně přepneme na WAITING (stav, který tahle větev řeší).
+		$ids = [];
+		foreach (self::fetchAllJobs($backgroundQueue) as $job) {
+			$ids[$job->getParameters()[0]] = $job->getId();
+		}
+		self::rawConnection()->executeStatement(
+			'UPDATE ' . $_ENV['PROJECT_DB_TABLENAME'] . ' SET state = ?',
+			[BackgroundJob::STATE_WAITING]
+		);
+
+		$reflectionClass = new \ReflectionClass(BackgroundQueue::class);
+
+		// 1) findOldestUnfinishedJobIdsByGroup vrátí hlavu každé skupiny: gA -> a2, gB -> b2.
+		$find = $reflectionClass->getMethod('findOldestUnfinishedJobIdsByGroup');
+		$find->setAccessible(true);
+		$heads = array_map('intval', iterator_to_array($find->invoke($backgroundQueue, BackgroundJob::STATE_WAITING)));
+		sort($heads);
+		$this->tester->assertEquals([$ids['a2'], $ids['b2']], $heads, 'hlavy skupin dle (priorita, ID)');
+
+		// 2) processWaitingJobs přepne právě tyto hlavy zpět na READY, zbytek zůstane WAITING.
+		$process = $reflectionClass->getMethod('processWaitingJobs');
+		$process->setAccessible(true);
+		$process->invoke($backgroundQueue);
+
+		$expectedReady = [$ids['a2'], $ids['b2']];
+		foreach (self::fetchAllJobs($backgroundQueue) as $job) {
+			$expectedState = in_array($job->getId(), $expectedReady, true)
+				? BackgroundJob::STATE_READY
+				: BackgroundJob::STATE_WAITING;
+			$this->tester->assertEquals($expectedState, $job->getState(), 'stav jobu ' . $job->getParameters()[0]);
+		}
 	}
 
 	private static function finishedCount(string $serialGroup): int

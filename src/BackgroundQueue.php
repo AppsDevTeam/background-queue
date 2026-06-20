@@ -14,8 +14,10 @@ use ADT\BackgroundQueue\Exception\WaitingException;
 use DateTime;
 use DateTimeImmutable;
 use DateTimeInterface;
+use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Schema;
@@ -34,6 +36,13 @@ use TypeError;
 class BackgroundQueue
 {
 	const UNEXPECTED_ERROR_MESSAGE = 'Unexpected error occurred.';
+
+	// Namespace pro PostgreSQL advisory locky (ASCII "BGQ\0") - odděluje naše zámky od ostatních v aplikaci.
+	private const PG_LOCK_NAMESPACE = 0x42475100;
+
+	// Jak dlouho (v sekundách) konzument čeká na zámek skupiny, než zpracování vzdá.
+	// Kritická sekce [check + zápis PROCESSING] trvá jen pár mikrosekund, takže tato hodnota je strop pro souběh, ne pro práci.
+	private const GROUP_LOCK_TIMEOUT = 3;
 
 	private array $config;
 	private bool $connectionCreated = false;
@@ -78,6 +87,10 @@ class BackgroundQueue
 			$config['bulkSize'] = 1;
 		}
 		if ($config['producer']) {
+			// _processWaitingJobs běží na nejvyšší prioritě (null => první priorita v seznamu), aby obnova WAITING jobů
+			// nikdy nehladověla - jinak by při trvalém zatížení vyšších priorit serial groupy uvízly. Jeho nekonečné
+			// opakování nehladoví nižší priority díky zpoždění recirkulace: cloneAndPublish ho přepublikuje s
+			// postponeBy = waitingJobExpiration, takže se v nejvyšší frontě objevuje jen periodicky, ne nepřetržitě.
 			$config['callbacks'][CallbackNameEnum::PROCESS_WAITING_JOBS->value] = [
 				'callback' => [$this, trim(CallbackNameEnum::PROCESS_WAITING_JOBS->value, '_')],
 				'queue' => null,
@@ -251,40 +264,63 @@ class BackgroundQueue
 			return;
 		}
 
-		if (!$this->checkUnfinishedJobs($entity)) {
+		// Kritickou sekci [checkUnfinishedJobs + zápis PROCESSING] serializujeme zámkem na skupinu,
+		// aby dva konzumenti téže serialGroup neprošli kontrolou současně. Bere se jen je-li serialGroup nastavena;
+		// joby bez skupiny se neserializují. Zámek se drží jen po dobu sekce, ne po dobu běhu callbacku.
+		$serialGroup = $entity->getSerialGroup();
+		if ($serialGroup && !$this->acquireGroupLock($serialGroup)) {
+			// Zámek skupiny se nepodařilo získat v limitu (kritickou sekci právě drží jiný konzument téže skupiny).
+			// Job nezahazujeme - vrátíme ho do brokera, ať se zpracuje příště. V cron módu je publishToBroker no-op
+			// a job (stále v některém ze zpracovatelných stavů) vezme příští běh process(). Tím se vyhneme tomu,
+			// aby jediná kolize zámku shodila výjimkou celý běh process() / konzumenta.
+			$this->publishToBroker($entity);
 			return;
 		}
 
-		if (!isset($this->config['callbacks'][$entity->getCallbackName()])) {
-			$this->logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity);
-			return;
-		}
-
-		$callback = $this->getCallback($entity->getCallbackName());
-
-		if (!is_callable($callback)) {
-			$this->logException('Method "' . $callback[0] . '::' . $callback[1] . '" does not exist or is not callable.', $entity);
-			return;
-		}
-
-		// změna stavu na zpracovává se
+		$callback = null;
 		try {
-			$entity->setState(BackgroundJob::STATE_PROCESSING);
-			$entity->setPostponedBy(null);
-			$entity->setErrorMessage(null);
-			$entity->updateLastAttemptAt();
-			$entity->increaseNumberOfAttempts();
-			$entity->updatePid();
-
-			if ($this->config['onProcessingGetMetadata']) {
-				$metadata = $this->config['onProcessingGetMetadata']($entity->getParameters());
-				$entity->setMetadata($metadata);
+			if (!$this->checkUnfinishedJobs($entity)) {
+				return;
 			}
 
-			$this->save($entity);
-		} catch (Exception $e) {
-			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
-			return;
+			if (!isset($this->config['callbacks'][$entity->getCallbackName()])) {
+				$this->logException('Callback "' . $entity->getCallbackName() . '" does not exist.', $entity);
+				return;
+			}
+
+			$callback = $this->getCallback($entity->getCallbackName());
+
+			if (!is_callable($callback)) {
+				$this->logException('Method "' . $callback[0] . '::' . $callback[1] . '" does not exist or is not callable.', $entity);
+				return;
+			}
+
+			// změna stavu na zpracovává se
+			try {
+				$entity->setState(BackgroundJob::STATE_PROCESSING);
+				$entity->setPostponedBy(null);
+				$entity->setErrorMessage(null);
+				$entity->updateLastAttemptAt();
+				$entity->increaseNumberOfAttempts();
+				$entity->updatePid();
+
+				if ($this->config['onProcessingGetMetadata']) {
+					$metadata = $this->config['onProcessingGetMetadata']($entity->getParameters());
+					$entity->setMetadata($metadata);
+				}
+
+				// Pokud claim neuspěl, job mezitím sebral nebo dokončil jiný konzument -> tiše končíme.
+				if (!$this->save($entity)) {
+					return;
+				}
+			} catch (Exception $e) {
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
+				return;
+			}
+		} finally {
+			if ($serialGroup) {
+				$this->releaseGroupLock($serialGroup);
+			}
 		}
 
 		// zpracování callbacku
@@ -576,43 +612,84 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Vrátí ID "předchůdce" daného jobu v jeho serialGroup, tj. jobu, který má jít před ním, jinak null.
+	 * Předchůdce = cokoli ve skupině, co zrovna běží (PROCESSING - vzájemné vyloučení bez ohledu na prioritu),
+	 * nebo job, který má jít dříve dle pořadí (vyšší priorita = nižší číslo, při shodě priority nižší ID).
+	 * Stačí nám existence prvního takového jobu, proto LIMIT 1 (nevytahujeme celou skupinu).
+	 *
 	 * @throws \Doctrine\DBAL\Exception
-	 * @throws SchemaException
 	 */
 	private function getPreviousUnfinishedJobId(BackgroundJob $entity): ?int
 	{
-		foreach ($this->findOldestUnfinishedJobIdsByGroup(array_merge(BackgroundJob::READY_TO_PROCESS_STATES, [BackgroundJob::STATE_PROCESSING]), $entity) as $id) {
-			return $id;
-		}
-		return null;
+		$states = array_values(array_merge(BackgroundJob::READY_TO_PROCESS_STATES, [BackgroundJob::STATE_PROCESSING]));
+
+		// Klauzule na PROCESSING je povinná: bez ní by později vložený job s lepší prioritou
+		// nepoznal běžící nižší-prioritní job jako překážku a naběhl by souběžně (porušení sériovosti).
+		$id = $this->connection->createQueryBuilder()
+			->select('id')
+			->from($this->config['tableName'])
+			->where('queue LIKE :queue')
+			->andWhere('state IN (:states)')
+			->andWhere('serial_group = :serialGroup')
+			->andWhere('id <> :selfId')
+			->andWhere('(state = :processingState OR priority < :priority OR (priority = :priority AND id < :selfId))')
+			->orderBy('priority', 'ASC')
+			->addOrderBy('id', 'ASC')
+			->setParameter('queue', $this->config['queue'] . '%')
+			->setParameter('states', $states, ArrayParameterType::INTEGER)
+			->setParameter('serialGroup', $entity->getSerialGroup())
+			->setParameter('selfId', $entity->getId())
+			->setParameter('processingState', BackgroundJob::STATE_PROCESSING)
+			->setParameter('priority', $entity->getPriority())
+			->setMaxResults(1)
+			->executeQuery()
+			->fetchOne();
+
+		return $id === false ? null : (int) $id;
 	}
 
 	/**
-	 * @throws SchemaException
+	 * Pro každou serialGroup s jobem v daném stavu vrátí ID její "hlavy" - jobu, který má jít první,
+	 * tj. nejmenší ID mezi řádky s nejvyšší prioritou (nejnižší číslo) ve skupině.
+	 * Agregaci děláme v SQL (jeden řádek na skupinu), ne v PHP, aby se nevytahovaly všechny nedokončené joby.
+	 *
+	 * Nejnižší prioritu každé skupiny spočítáme jednou v odvozené tabulce a tu pak připojíme - ne korelovaným
+	 * poddotazem, který by se vyhodnocoval pro každý řádek zvlášť (O(W²) a bez kompozitního indexu na velkém
+	 * počtu WAITING jobů extrémně pomalý). MIN(id) samo by prioritu ignorovalo a okenní funkce nejsou napříč
+	 * MySQL/PostgreSQL jednotné.
+	 *
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private function findOldestUnfinishedJobIdsByGroup(array|string $state, ?BackgroundJob $entity = null): iterable
+	private function findOldestUnfinishedJobIdsByGroup(array|string $state): iterable
 	{
-		$qb = $this->createQueryBuilder();
+		$states = (array) $state;
+		$queueLike = $this->config['queue'] . '%';
+		$table = $this->config['tableName'];
 
-		$qb->select('MIN(id) as id');
+		$rows = $this->connection->createQueryBuilder()
+			->select('MIN(t.id) AS id')
+			->from($table, 't')
+			->innerJoin(
+				't',
+				"(
+					SELECT serial_group, MIN(priority) AS min_priority
+					FROM {$table}
+					WHERE queue LIKE :queue AND state IN (:states)
+					GROUP BY serial_group
+				)",
+				'head',
+				'head.serial_group = t.serial_group AND t.priority = head.min_priority'
+			)
+			->where('t.queue LIKE :queue')
+			->andWhere('t.state IN (:states)')
+			->groupBy('t.serial_group')
+			->orderBy('id', 'ASC')
+			->setParameter('queue', $queueLike)
+			->setParameter('states', $states, ArrayParameterType::INTEGER)
+			->executeQuery()
+			->fetchAllAssociative();
 
-		$qb->andWhere('state IN (:state)')
-			->setParameter('state', $state);
-
-		if ($entity) {
-			$qb->andWhere('serial_group = :serialGroup')
-				->setParameter('serialGroup', $entity->getSerialGroup());
-
-			$qb->andWhere('id < :id')
-				->setParameter('id', $entity->getId());
-		}
-
-		$qb->groupBy('serial_group');
-
-		$qb->orderBy('id', 'ASC');
-
-		foreach ($this->fetchAll($qb, toEntity: false) as $row) {
+		foreach ($rows as $row) {
 			yield $row['id'];
 		}
 
@@ -620,9 +697,12 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Uloží job. Vrací false jen v případě podmíněného claimu (přechod do PROCESSING),
+	 * kdy řádek mezitím sebral jiný konzument; ve všech ostatních případech vrací true.
+	 *
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private function save(BackgroundJob $entity): void
+	private function save(BackgroundJob $entity): bool
 	{
 		$this->databaseConnectionCheckAndReconnect();
 
@@ -636,12 +716,113 @@ class BackgroundQueue
 			if (count($this->bulkDatabaseEntities) >= $this->bulkSize) {
 				$this->doPublishToDatabase();
 			}
-		} else {
-			if ($entity->getState() === BackgroundJob::STATE_READY) {
-				$entity->setUpdatedAt(new DateTimeImmutable());
-			}
-			$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
+
+			return true;
 		}
+
+		if ($entity->getState() === BackgroundJob::STATE_READY) {
+			$entity->setUpdatedAt(new DateTimeImmutable());
+		}
+
+		// Podmíněný claim (atomické převzetí ke zpracování): přechod do PROCESSING smí uspět jen jednomu konzumentovi.
+		// Pokud řádek mezitím změnil stav (typicky RabbitMQ redelivery doručil totéž ID dvěma konzumentům),
+		// UPDATE neovlivní žádný řádek a job se nezpracuje podruhé.
+		if ($entity->getState() === BackgroundJob::STATE_PROCESSING) {
+			return $this->claimForProcessing($entity);
+		}
+
+		$this->connection->update($this->config['tableName'], $entity->getDatabaseValues(), ['id' => $entity->getId()]);
+
+		return true;
+	}
+
+	/**
+	 * Atomicky převezme job ke zpracování: nastaví ho na PROCESSING jen tehdy, je-li v DB stále
+	 * v některém ze zpracovatelných stavů. Vrací true, pokud claim uspěl (UPDATE ovlivnil řádek).
+	 *
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function claimForProcessing(BackgroundJob $entity): bool
+	{
+		$qb = $this->connection->createQueryBuilder()
+			->update($this->config['tableName'])
+			->where('id = :__id')
+			->andWhere('state IN (:__states)')
+			->setParameter('__id', $entity->getId())
+			->setParameter('__states', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER);
+
+		foreach ($entity->getDatabaseValues() as $column => $value) {
+			$qb->set($column, ':' . $column)
+				->setParameter($column, $value);
+		}
+
+		return $qb->executeStatement() > 0;
+	}
+
+	/**
+	 * Získá pojmenovaný (advisory) zámek na serialGroup. Serializuje konzumenty téže skupiny
+	 * kolem kritické sekce [checkUnfinishedJobs + zápis PROCESSING]; různé skupiny se navzájem neblokují.
+	 * Zámek je connection-scoped (drží se na aktuální connection, viz createConnection() v processJob).
+	 *
+	 * Vrací true při získání, false pokud se zámek nepodařilo získat v limitu (volající job vrátí do brokera
+	 * a zkusí to příště) - úmyslně nevyhazuje výjimku, aby jediná kolize neshodila celý běh process()/konzumenta.
+	 *
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function acquireGroupLock(string $serialGroup): bool
+	{
+		if ($this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+			// pg_advisory_lock(bigint): klíč skládáme jako (namespace << 32) | crc32(skupina).
+			// Dvouargumentová varianta bere int4 a crc32 (až 2^32-1) by ji přetekla ("integer out of range"),
+			// proto použijeme jednoargumentovou bigint variantu se složeným 64bit klíčem (namespace odděluje
+			// naše zámky od ostatních v aplikaci). Timeout řešíme přes session proměnnou lock_timeout.
+			$this->connection->executeStatement("SET lock_timeout = '" . (self::GROUP_LOCK_TIMEOUT * 1000) . "'");
+			try {
+				$this->connection->executeStatement('SELECT pg_advisory_lock(?)', [$this->getGroupLockId($serialGroup)]);
+			} catch (\Doctrine\DBAL\Exception $e) {
+				// Vypršení lock_timeout (nebo jiné selhání získání) - job zpracujeme příště.
+				return false;
+			}
+			return true;
+		}
+
+		// MySQL: název zámku musí být max 64 znaků (jinak GET_LOCK vrátí NULL); serial_group je VARCHAR(255),
+		// proto skupinu hashujeme přes crc32 na stabilní krátký název místo přímého vložení.
+		// GET_LOCK vrátí 1 při získání, 0 při timeoutu, NULL při chybě - všechny != 1 bereme jako neúspěch.
+		$acquired = $this->connection->fetchOne('SELECT GET_LOCK(?, ?)', [$this->getGroupLockName($serialGroup), self::GROUP_LOCK_TIMEOUT]);
+		return (int) $acquired === 1;
+	}
+
+	/**
+	 * Uvolní pojmenovaný zámek na serialGroup získaný přes acquireGroupLock().
+	 *
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function releaseGroupLock(string $serialGroup): void
+	{
+		if ($this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+			$this->connection->executeStatement('SELECT pg_advisory_unlock(?)', [$this->getGroupLockId($serialGroup)]);
+			return;
+		}
+
+		$this->connection->executeStatement('SELECT RELEASE_LOCK(?)', [$this->getGroupLockName($serialGroup)]);
+	}
+
+	/**
+	 * 64bit klíč zámku skupiny pro PostgreSQL: horní polovina je fixní namespace, dolní crc32 názvu skupiny.
+	 * Výsledek se vejde do signed bigint (namespace << 32 je ~4,8e18 < PHP_INT_MAX i bigint max ~9,2e18).
+	 */
+	private function getGroupLockId(string $serialGroup): int
+	{
+		return (self::PG_LOCK_NAMESPACE << 32) | crc32($serialGroup);
+	}
+
+	/**
+	 * Krátký stabilní název zámku skupiny pro MySQL GET_LOCK (limit 64 znaků); crc32 udrží délku konstantní.
+	 */
+	private function getGroupLockName(string $serialGroup): string
+	{
+		return 'bgq:' . crc32($serialGroup);
 	}
 
 	/**

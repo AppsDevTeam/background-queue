@@ -8,6 +8,7 @@ use ADT\BackgroundQueue\Console\ConsumeCommand;
 use Codeception\AssertThrows;
 use ADT\BackgroundQueue\BackgroundQueue;
 use Codeception\Test\Unit;
+use Doctrine\DBAL\DriverManager;
 use Tests\Support\Helper\Producer;
 use Tests\Support\IntegrationTester;
 
@@ -45,7 +46,7 @@ class ConsumeCommandTest extends Unit
 	public function providerGetPrioritiesListBasedConfig_error() {
 		return [
 			[[10, 15, 20, 25, 30, 35, 40], '5', 'Priority 5 is not in available priorities [10,15,20,25,30,35,40]'],
-			[[10, 30, 35, 40], '20-25', 'Priority 20- has not intersections with availables priorities [10,30,35,40]'],
+			[[10, 30, 35, 40], '20-25', 'Priority 20-25 has not intersections with availables priorities [10,30,35,40]'],
 		];
 	}
 
@@ -73,7 +74,7 @@ class ConsumeCommandTest extends Unit
 		$backgroundQueue = new BackgroundQueue([
 			'queue' => 'general',
 			'priorities' => $prioritiesAll,
-			'connection' => self::getDsn(),
+			'connection' => DriverManager::getConnection(BackgroundQueue::parseDsn(self::getDsn())),
 			'logger' => null,
 			'producer' => null
 		]);

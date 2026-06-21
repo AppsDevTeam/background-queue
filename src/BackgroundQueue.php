@@ -117,6 +117,7 @@ class BackgroundQueue
 		ModeEnum $mode = ModeEnum::NORMAL,
 		?int $postponeBy = null,
 		?int $priority = null,
+		?int $coalesceThreshold = null,
 	): void
 	{
 		if (!$callbackName) {
@@ -135,6 +136,10 @@ class BackgroundQueue
 			throw new Exception('Parameter "identifier" has to be set if "mode" is recurring.');
 		}
 
+		if ($coalesceThreshold !== null && !$serialGroup) {
+			throw new Exception('Parameter "serialGroup" has to be set if "coalesceThreshold" is used.');
+		}
+
 		$priority = $this->getPriority($priority, $callbackName);
 
 		$entity = new BackgroundJob();
@@ -143,6 +148,7 @@ class BackgroundQueue
 		$entity->setCallbackName($callbackName);
 		$entity->setParameters($parameters);
 		$entity->setSerialGroup($serialGroup);
+		$entity->setCoalesceThreshold($coalesceThreshold);
 		$entity->setIdentifier($identifier);
 		$entity->setMode($mode);
 		$entity->setPostponedBy($postponeBy);
@@ -254,7 +260,12 @@ class BackgroundQueue
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			$this->logException('Unexpected state "' .$entity->getState() . '".', $entity);
+			// REDUNDANT job zařazený v brokeru je očekávaný stav (job byl coalescingem označen za nadbytečný
+			// až po zařazení jeho ID do brokera), proto ho tiše přeskočíme bez logu. Ostatní ne-ready stavy
+			// (FINISHED, PROCESSING jiným konzumentem, ...) logujeme dál.
+			if ($entity->getState() !== BackgroundJob::STATE_REDUNDANT) {
+				$this->logException('Unexpected state "' .$entity->getState() . '".', $entity);
+			}
 			return;
 		}
 
@@ -312,6 +323,13 @@ class BackgroundQueue
 				// Pokud claim neuspěl, job mezitím sebral nebo dokončil jiný konzument -> tiše končíme.
 				if (!$this->save($entity)) {
 					return;
+				}
+
+				// Tento job se právě rozeběhl a svým během pokryje všechny ostatní nedokončené joby téže
+				// serialGroup s vyšším nebo stejným prahem (coalesce_threshold >= náš), proto je označíme za
+				// REDUNDANT. Běží to pod zámkem skupiny, takže žádný z nich mezitím nezačne zpracovávat.
+				if ($entity->getCoalesceThreshold() !== null) {
+					$this->markCoalescedJobsRedundant($entity);
 				}
 			} catch (Exception $e) {
 				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
@@ -479,6 +497,7 @@ class BackgroundQueue
 		$table->addColumn('number_of_attempts', Types::INTEGER)->setNotnull(true)->setDefault(0);
 		$table->addColumn('error_message', Types::TEXT)->setNotnull(false);
 		$table->addColumn('serial_group', Types::STRING, ['length' => 255])->setNotnull(false);
+		$table->addColumn('coalesce_threshold', Types::BIGINT)->setNotnull(false);
 		$table->addColumn('identifier', Types::STRING, ['length' => 255])->setNotnull(false);
 		$table->addColumn('postponed_by', Types::INTEGER)->setNotnull(false);
 		$table->addColumn('processed_by_broker', Types::BOOLEAN)->setNotnull(true)->setDefault(0);
@@ -609,6 +628,35 @@ class BackgroundQueue
 			->setParameter('id', $entity->getId());
 
 		return (bool) $this->fetchAll($qb, 1);
+	}
+
+	/**
+	 * Označí za REDUNDANT všechny ostatní dosud nezpracované joby téže serialGroup, jejichž práh
+	 * (coalesce_threshold) je vyšší nebo stejný jako u daného jobu - tedy ty, které tento právě spuštěný
+	 * job svým během pokryje (typicky "přepočítej od X dál" pohltí všechny "přepočítej od >=X dál").
+	 *
+	 * Bere jen joby v nedokončených stavech, které ještě nezačaly běžet (READY_TO_PROCESS_STATES) - běžící
+	 * (PROCESSING) ani dokončené joby nerušíme. Volá se zevnitř kritické sekce pod zámkem skupiny.
+	 *
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function markCoalescedJobsRedundant(BackgroundJob $entity): void
+	{
+		$this->connection->createQueryBuilder()
+			->update($this->config['tableName'])
+			->set('state', ':redundantState')
+			->where('queue LIKE :queue')
+			->andWhere('state IN (:states)')
+			->andWhere('serial_group = :serialGroup')
+			->andWhere('id <> :selfId')
+			->andWhere('coalesce_threshold >= :threshold')
+			->setParameter('redundantState', BackgroundJob::STATE_REDUNDANT)
+			->setParameter('queue', $this->config['queue'] . '%')
+			->setParameter('states', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER)
+			->setParameter('serialGroup', $entity->getSerialGroup())
+			->setParameter('selfId', $entity->getId())
+			->setParameter('threshold', $entity->getCoalesceThreshold())
+			->executeStatement();
 	}
 
 	/**

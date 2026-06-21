@@ -158,6 +158,21 @@ Parametr `$serialGroup` je nepovinný - jeho zadáním zajistítě, že všechny
 
 Parametr `$identifier` je nepovinný - pomocí něj si můžete označit joby vlastním identifikátorem a následně pomocí metody `getUnfinishedJobIdentifiers(array $identifiers = [])` zjistit, které z nich ještě nebyly provedeny.
 
+Parametr `$coalesceThreshold` je nepovinný a slouží ke slučování (coalescingu) překrývajících se jobů ve stejné `serialGroup`. Vyžaduje, aby byl nastaven i `$serialGroup` (jinak se vyhodí výjimka) - ten určuje rozsah slučování. Když se job se zadaným prahem **spustí**, označí všechny ostatní dosud nezpracované joby téže `serialGroup`, jejichž práh je **vyšší nebo stejný**, za `REDUNDANT` - tedy ty, které svým během pokryje.
+
+Typický příklad je úloha typu "přepočítej od X dál": job "přepočítej od dokladu 150" pohltí čekající joby "přepočítej od dokladu 151", "od 152" atd., protože je svým během stejně zpracuje. Rozhodnutí o redundanci dělá vždy ten "širší" job (s nižším prahem) v okamžiku svého spuštění - ví totiž jistě, co všechno přepočítá. Ruší se jen joby, které ještě nezačaly běžet; už běžící (`PROCESSING`) ani dokončené joby zůstanou nedotčené.
+
+```php
+$this->backgroundQueue->publish(
+	'recalculateStock',
+	['itemId' => 1, 'fromDocument' => 150],
+	serialGroup: 'stock-item-1', // rozsah slučování (např. jedna skladová položka)
+	coalesceThreshold: 150,       // job pohltí všechny nedokončené joby téže skupiny s prahem >= 150
+);
+```
+
+Pozor: pořadí zpracování v rámci `serialGroup` se řídí prioritou a ID (pořadím vložení), nikoli prahem. Coalescing tedy spolehlivě šetří práci, dokud joby s nižším prahem vznikají dříve (mají nižší ID). Pokud výjimečně vznikne dříve job s vyšším prahem, oba joby doběhnou - výsledek je korektní, jen bez úspory.
+
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\PermanentErrorException`, záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně.
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, záznam se uloží ve stavu `WAITING` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Počítadlo pokusů se nezvyšuje.

@@ -48,6 +48,7 @@ final class BackgroundJob
 	private int $numberOfAttempts = 0;
 	private ?string $errorMessage = null;
 	private ?string $serialGroup = null;
+	private ?int $coalesceThreshold = null;
 	private ?string $identifier = null;
 	private ?int $postponedBy = null;
 	private bool $processedByBroker = false;
@@ -122,6 +123,17 @@ final class BackgroundJob
 	public function setSerialGroup(?string $serialGroup): self
 	{
 		$this->serialGroup = $serialGroup;
+		return $this;
+	}
+
+	public function getCoalesceThreshold(): ?int
+	{
+		return $this->coalesceThreshold;
+	}
+
+	public function setCoalesceThreshold(?int $coalesceThreshold): self
+	{
+		$this->coalesceThreshold = $coalesceThreshold;
 		return $this;
 	}
 
@@ -312,6 +324,7 @@ final class BackgroundJob
 		$entity->numberOfAttempts = $values['number_of_attempts'];
 		$entity->errorMessage = $values['error_message'];
 		$entity->serialGroup = $values['serial_group'];
+		$entity->coalesceThreshold = $values['coalesce_threshold'];
 		$entity->identifier = $values['identifier'];
 		$entity->mode = ModeEnum::from($values['mode']);
 		$entity->postponedBy = $values['postponed_by'];
@@ -340,6 +353,7 @@ final class BackgroundJob
 			'number_of_attempts' => $this->numberOfAttempts,
 			'error_message' => $this->errorMessage,
 			'serial_group' => $this->serialGroup,
+			'coalesce_threshold' => $this->coalesceThreshold,
 			'identifier' => $this->identifier,
 			'mode' => $this->mode->value,
 			'postponed_by' => $this->postponedBy,

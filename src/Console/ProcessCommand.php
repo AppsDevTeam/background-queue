@@ -25,6 +25,8 @@ class ProcessCommand extends Command
 	 */
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
+		ini_set('memory_limit', '1G');
+
 		$this->backgroundQueue->process();
 
 		return self::SUCCESS;

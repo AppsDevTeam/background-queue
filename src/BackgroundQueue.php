@@ -217,7 +217,7 @@ class BackgroundQueue
 			->setParameter('state',  $states);
 
 		/** @var BackgroundJob $_entity */
-		foreach ($this->fetchAll($qb) as $_entity) {
+		foreach ($this->fetchAll($qb, 10000) as $_entity) {
 			if (
 				$this->getConfig()['producer']
 				&&

@@ -337,6 +337,20 @@ class BackgroundQueue
 				if ($entity->getCoalesceThreshold() !== null) {
 					$this->markCoalescedJobsRedundant($entity);
 				}
+			} catch (DeadlockException $e) {
+				// Coalesce UPDATE neuspěl ani po opakování (deadlock přetrval). Job je v tuto chvíli už ve stavu
+				// PROCESSING, takže ho nesmíme jen vrátit (uvázl by) - přepneme ho na TEMPORARILY_FAILED, aby ho
+				// vzal příští běh; coalescing se zopakuje při dalším spuštění.
+				try {
+					$entity->setState(BackgroundJob::STATE_TEMPORARILY_FAILED)
+						->setErrorMessage($e->getMessage())
+						->setPostponedBy(self::getPostponement($entity->getNumberOfAttempts()));
+					$this->save($entity);
+					$this->publishToBroker($entity);
+				} catch (Exception $innerEx) {
+					$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $innerEx);
+				}
+				return;
 			} catch (Exception $e) {
 				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 				return;

@@ -17,6 +17,7 @@ use DateTimeInterface;
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
@@ -43,6 +44,11 @@ class BackgroundQueue
 	// Jak dlouho (v sekundách) konzument čeká na zámek skupiny, než zpracování vzdá.
 	// Kritická sekce [check + zápis PROCESSING] trvá jen pár mikrosekund, takže tato hodnota je strop pro souběh, ne pro práci.
 	private const GROUP_LOCK_TIMEOUT = 3;
+
+	// Coalesce UPDATE (markCoalescedJobsRedundant): kolikrát ho zopakovat při deadlocku a základní prodleva (µs)
+	// mezi pokusy. Prodleva se s každým pokusem lineárně prodlužuje (delay * číslo pokusu).
+	private const COALESCE_DEADLOCK_MAX_ATTEMPTS = 5;
+	private const COALESCE_DEADLOCK_RETRY_DELAY = 100000; // 100 ms
 
 	private array $config;
 	private bool $connectionCreated = false;
@@ -512,6 +518,9 @@ class BackgroundQueue
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);
 		$table->addIndex(['state']);
+		// Pro coalesce UPDATE (markCoalescedJobsRedundant) - bez něj se WHERE vyhodnocuje scanem přes index na
+		// 'state' napříč všemi skupinami, který rozsahově zamyká i nesouvisející řádky a způsobuje deadlocky.
+		$table->addIndex(['serial_group', 'coalesce_threshold']);
 
 		$schemaManager = $this->createSchemaManager();
 		if ($schemaManager->tablesExist([$this->config['tableName']])) {
@@ -638,11 +647,15 @@ class BackgroundQueue
 	 * Bere jen joby v nedokončených stavech, které ještě nezačaly běžet (READY_TO_PROCESS_STATES) - běžící
 	 * (PROCESSING) ani dokončené joby nerušíme. Volá se zevnitř kritické sekce pod zámkem skupiny.
 	 *
+	 * UPDATE může výjimečně narazit na deadlock (1213) se souběžnými zápisy jiných konzumentů (claim, jiný
+	 * coalesce). Deadlock je tranzientní, proto ho omezeně opakujeme s krátkou prodlevou - jinak by job
+	 * uvázl v PROCESSING (volající catch by ho jen zalogoval a vrátil bez spuštění callbacku).
+	 *
 	 * @throws \Doctrine\DBAL\Exception
 	 */
 	private function markCoalescedJobsRedundant(BackgroundJob $entity): void
 	{
-		$this->connection->createQueryBuilder()
+		$qb = $this->connection->createQueryBuilder()
 			->update($this->config['tableName'])
 			->set('state', ':redundantState')
 			->where('queue LIKE :queue')
@@ -655,8 +668,20 @@ class BackgroundQueue
 			->setParameter('states', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER)
 			->setParameter('serialGroup', $entity->getSerialGroup())
 			->setParameter('selfId', $entity->getId())
-			->setParameter('threshold', $entity->getCoalesceThreshold())
-			->executeStatement();
+			->setParameter('threshold', $entity->getCoalesceThreshold());
+
+		$attempt = 0;
+		while (true) {
+			try {
+				$qb->executeStatement();
+				return;
+			} catch (DeadlockException $e) {
+				if (++$attempt >= self::COALESCE_DEADLOCK_MAX_ATTEMPTS) {
+					throw $e;
+				}
+				usleep(self::COALESCE_DEADLOCK_RETRY_DELAY * $attempt);
+			}
+		}
 	}
 
 	/**

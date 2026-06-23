@@ -10,6 +10,7 @@ use PhpAmqpLib\Message\AMQPMessage;
 class Manager
 {
 	const QUEUE_TOP_PRIORITY = 0;
+	const QUEUE_NAME_PARTS_DELIMITER = '_';
 
 	private array $connectionParams;
 	private array $queueParams;
@@ -144,8 +145,37 @@ class Manager
 		$this->initQos = true;
 	}
 
-	public function getQueueWithPriority(string $queue, int $priority): string
+	public function getQueueWithPriority(string $queue, string $priority): string
 	{
-		return $queue . '_' . $priority;
+		return $queue . self::QUEUE_NAME_PARTS_DELIMITER . $priority;
+	}
+
+	/**
+	 * Vloží na začátek seznamu priorit název top-priority (DIE) fronty.
+	 * Konzumer ji tak vždy kontroluje jako první - aby na DIE zprávu reagoval přednostně.
+	 */
+	public function includeTopPriority(array $priorities, ?string $label = null): array
+	{
+		array_unshift($priorities, $this->getTopPriorityName($label));
+		return $priorities;
+	}
+
+	/**
+	 * Vrátí název top-priority fronty. Bez labelu je to sdílená "0" fronta;
+	 * s labelem vznikne samostatná "0_<label>" fronta, díky níž má každý takto označený
+	 * konzumer vlastní DIE frontu a lze ho restartovat cíleně (viz ReloadConsumersCommand).
+	 */
+	public function getTopPriorityName(?string $label = null): string
+	{
+		$topPriority = (string) self::QUEUE_TOP_PRIORITY;
+		if (!is_null($label)) {
+			if (strpos($label, self::QUEUE_NAME_PARTS_DELIMITER) !== false) {
+				throw new Exception('Label cannot contain "' . self::QUEUE_NAME_PARTS_DELIMITER . '".');
+			}
+
+			$topPriority .= self::QUEUE_NAME_PARTS_DELIMITER . $label;
+		}
+
+		return $topPriority;
 	}
 }

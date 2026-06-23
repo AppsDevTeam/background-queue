@@ -88,15 +88,15 @@ Joby sdílející `serialGroup` běží striktně v pořadí podle ID. `checkUnf
 
 ### Brokerová abstrakce (src/Broker/)
 
-`Producer` a `Consumer` jsou rozhraní - přines si libovolný broker. K dispozici je hotová implementace `PhpAmqpLib` (volitelná závislost; viz README pro doporučené omezení `conflict` pinující `php-amqplib` na `^3.0`). Priorita je modelována jako **samostatné fronty** pojmenované `<queue>_<priority>`; `QUEUE_TOP_PRIORITY = 0` je vyhrazena pro řídicí (DIE) zprávy, takže ji konzumeři kontrolují jako první. `publishDie()` + tělo `DIE` je způsob, jak `reload-consumers` elegantně restartuje běžící konzumery.
+`Producer` a `Consumer` jsou rozhraní - přines si libovolný broker. K dispozici je hotová implementace `PhpAmqpLib` (volitelná závislost; viz README pro doporučené omezení `conflict` pinující `php-amqplib` na `^3.0`). Priorita je modelována jako **samostatné fronty** pojmenované `<queue>_<priority>`; `QUEUE_TOP_PRIORITY = 0` je vyhrazena pro řídicí (DIE) zprávy, takže ji konzumeři kontrolují jako první. `publishDie()` + tělo `DIE` je způsob, jak `reload-consumers` elegantně restartuje běžící konzumery. Konzumer spuštěný s **labelem** (`consume -l <label>`) dostane vlastní top-priority frontu `<queue>_0_<label>` (`Manager::getTopPriorityName()` / `includeTopPriority()`); díky tomu lze přes `reload-consumers -l label1,label2` restartovat cíleně právě jeho a DIE zprávu nesní jiný konzumer. Label nesmí obsahovat oddělovač `_` (`QUEUE_NAME_PARTS_DELIMITER`).
 
 ### Konzolové příkazy (src/Console/)
 
 Všechny příkazy kromě `ConsumeCommand` rozšiřují lokální abstraktní `Command`, který obaluje běh do `ADT\CommandLock` (`FileSystemStorage` pod `tempDir`), takže nemohou běžet souběžně samy se sebou.
 
 - `background-queue:process` - vstupní bod pro cron (spouštět každou minutu).
-- `background-queue:consume [queue] -j <jobs> -p <priorities>` - dlouhoběžící brokerový konzumer; `-p` přijímá rozsahy jako `20-40`, `25-`, `-20`.
-- `background-queue:clear-finished [days]`, `background-queue:reload-consumers <number> [queue]`, `background-queue:update-schema`.
+- `background-queue:consume [queue] -j <jobs> -p <priorities> -l <label>` - dlouhoběžící brokerový konzumer; `-p` přijímá rozsahy jako `20-40`, `25-`, `-20`; `-l` je volitelný label pro cílený restart.
+- `background-queue:clear-finished [days]`, `background-queue:reload-consumers <number> [queue] [-l label1,label2]`, `background-queue:update-schema`.
 
 ### Hromadný insert
 

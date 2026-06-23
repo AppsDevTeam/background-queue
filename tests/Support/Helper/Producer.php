@@ -22,7 +22,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	 * (livelock). V produkci k tomu nedochází právě díky tomuto zpoždění, ne přes skutečné AMQP TTL fronty
 	 * (ty by mezi testy protékaly a nafukovaly getMessageCount).
 	 *
-	 * @var array<int, array{queue: string, priority: int, id: string}>
+	 * @var array<int, array{queue: string, priority: string, id: string}>
 	 */
 	private array $delayedMessages = [];
 
@@ -31,7 +31,7 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	 * (viz reálný Producer / Manager::getQueueWithPriority). Helper to napodobuje,
 	 * aby šel otestovat prioritní routing i konzumace v pořadí priorit.
 	 */
-	public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void
+	public function publish(string $id, string $queue, string $priority, ?int $expiration = null): void
 	{
 		// Zpožděné doručení (postponeBy): nevkládáme do prioritní fronty hned, ale do zpožděného bufferu,
 		// odkud se zpráva vydá až když nejsou žádné okamžité zprávy (viz $delayedMessages a consume()).
@@ -47,7 +47,12 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		$this->getChannel()->wait_for_pending_acks();
 	}
 
-	public function publishDie(string $queue): void
+	public function publishDie(string $queue, ?string $consumerLabel = null): void
+	{
+
+	}
+
+	public function publishShutdown(string $queue, ?string $consumerLabel = null): void
 	{
 
 	}

@@ -207,7 +207,9 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 `background-queue:clear-finished 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
 
-`background-queue:reload-consumers QUEUE NUMBER` Reloadne NUMBER consumerů pro danou QUEUE.
+`background-queue:reload-consumers NUMBER [QUEUE] [-l LABEL1,LABEL2,...]` Pošle NUMBER restartovacích (DIE) zpráv. Bez `-l` do sdílené DIE fronty dané QUEUE, s `-l` cíleně do DIE fronty každého uvedeného labelu (viz `background-queue:consume -l`).
+
+`background-queue:shutdown-consumers NUMBER [QUEUE] [-l LABEL1,LABEL2,...]` Funguje stejně jako `reload-consumers` (stejné cílení přes QUEUE a `-l`), ale místo restartu konzumery **řízeně zastaví** - dojedou rozdělaný job, další si nevezmou a ukončí se exit kódem určeným k tomu, aby je supervisor už znovu nenastartoval (viz sekce [Řízené zastavení konzumerů](#6-řízené-zastavení-konzumerů-nice-shutdown)).
 
 `background-queue:update-schema` Aktualizuje databázové schéma, pokud je potřeba.
 
@@ -293,6 +295,34 @@ Příkazu `background-queue:consume` máme možnost nastavit pomocí parametru `
 Můžeme tedy jednoho konzumera vyhradit například na rozesílání registračním emailů (`background-queue:consume -p 10`) a ostatní pro všechny úlohy (`background-queue:consume`).
 Tím zajistíme, že rychlé odeslání registračního emailu nebude čekat na dlouho trvající úlohy, protože je odbaví první konzumer.
 Ale pokud by se vyskytlo více požadavků na zasílání emailů, po nějaké době je začnou odbavovat všichni konzumeři.
+
+Příkazu `background-queue:consume` máme dále možnost nastavit parametrem `-l` (label) jmenovku konzumera. Konzumer s labelem dostane vlastní DIE frontu (`<queue>_0_<label>`), takže ho lze při `background-queue:reload-consumers` restartovat cíleně pomocí `-l label1,label2,...`, aniž by DIE zprávy "snědl" jiný konzumer.
+Aby šel každý konzumer restartovat samostatně, dej každému unikátní label - konzumeři se stejným labelem totiž jednu DIE frontu sdílejí. Bez labelu zůstává chování jako dřív: všichni konzumeři sdílejí jednu DIE frontu.
+
+### 6 Řízené zastavení konzumerů (nice shutdown)
+
+Konzumery typicky spouští a hlídá [supervisor](http://supervisord.org/) - když proces skončí, podle konfigurace ho znovu nastartuje. Toho využívá `background-queue:reload-consumers`: pošle DIE zprávu, konzumer se po dojetí rozdělaného jobu ukončí (exit kód `0`) a supervisor ho nahodí znovu. Tím se konzumeři "obmění" (např. kvůli nasazení nové verze kódu).
+
+Někdy ale chceme konzumery zastavit a **nenechat je znovu nastartovat** - třeba před restartem serveru nebo údržbou. K tomu slouží `background-queue:shutdown-consumers`. Funguje úplně stejně jako `reload-consumers` (stejné cílení přes QUEUE a `-l`), jen konzumer po dojetí rozdělaného jobu skončí dohodnutým **exit kódem `100`** (`ADT\BackgroundQueue\Broker\PhpAmqpLib\Producer::NICE_SHUTDOWN_EXIT_CODE`). V obou případech konzumer nejprve dokončí právě zpracovávaný job a teprve pak se ukončí - žádný job se neztratí ani nepřeruší.
+
+Aby supervisor uměl odlišit "restartuj" (reload) od "nech být" (shutdown), nastav v konfiguraci hlídaného programu `exitcodes` na shutdown exit kód a `autorestart=unexpected`:
+
+```ini
+[program:bq-consumer]
+command=php bin/console background-queue:consume
+autorestart=unexpected
+exitcodes=100
+```
+
+Sémantika `autorestart=unexpected` (mimochodem výchozí hodnota): supervisor restartuje proces jen tehdy, když skončí exit kódem, který **není** v `exitcodes`. Pak platí:
+
+| Exit kód | Situace | Je v `exitcodes=100`? | Chování supervisoru |
+|---|---|---|---|
+| `0` | reload (DIE) i běžný konec | ne | "unexpected" -> **restartuje** |
+| `100` | nice shutdown | ano (expected) | **nenastartuje** |
+| jiný | pád procesu | ne | "unexpected" -> restartuje |
+
+Výchozí `exitcodes` je `0`, proto je nutné ho přepsat na `100` - jinak by byl naopak restartován běžný konec a nice shutdown by se choval jako pád. Pozor také, že `autorestart` se uplatní až pro proces, který úspěšně naběhl (stav `RUNNING`); rozběh řídí `startsecs`/`startretries`.
 
 Dále máme možnost prioritu nastavenou pro callback přetížit při vkládání záznamu v metodě `publish`. Například víme, že se jedná o rozesílání newsletterů.
 Tedy se jedná o zasílání emailů, ale s nízkou prioritou zpracování.

@@ -10,8 +10,8 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 
-#[AsCommand(name: 'background-queue:reload-consumers', description: 'Restarts consumers by sending DIE messages to their (optionally label-specific) top-priority queue.')]
-class ReloadConsumersCommand extends Command
+#[AsCommand(name: 'background-queue:shutdown-consumers', description: 'Gracefully stops consumers by sending shutdown messages to their (optionally label-specific) top-priority queue. Unlike reload-consumers, consumers exit with a code meant to keep the supervisor from restarting them.')]
+class ShutdownConsumersCommand extends Command
 {
 	public function __construct(private readonly BackgroundQueue $backgroundQueue, private readonly Producer $producer)
 	{
@@ -23,25 +23,25 @@ class ReloadConsumersCommand extends Command
 		$this->addArgument(
 			"number",
 			InputArgument::REQUIRED,
-			'Number of DIE messages to send to each targeted consumer queue.'
+			'Number of shutdown messages to send to each targeted consumer queue.'
 		);
 		$this->addArgument(
 			"queue",
 			InputArgument::OPTIONAL,
-			'A queue whose consumers are to reload.'
+			'A queue whose consumers are to shut down.'
 		);
 		$this->addOption(
 			'label',
 			'l',
 			InputOption::VALUE_OPTIONAL,
-			'Comma-separated consumer labels to restart (see consume --label). Empty targets the shared DIE queue.'
+			'Comma-separated consumer labels to shut down (see consume --label). Empty targets the shared DIE queue.'
 		);
 	}
 
 	protected function executeCommand(InputInterface $input, OutputInterface $output): int
 	{
-		// Labely cílí restart na konkrétní konzumery (každý má vlastní DIE frontu "0_<label>").
-		// Bez labelu se posílá do sdílené DIE fronty - zpětně kompatibilní původní chování.
+		// Stejné cílení jako reload-consumers (sdílená vs. label-specifická DIE fronta), liší se jen typem
+		// řídicí zprávy: shutdown konzumera ukončí tak, aby ho supervisor už znovu nenastartoval (viz README).
 		$labels = $input->getOption('label');
 		$labels = $labels ? explode(',', $labels) : [null];
 
@@ -49,7 +49,7 @@ class ReloadConsumersCommand extends Command
 
 		foreach ($labels as $label) {
 			for ($i = 0; $i < $input->getArgument("number"); $i++) {
-				$this->producer->publishDie($queue, $label);
+				$this->producer->publishShutdown($queue, $label);
 			}
 		}
 

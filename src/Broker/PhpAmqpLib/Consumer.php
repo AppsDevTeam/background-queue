@@ -15,13 +15,14 @@ readonly class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 	/**
 	 * @throws Exception
 	 */
-	public function consume(string $queue, array $priorities): void
+	public function consume(string $queue, array $priorities, ?string $consumerLabel = null): void
 	{
 		// TODO Do budoucna cheme podporovat libovolné priority a ne pouze jejich výčet.
 		//      Zde si musíme vytáhnout seznam existujících front. To lze přes HTTP API pomocí CURL.
 
 		// Nejprve se chceme kouknout, jestli není zaslána zpráva k ukončení, proto na první místo dáme TOP_PRIORITY frontu.
-		array_unshift($priorities, Manager::QUEUE_TOP_PRIORITY);
+		// S labelem dostane konzumer vlastní DIE frontu "0_<label>", takže ho lze restartovat cíleně.
+		$priorities = $this->manager->includeTopPriority($priorities, $consumerLabel);
 
 		// Sestavíme si seznam názvů front v RabbitMQ (tedy včetně priorit) a všechny inicializujeme
 		$queuesWithPriorities = [];
@@ -47,7 +48,14 @@ readonly class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 				$this->manager->closeChannel();
 
 				if ($msg->getBody() === Producer::DIE) {
+					// Restart: exit 0 -> supervisor konzumera (typicky) znovu nastartuje.
 					die();
+				}
+
+				if ($msg->getBody() === Producer::SHUTDOWN) {
+					// Nice shutdown: rozdělaný job je už hotový (zpracovává se sériově, prefetch 1), další si nebereme
+					// a ukončíme se dohodnutým exit kódem, který má supervisor v "exitcodes" - proces už nenaběhne.
+					exit(Producer::NICE_SHUTDOWN_EXIT_CODE);
 				}
 
 				$this->backgroundQueue->processJob((int)$msg->getBody());

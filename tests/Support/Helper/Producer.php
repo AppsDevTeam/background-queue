@@ -52,6 +52,11 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 
 	}
 
+	public function publishShutdown(string $queue, ?string $consumerLabel = null): void
+	{
+
+	}
+
 	public function publishNoop(): void
 	{
 

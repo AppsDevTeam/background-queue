@@ -48,7 +48,14 @@ readonly class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 				$this->manager->closeChannel();
 
 				if ($msg->getBody() === Producer::DIE) {
+					// Restart: exit 0 -> supervisor konzumera (typicky) znovu nastartuje.
 					die();
+				}
+
+				if ($msg->getBody() === Producer::SHUTDOWN) {
+					// Nice shutdown: rozdělaný job je už hotový (zpracovává se sériově, prefetch 1), další si nebereme
+					// a ukončíme se dohodnutým exit kódem, který má supervisor v "exitcodes" - proces už nenaběhne.
+					exit(Producer::NICE_SHUTDOWN_EXIT_CODE);
 				}
 
 				$this->backgroundQueue->processJob((int)$msg->getBody());

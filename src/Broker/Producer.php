@@ -6,4 +6,5 @@ interface Producer
 {
 	public function publish(string $id, string $queue, string $priority, ?int $expiration = null): void;
 	public function publishDie(string $queue, ?string $consumerLabel = null): void;
+	public function publishShutdown(string $queue, ?string $consumerLabel = null): void;
 }

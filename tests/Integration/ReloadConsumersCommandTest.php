@@ -32,6 +32,7 @@ class ReloadConsumersCommandTest extends Unit
 			{
 				$this->dieCalls[] = ['queue' => $queue, 'label' => $consumerLabel];
 			}
+			public function publishShutdown(string $queue, ?string $consumerLabel = null): void {}
 		};
 
 		$backgroundQueue = new BackgroundQueue([

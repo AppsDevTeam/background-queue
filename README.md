@@ -97,7 +97,14 @@ $queueParams = [
     'arguments' => ['x-queue-type' => ['S', 'quorum']]
 ];
 
-$manager = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Manager($connectionParams, $queueParams);
+// nepovinné: per-queue AMQP argumenty
+// klíč = část názvu fronty, hodnota = argumenty aplikované na každou frontu, jejíž název daný řetězec obsahuje
+// příklad: fronta "transcribe" poběží přes single active consumer (jen jeden aktivní consumer napříč všemi)
+$queueArguments = [
+    'transcribe' => ['x-single-active-consumer' => ['t', true]]
+];
+
+$manager = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Manager($connectionParams, $queueParams, $queueArguments);
 $producer = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Producer();
 $consumer = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Consumer();
 

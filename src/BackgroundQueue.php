@@ -226,7 +226,8 @@ class BackgroundQueue
 
 		$qb = $this->createQueryBuilder()
 			->andWhere('state IN (:state)')
-			->setParameter('state',  $states);
+			->setParameter('state',  $states)
+			->orderBy('id', 'ASC');
 
 		/** @var BackgroundJob $_entity */
 		foreach ($this->fetchAll($qb, 1000) as $_entity) {

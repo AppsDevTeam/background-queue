@@ -214,7 +214,7 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 `background-queue:clear-finished 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
 
-`background-queue:reload-consumers QUEUE NUMBER` Reloadne NUMBER consumerů pro danou QUEUE.
+`background-queue:reload-consumers NUMBER [QUEUE] [-l LABEL1,LABEL2,...]` Pošle NUMBER restartovacích (DIE) zpráv. Bez `-l` do sdílené DIE fronty dané QUEUE, s `-l` cíleně do DIE fronty každého uvedeného labelu (viz `background-queue:consume -l`).
 
 `background-queue:update-schema` Aktualizuje databázové schéma, pokud je potřeba.
 
@@ -300,6 +300,9 @@ Příkazu `background-queue:consume` máme možnost nastavit pomocí parametru `
 Můžeme tedy jednoho konzumera vyhradit například na rozesílání registračním emailů (`background-queue:consume -p 10`) a ostatní pro všechny úlohy (`background-queue:consume`).
 Tím zajistíme, že rychlé odeslání registračního emailu nebude čekat na dlouho trvající úlohy, protože je odbaví první konzumer.
 Ale pokud by se vyskytlo více požadavků na zasílání emailů, po nějaké době je začnou odbavovat všichni konzumeři.
+
+Příkazu `background-queue:consume` máme dále možnost nastavit parametrem `-l` (label) jmenovku konzumera. Konzumer s labelem dostane vlastní DIE frontu (`<queue>_0_<label>`), takže ho lze při `background-queue:reload-consumers` restartovat cíleně pomocí `-l label1,label2,...`, aniž by DIE zprávy "snědl" jiný konzumer.
+Aby šel každý konzumer restartovat samostatně, dej každému unikátní label - konzumeři se stejným labelem totiž jednu DIE frontu sdílejí. Bez labelu zůstává chování jako dřív: všichni konzumeři sdílejí jednu DIE frontu.
 
 Dále máme možnost prioritu nastavenou pro callback přetížit při vkládání záznamu v metodě `publish`. Například víme, že se jedná o rozesílání newsletterů.
 Tedy se jedná o zasílání emailů, ale s nízkou prioritou zpracování.

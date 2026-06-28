@@ -18,7 +18,7 @@ readonly class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	/**
 	 * @throws Exception
 	 */
-	public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void
+	public function publish(string $id, string $queue, string $priority, ?int $expiration = null): void
 	{
 		$queue = $this->manager->getQueueWithPriority($queue, $priority);
 		$exchange = $queue;
@@ -49,9 +49,9 @@ readonly class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	/**
 	 * @throws Exception
 	 */
-	public function publishDie(string $queue): void
+	public function publishDie(string $queue, ?string $consumerLabel = null): void
 	{
-		$this->publish(self::DIE, $queue, Manager::QUEUE_TOP_PRIORITY);
+		$this->publish(self::DIE, $queue, $this->manager->getTopPriorityName($consumerLabel));
 	}
 
 	private function createMessage(string $body): AMQPMessage

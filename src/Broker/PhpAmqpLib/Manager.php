@@ -37,7 +37,7 @@ class Manager
 	private function getConnection(): AMQPStreamConnection
 	{
 		if (!$this->connection) {
-			$this->connection = new AMQPStreamConnection($this->connectionParams['host'], $this->connectionParams['port'] ?? 5672, $this->connectionParams['user'], $this->connectionParams['password']);
+			$this->connection = new AMQPStreamConnection($this->connectionParams['host'], $this->connectionParams['port'] ?? 5672, $this->connectionParams['user'], $this->connectionParams['password'], $this->connectionParams['vhost'] ?? '/');
 		}
 
 		return $this->connection;

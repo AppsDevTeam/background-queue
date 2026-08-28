@@ -46,6 +46,8 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'onError' => function(Throwable $e, array $parameters) {...},  // nepovinné
 	'onAfterProcess' => function(array $parameters) {...}, // nepovinné
 	'onProcessingGetMetadata' => function(array $parameters): ?array {...}, // nepovinné
+	'stalledJobTimeout' => 3600, // nepovinné, po kolika sekundách bez zápisu se job ve stavu PROCESSING považuje za osiřelý (0 = vypnuto), viz 2.4
+	'heartbeatInterval' => 60, // nepovinné, minimální prodleva v sekundách mezi dvěma zápisy heartbeat(), viz 2.4
 	'parametersFormat' => \ADT\BackgroundQueue\Entity\BackgroundJob::PARAMETERS_FORMAT_SERIALIZE, // nepovinné, určuje v jakém formátu budou do DB ukládána data v `background_job.parameters` (@see \ADT\BackgroundQueue\Entity\BackgroundJob::setParameters),
 ]);
 ```
@@ -223,6 +225,50 @@ Všechny commandy jsou chráněny proti vícenásobnému spuštění.
 ### 2.3 Callbacky
 
 Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v nichž například můžete provést přepinání databází.
+
+### 2.4 Osiřelé joby (zabitý consumer)
+
+Když consumer umře uprostřed callbacku, nezapíše výsledek a záznam zůstane ve stavu `PROCESSING`. Ten stav
+není mezi zpracovatelnými, takže ho už nikdo nikdy nevyzvedne — a u jobů se `serialGroup` je to horší:
+běžící job se bere jako překážka, takže se celá skupina natrvalo zasekne ve stavu `WAITING`.
+
+Dokud jde o chybu, kterou PHP stihne obsloužit (výjimka, fatální chyba), řeší to standardní stavový automat.
+Proti tvrdému ukončení procesu (SIGKILL od OOM killeru, pád kontejneru, reboot hostu) se ale uvnitř procesu
+zajistit nedá nic — žádný PHP kód se už nespustí. Na to je reaper: `background-queue:process` na začátku
+každého běhu vrátí joby, které jsou ve stavu `PROCESSING` a déle než `stalledJobTimeout` sekund se do nich
+nikdo nezapsal, do stavu `TEMPORARILY_FAILED`. Odtud je vezme běžná cesta opakování.
+
+Živost se záměrně nezjišťuje ze sloupce `pid`. Ten platí jen v rámci jednoho kontejneru, takže cron na jiném
+hostu o něm nemůže nic tvrdit, a při jednom procesu na job se navíc rychle recykluje. Místo toho se posuzuje
+sloupec `updated_at`, který posune dopředu každý zápis do jobu.
+
+Reaper tedy potřebuje odlišit „běží dlouho" od „consumer umřel". K tomu slouží tep: `updated_at` se posouvá
+dopředu i během běhu callbacku, takže `stalledJobTimeout` nemusí být nastavený podle nejdelšího možného běhu.
+
+**Máte-li nainstalovaný `BackgroundQueueMiddleware` (viz 6), děje se to samo a nemusíte udělat nic.** Middleware
+sedí na aplikačním DBAL spojení, takže každý dotaz callbacku pošle tep — automaticky pro všechny joby, bez
+jediného řádku v jejich kódu. Throttling drží zátěž na jednom `UPDATE` za `heartbeatInterval` sekund na
+běžící job bez ohledu na to, kolik dotazů callback udělá.
+
+Zbývají dva případy, kdy tep sám nedojde:
+
+- callback má dlouhý úsek **bez dotazů do databáze** (generování souboru v paměti, čekání na cizí API),
+- callback visí v **jednom dlouhém dotazu** — tep se pošle až po jeho dokončení.
+
+Pro ty je `heartbeat()` veřejná metoda, kterou si callback může zavolat sám:
+
+```php
+foreach ($tisiceZaznamu as $zaznam) {
+	$backgroundQueue->heartbeat();
+	// ... vlastní práce ...
+}
+```
+
+Volat ji lze jakkoli často — zapisuje nejvýš jednou za `heartbeatInterval` sekund a mimo zpracování jobu
+nedělá nic.
+
+Bez middlewaru a bez volání `heartbeat()` tep nechodí vůbec a reaper se řídí jen tím, kdy do jobu naposledy
+zapsala samotná fronta (typicky claim). V takovém případě nechte `stalledJobTimeout` s velkou rezervou.
 
 ### 3 Monitoring
 

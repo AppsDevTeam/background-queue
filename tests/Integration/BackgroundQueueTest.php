@@ -11,7 +11,10 @@ use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
 use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
 use ADT\BackgroundQueue\Exception\JobNotFoundException;
+use ADT\BackgroundQueue\Middleware\BackgroundQueueMiddleware;
 use Codeception\Test\Unit;
+use DateTimeImmutable;
+use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\DriverManager;
 use Exception;
 use Tests\Support\Helper\Producer;
@@ -566,6 +569,258 @@ class BackgroundQueueTest extends Unit
 		}
 	}
 
+	public function reapStalledJobsProvider(): array
+	{
+		return [
+			'bez zápisu déle než timeout' => [
+				'untouchedForSeconds' => 7200,
+				'expectedState' => BackgroundJob::STATE_TEMPORARILY_FAILED,
+			],
+			'zápis v limitu' => [
+				'untouchedForSeconds' => 60,
+				'expectedState' => BackgroundJob::STATE_PROCESSING,
+			],
+		];
+	}
+
+	/**
+	 * @dataProvider reapStalledJobsProvider
+	 * @throws Exception
+	 */
+	public function testReapStalledJobs(int $untouchedForSeconds, int $expectedState)
+	{
+		$backgroundQueue = self::getBackgroundQueue(extraConfig: ['stalledJobTimeout' => 3600]);
+		$backgroundQueue->publish('processRecording', ['stalled']);
+		$id = self::fetchAllJobs($backgroundQueue)[0]->getId();
+
+		// Konzumer si job vzal a pak umřel bez zápisu výsledku (SIGKILL od OOM killeru, pád kontejneru).
+		// V DB po něm zůstal řádek v PROCESSING, do kterého se od té doby nikdo nezapsal.
+		self::rawConnection()->update(
+			$_ENV['PROJECT_DB_TABLENAME'],
+			[
+				'state' => BackgroundJob::STATE_PROCESSING,
+				'number_of_attempts' => 1,
+				'pid' => 12345,
+				'updated_at' => (new DateTimeImmutable())->modify('-' . $untouchedForSeconds . ' seconds')->format('Y-m-d H:i:s'),
+			],
+			['id' => $id]
+		);
+
+		$backgroundQueue->reapStalledJobs();
+
+		$job = self::fetchJob($backgroundQueue, $id);
+		$this->tester->assertEquals($expectedState, $job->getState(), 'stav');
+		$this->tester->assertEquals([], Mailer::$processOrder, 'reaper callback nespouští');
+
+		if ($expectedState === BackgroundJob::STATE_TEMPORARILY_FAILED) {
+			$this->tester->assertStringContainsString('stalled', $job->getErrorMessage(), 'důvod v error_message');
+			$this->tester->assertStringContainsString('12345', $job->getErrorMessage(), 'PID mrtvého konzumera v error_message');
+			$this->tester->assertNotNull($job->getPostponedBy(), 'nastavený backoff');
+			$this->tester->assertEquals(1, $job->getNumberOfAttempts(), 'reaper nepočítá vlastní pokus');
+		} else {
+			$this->tester->assertNull($job->getErrorMessage(), 'živý job zůstal nedotčený');
+		}
+	}
+
+	/**
+	 * Reaper vrací joby do TEMPORARILY_FAILED, ne do BACK_TO_BROKER. BACK_TO_BROKER vyhazuje process()
+	 * v cron režimu ze zpracovatelných stavů (nemá kam publikovat), takže by tam reapnutý job uvízl
+	 * natrvalo. TEMPORARILY_FAILED funguje v obou režimech.
+	 *
+	 * @throws Exception
+	 */
+	public function testReapedJobIsProcessableInCronMode()
+	{
+		$backgroundQueue = self::getBackgroundQueue(extraConfig: ['stalledJobTimeout' => 3600]);
+		$backgroundQueue->publish('processRecording', ['reaped']);
+		$id = self::fetchAllJobs($backgroundQueue)[0]->getId();
+
+		// Uvízlý job po zabitém konzumerovi. Do minulosti dáváme všechny časy, ať se job po reapnutí
+		// nezdrží na backoffu - process() respektuje availableFrom.
+		$twoHoursAgo = (new DateTimeImmutable())->modify('-2 hours')->format('Y-m-d H:i:s');
+		self::rawConnection()->update(
+			$_ENV['PROJECT_DB_TABLENAME'],
+			[
+				'state' => BackgroundJob::STATE_PROCESSING,
+				'number_of_attempts' => 1,
+				'created_at' => $twoHoursAgo,
+				'last_attempt_at' => $twoHoursAgo,
+				'updated_at' => $twoHoursAgo,
+			],
+			['id' => $id]
+		);
+
+		// process() job reapne i zpracuje v jednom běhu.
+		$backgroundQueue->process();
+
+		$this->tester->assertEquals(['reaped'], Mailer::$processOrder, 'reapnutý job se v cron režimu zpracuje');
+		$this->tester->assertEquals(BackgroundJob::STATE_FINISHED, self::fetchJob($backgroundQueue, $id)->getState(), 'a doběhne');
+	}
+
+	/**
+	 * process() běží na každém hostu samostatně (CommandLock je jen souborový), takže se stejný řádek
+	 * může sejít ve dvou reaperech naráz. UPDATE je proto podmíněný na to, že se řádek od SELECTu
+	 * nezměnil - jinak by druhý běh přepsal stav, který mezitím zapsal někdo jiný.
+	 *
+	 * @throws Exception
+	 */
+	public function testReapStalledJobSkipsConcurrentlyUpdatedRow()
+	{
+		$backgroundQueue = self::getBackgroundQueue(extraConfig: ['stalledJobTimeout' => 3600]);
+		$backgroundQueue->publish('processRecording', ['raced']);
+		$id = self::fetchAllJobs($backgroundQueue)[0]->getId();
+
+		self::rawConnection()->update(
+			$_ENV['PROJECT_DB_TABLENAME'],
+			[
+				'state' => BackgroundJob::STATE_PROCESSING,
+				'updated_at' => (new DateTimeImmutable())->modify('-2 hours')->format('Y-m-d H:i:s'),
+			],
+			['id' => $id]
+		);
+
+		// Entita tak, jak si ji reaper načetl...
+		$entity = self::fetchJob($backgroundQueue, $id);
+
+		// ...ale než se dostal k UPDATEu, řádek se změnil.
+		self::rawConnection()->update(
+			$_ENV['PROJECT_DB_TABLENAME'],
+			['updated_at' => (new DateTimeImmutable())->format('Y-m-d H:i:s')],
+			['id' => $id]
+		);
+
+		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('reapStalledJob');
+		$method->setAccessible(true);
+
+		$this->tester->assertFalse($method->invoke($backgroundQueue, $entity), 'UPDATE nesmí zabrat');
+		$this->tester->assertEquals(BackgroundJob::STATE_PROCESSING, self::fetchJob($backgroundQueue, $id)->getState(), 'stav zůstal nedotčený');
+	}
+
+	public function heartbeatProvider(): array
+	{
+		return [
+			'bez throttlingu se tep zapíše' => ['heartbeatInterval' => 0, 'expectedWrite' => true],
+			'v throttlovacím okně se tep zahodí' => ['heartbeatInterval' => 3600, 'expectedWrite' => false],
+		];
+	}
+
+	/**
+	 * @dataProvider heartbeatProvider
+	 * @throws Exception
+	 */
+	public function testHeartbeat(int $heartbeatInterval, bool $expectedWrite)
+	{
+		$backgroundQueue = self::getBackgroundQueue(extraConfig: ['heartbeatInterval' => $heartbeatInterval]);
+		Mailer::$backgroundQueue = $backgroundQueue;
+		Mailer::$connection = self::rawConnection();
+		Mailer::$tableName = $_ENV['PROJECT_DB_TABLENAME'];
+
+		$backgroundQueue->publish('processWithHeartbeat');
+		$id = self::fetchAllJobs($backgroundQueue)[0]->getId();
+		$backgroundQueue->processJob($id);
+
+		$this->tester->assertEquals(BackgroundJob::STATE_FINISHED, self::fetchJob($backgroundQueue, $id)->getState(), 'job doběhl');
+
+		// Callback si updated_at odsunul dvě hodiny do minulosti a pak zavolal heartbeat().
+		$before = new DateTimeImmutable(Mailer::$updatedAtBeforeHeartbeat);
+		$after = new DateTimeImmutable(Mailer::$updatedAtAfterHeartbeat);
+
+		if ($expectedWrite) {
+			$this->tester->assertGreaterThan($before->getTimestamp(), $after->getTimestamp(), 'tep posunul updated_at dopředu');
+			$this->tester->assertLessThanOrEqual(60, time() - $after->getTimestamp(), 'tep zapsal aktuální čas');
+		} else {
+			$this->tester->assertEquals($before->getTimestamp(), $after->getTimestamp(), 'throttling tep zahodil');
+		}
+	}
+
+	/**
+	 * Hlavní pointa: callback nemusí o tepu vědět. Když si aplikace nainstaluje BackgroundQueueMiddleware
+	 * na své DBAL spojení, posílá se tep sám z jeho databázové aktivity - automaticky pro všechny joby.
+	 *
+	 * @throws Exception
+	 */
+	public function testMiddlewareSendsHeartbeatAutomatically()
+	{
+		$backgroundQueue = self::getBackgroundQueue(extraConfig: ['heartbeatInterval' => 0]);
+
+		// Spojení tak, jak ho má hostitelská aplikace. Fronta si uvnitř processJob() vytváří vlastní
+		// spojení bez middlewaru, takže zápis tepu sám další tep nevyvolá.
+		Mailer::$appConnection = DriverManager::getConnection(
+			BackgroundQueue::parseDsn(self::getDsn()),
+			(new Configuration())->setMiddlewares([new BackgroundQueueMiddleware($backgroundQueue)])
+		);
+		Mailer::$connection = self::rawConnection();
+		Mailer::$tableName = $_ENV['PROJECT_DB_TABLENAME'];
+
+		$backgroundQueue->publish('processWithAppQuery');
+		$id = self::fetchAllJobs($backgroundQueue)[0]->getId();
+		$backgroundQueue->processJob($id);
+
+		$this->tester->assertEquals(BackgroundJob::STATE_FINISHED, self::fetchJob($backgroundQueue, $id)->getState(), 'job doběhl');
+
+		$before = new DateTimeImmutable(Mailer::$updatedAtBeforeHeartbeat);
+		$after = new DateTimeImmutable(Mailer::$updatedAtAfterHeartbeat);
+
+		$this->tester->assertGreaterThan($before->getTimestamp(), $after->getTimestamp(), 'dotaz callbacku poslal tep sám');
+		$this->tester->assertLessThanOrEqual(60, time() - $after->getTimestamp(), 'tep zapsal aktuální čas');
+	}
+
+	/**
+	 * Mimo zpracování jobu nemá heartbeat() co potvrzovat, takže nesmí sáhnout na žádný řádek.
+	 *
+	 * @throws Exception
+	 */
+	public function testHeartbeatOutsideJobIsNoop()
+	{
+		$backgroundQueue = self::getBackgroundQueue(extraConfig: ['heartbeatInterval' => 0]);
+		$backgroundQueue->publish('processRecording', ['untouched']);
+		$job = self::fetchAllJobs($backgroundQueue)[0];
+
+		$updatedAtBefore = $job->getUpdatedAt()->format('Y-m-d H:i:s');
+		$backgroundQueue->heartbeat();
+
+		$this->tester->assertEquals($updatedAtBefore, self::fetchJob($backgroundQueue, $job->getId())->getUpdatedAt()->format('Y-m-d H:i:s'), 'řádek se nezměnil');
+	}
+
+	/**
+	 * Vlastní důvod, proč reaper existuje: uvízlý job v PROCESSING bere getPreviousUnfinishedJobId()
+	 * jako překážku, takže s sebou drží celou svou serialGroup. Bez reaperu se skupina nerozjede nikdy.
+	 *
+	 * @throws Exception
+	 */
+	public function testReapingUnblocksSerialGroup()
+	{
+		$backgroundQueue = self::getBackgroundQueue(extraConfig: ['stalledJobTimeout' => 3600]);
+		$backgroundQueue->publish('processRecording', ['dead'], 'group-reaper');
+		$backgroundQueue->publish('processRecording', ['next'], 'group-reaper');
+		[$dead, $next] = self::fetchAllJobs($backgroundQueue);
+
+		self::rawConnection()->update(
+			$_ENV['PROJECT_DB_TABLENAME'],
+			[
+				'state' => BackgroundJob::STATE_PROCESSING,
+				'updated_at' => (new DateTimeImmutable())->modify('-2 hours')->format('Y-m-d H:i:s'),
+			],
+			['id' => $dead->getId()]
+		);
+
+		// Dokud tam uvízlý job je, další job skupiny se nemá šanci rozjet.
+		$backgroundQueue->processJob($next->getId());
+		$this->tester->assertEquals([], Mailer::$processOrder, 'uvízlý job blokuje skupinu');
+		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, self::fetchJob($backgroundQueue, $next->getId())->getState(), 'následník jde do WAITING');
+
+		// Reaper uvízlý job vrátí do hry...
+		$backgroundQueue->reapStalledJobs();
+		$this->tester->assertEquals(BackgroundJob::STATE_TEMPORARILY_FAILED, self::fetchJob($backgroundQueue, $dead->getId())->getState(), 'uvízlý job je zpět ke zpracování');
+
+		// ...a skupina se rozjede v původním pořadí.
+		$backgroundQueue->processJob($dead->getId());
+		self::rawConnection()->update($_ENV['PROJECT_DB_TABLENAME'], ['state' => BackgroundJob::STATE_READY], ['id' => $next->getId()]);
+		$backgroundQueue->processJob($next->getId());
+
+		$this->tester->assertEquals(['dead', 'next'], Mailer::$processOrder, 'skupina doběhla v pořadí');
+	}
+
 	private static function finishedCount(string $serialGroup): int
 	{
 		return (int) self::rawConnection()->fetchOne(
@@ -603,9 +858,9 @@ class BackgroundQueueTest extends Unit
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private static function getBackgroundQueue(bool $producer = false, bool $waitingQueue = false, bool $logger = false, array $priorities = [1]): BackgroundQueue
+	private static function getBackgroundQueue(bool $producer = false, bool $waitingQueue = false, bool $logger = false, array $priorities = [1], array $extraConfig = []): BackgroundQueue
 	{
-		$bq = new BackgroundQueue([
+		$bq = new BackgroundQueue($extraConfig + [
 			'callbacks' => [
 				'process' => [new Mailer(), 'process'],
 				'processWithTemporaryError' => [new Mailer(), 'processWithTemporaryError'],
@@ -613,7 +868,9 @@ class BackgroundQueueTest extends Unit
 				'processWithWaitingException' => [new Mailer(), 'processWithWaitingException'],
 				'processWithTypeError' => [new Mailer(), 'processWithTypeError'],
 				'processWithOnErrorException' => [new Mailer(), 'processWithOnErrorException'],
-				'processRecording' => [new Mailer(), 'processRecording']
+				'processRecording' => [new Mailer(), 'processRecording'],
+				'processWithHeartbeat' => [new Mailer(), 'processWithHeartbeat'],
+				'processWithAppQuery' => [new Mailer(), 'processWithAppQuery']
 			],
 			'notifyOnNumberOfAttempts' => 5,
 			'tempDir' => $_ENV['PROJECT_TMP_FOLDER'],

@@ -299,8 +299,14 @@ class BackgroundQueue
 			$entity->setState(BackgroundJob::STATE_REDUNDANT);
 			$this->save($entity);
 			// I tímhle přechodem job přestal být překážkou pro svou skupinu, takže se za sebou musí uklidit
-			// stejně jako dole po doběhnutí callbacku.
-			$this->promoteWaitingSuccessor($entity);
+			// stejně jako dole po doběhnutí callbacku. Selhání probuzení (např. chyba zámku při ztraceném
+			// spojení) nesmí propadnout ven - zpráva je už acknutá a job korektně uzavřený, výjimka by jen
+			// zbytečně shodila konzumenta; zameškané probuzení dožene promoteWaitingJobs() v cronu.
+			try {
+				$this->promoteWaitingSuccessor($entity);
+			} catch (Exception $e) {
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
+			}
 			return;
 		}
 

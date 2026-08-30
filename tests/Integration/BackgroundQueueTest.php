@@ -896,40 +896,57 @@ class BackgroundQueueTest extends Unit
 	}
 
 	/**
-	 * Denní monitoring (background-queue:monitor): reportFailedJobs() spočítá joby ve stavech
-	 * TEMPORARILY_FAILED a PERMANENTLY_FAILED a je-li co hlásit, pošle report do loggeru
-	 * (testovací Logger místo logování vyhazuje výjimku, čímž kryje logovací větev).
+	 * Denní monitoring (background-queue:monitor): reportStuckJobs() spočítá joby ve stavech
+	 * TEMPORARILY_FAILED a PERMANENTLY_FAILED, k tomu PROCESSING běžící déle než 24 h (zaseknutý
+	 * callback, který si přes middleware tepe, takže na něj reaper nedosáhne), a je-li co hlásit,
+	 * pošle report do loggeru (testovací Logger místo logování vyhazuje výjimku, čímž kryje logovací větev).
 	 *
 	 * @throws Exception
 	 */
-	public function testReportFailedJobs()
+	public function testReportStuckJobs()
 	{
 		$backgroundQueue = self::getBackgroundQueue();
 		$withLogger = self::getBackgroundQueue(false, false, true);
 		$table = $_ENV['PROJECT_DB_TABLENAME'];
 
 		// Prázdná tabulka: nic k hlášení, do loggeru nesmí nic přijít (Logger by vyhodil výjimku).
-		$report = $withLogger->reportFailedJobs();
+		$report = $withLogger->reportStuckJobs();
 		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_TEMPORARILY_FAILED]['count']);
 		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_PERMANENTLY_FAILED]['count']);
+		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_PROCESSING]['count']);
 
 		$backgroundQueue->publish('processRecording', ['a']);
 		$backgroundQueue->publish('processRecording', ['b']);
 		$backgroundQueue->publish('processRecording', ['c']);
 		$backgroundQueue->publish('processRecording', ['d']); // zůstane READY - do reportu nepatří
-		[$a, $b, $c] = self::fetchAllJobs($backgroundQueue);
+		$backgroundQueue->publish('processRecording', ['e']);
+		$backgroundQueue->publish('processRecording', ['f']);
+		[$a, $b, $c, , $e, $f] = self::fetchAllJobs($backgroundQueue);
 
 		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_TEMPORARILY_FAILED], ['id' => $a->getId()]);
 		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_TEMPORARILY_FAILED], ['id' => $b->getId()]);
 		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_PERMANENTLY_FAILED], ['id' => $c->getId()]);
+		// PROCESSING běžící 2 dny s čerstvým updated_at = hung callback, který tepe; do reportu patří.
+		self::rawConnection()->update($table, [
+			'state' => BackgroundJob::STATE_PROCESSING,
+			'last_attempt_at' => (new DateTimeImmutable())->modify('-2 days')->format('Y-m-d H:i:s'),
+			'updated_at' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+		], ['id' => $e->getId()]);
+		// PROCESSING běžící krátce - do reportu nepatří.
+		self::rawConnection()->update($table, [
+			'state' => BackgroundJob::STATE_PROCESSING,
+			'last_attempt_at' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+		], ['id' => $f->getId()]);
 
-		$report = $backgroundQueue->reportFailedJobs();
+		$report = $backgroundQueue->reportStuckJobs();
 		$this->tester->assertEquals(2, $report[BackgroundJob::STATE_TEMPORARILY_FAILED]['count']);
 		$this->tester->assertEquals(1, $report[BackgroundJob::STATE_PERMANENTLY_FAILED]['count']);
-		$this->tester->assertNotNull($report[BackgroundJob::STATE_TEMPORARILY_FAILED]['oldestCreatedAt']);
+		$this->tester->assertEquals(1, $report[BackgroundJob::STATE_PROCESSING]['count']);
+		$this->tester->assertNotNull($report[BackgroundJob::STATE_TEMPORARILY_FAILED]['oldestSince']);
+		$this->tester->assertNotNull($report[BackgroundJob::STATE_PROCESSING]['oldestSince']);
 
 		// Je-li co hlásit, jde report do loggeru stejným kanálem jako ostatní notifikace.
-		$this->assertThrows(Exception::class, fn() => $withLogger->reportFailedJobs());
+		$this->assertThrows(Exception::class, fn() => $withLogger->reportStuckJobs());
 	}
 
 	/**

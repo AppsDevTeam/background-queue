@@ -107,6 +107,7 @@ Všechny příkazy kromě `ConsumeCommand` rozšiřují lokální abstraktní `C
 
 - `background-queue:process` - vstupní bod pro cron (spouštět každou minutu).
 - `background-queue:consume [queue] -j <jobs> -p <priorities>` - dlouhoběžící brokerový konzumer; `-p` přijímá rozsahy jako `20-40`, `25-`, `-20`.
+- `background-queue:monitor` - denní monitoring (spouštět cronem o půlnoci): `reportStuckJobs()` spočítá joby v `TEMPORARILY_FAILED`, `PERMANENTLY_FAILED` a `PROCESSING` běžící déle než 24 h (tepající hung callback, na který reaper nedosáhne) a je-li co hlásit, pošle report do loggeru (critical při PERMANENTLY_FAILED / dlouhém PROCESSING, jinak warning).
 - `background-queue:clear-finished [days]`, `background-queue:reload-consumers <number> [queue]`, `background-queue:update-schema`.
 
 ### Hromadný insert

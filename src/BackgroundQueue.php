@@ -64,6 +64,11 @@ class BackgroundQueue
 	// vznikají neškodné, ale zbytečné duplicitní zprávy.
 	private const DEFAULT_LOST_MESSAGE_TIMEOUT = 3600;
 
+	// Od kolika sekund běhu hlásí reportStuckJobs() job v PROCESSING jako podezřelý. Kryje callback
+	// zaseknutý v nekonečné smyčce, který si přes middleware pořád tepe - updated_at se posouvá, takže
+	// na něj reaper (stalledJobTimeout) nikdy nedosáhne. Měří se od last_attempt_at (začátek běhu).
+	private const LONG_PROCESSING_REPORT_THRESHOLD = 86400;
+
 	private array $config;
 	private bool $connectionCreated = false;
 	private Connection $connection;
@@ -821,47 +826,69 @@ class BackgroundQueue
 	 * při opakování budou vyžadovat - ruční zásah. PERMANENTLY_FAILED se sám už nikdy nespustí;
 	 * TEMPORARILY_FAILED se sice opakuje sám, ale job selhávající pořád dokola v něm bydlí navěky
 	 * (backoff má strop 16 minut a notifyOnNumberOfAttempts upozorní jen při přesně N-tém pokusu).
-	 * Ostatní stavy mají aktivní pojistku (reaper, promotion, republish), takže se v nich nic dlouhodobě nedrží.
+	 * K tomu PROCESSING běžící déle než LONG_PROCESSING_REPORT_THRESHOLD: callback zaseknutý v nekonečné
+	 * smyčce, který přes middleware pořád tepe, reaperu nikdy nezestárne - tohle je jediné místo, které
+	 * ho zviditelní. Ostatní stavy mají aktivní pojistku (reaper, promotion, republish), takže se v nich
+	 * nic dlouhodobě nedrží.
 	 *
 	 * Je-li co hlásit, pošle report i do loggeru - stejným kanálem jako ostatní notifikace knihovny.
-	 * Úroveň je critical, obsahuje-li report PERMANENTLY_FAILED joby (bez zásahu se nic nestane),
-	 * jinak warning. Vrací počty a stáří nejstaršího jobu pro výpis commandu.
+	 * Úroveň je critical, obsahuje-li report PERMANENTLY_FAILED nebo dlouhoběžící PROCESSING joby
+	 * (ani jedno se bez zásahu nespraví), jinak warning. Vrací počty a stáří nejstaršího jobu pro výpis
+	 * commandu; u PROCESSING se stářím míní začátek běhu (last_attempt_at), u ostatních vznik jobu.
 	 *
-	 * @return array<int, array{count: int, oldestCreatedAt: ?string}> klíčem je stav
+	 * @return array<int, array{count: int, oldestSince: ?string}> klíčem je stav
 	 * @throws Exception
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	public function reportFailedJobs(): array
+	public function reportStuckJobs(): array
 	{
 		$states = [BackgroundJob::STATE_TEMPORARILY_FAILED, BackgroundJob::STATE_PERMANENTLY_FAILED];
 
 		$qb = $this->createQueryBuilder()
-			->select('state, COUNT(*) AS jobCount, MIN(created_at) AS oldestCreatedAt')
+			->select('state, COUNT(*) AS jobCount, MIN(created_at) AS oldestSince')
 			->andWhere('state IN (:states)')
 			->setParameter('states', $states)
 			->groupBy('state');
 
 		$report = [];
 		foreach ($states as $_state) {
-			$report[$_state] = ['count' => 0, 'oldestCreatedAt' => null];
+			$report[$_state] = ['count' => 0, 'oldestSince' => null];
 		}
 		foreach ($this->fetchAll($qb, null, false) as $_row) {
 			$report[(int) $_row['state']] = [
 				'count' => (int) $_row['jobCount'],
-				'oldestCreatedAt' => $_row['oldestCreatedAt'],
+				'oldestSince' => $_row['oldestSince'],
 			];
 		}
 
+		// Dlouhoběžící PROCESSING se měří od začátku běhu (last_attempt_at), ne od updated_at -
+		// ten hung callbacku posouvá heartbeat, což je přesně důvod, proč na něj reaper nedosáhne.
+		$runningSince = (new DateTimeImmutable())->modify('-' . self::LONG_PROCESSING_REPORT_THRESHOLD . ' seconds');
+		$qb = $this->createQueryBuilder()
+			->select('COUNT(*) AS jobCount, MIN(last_attempt_at) AS oldestSince')
+			->andWhere('state = :processingState')
+			->setParameter('processingState', BackgroundJob::STATE_PROCESSING)
+			->andWhere('last_attempt_at < :runningSince')
+			->setParameter('runningSince', $runningSince->format('Y-m-d H:i:s'));
+		$row = $this->fetchAll($qb, null, false)[0];
+		$report[BackgroundJob::STATE_PROCESSING] = [
+			'count' => (int) $row['jobCount'],
+			'oldestSince' => $row['jobCount'] ? $row['oldestSince'] : null,
+		];
+
 		$temporarily = $report[BackgroundJob::STATE_TEMPORARILY_FAILED];
 		$permanently = $report[BackgroundJob::STATE_PERMANENTLY_FAILED];
+		$longRunning = $report[BackgroundJob::STATE_PROCESSING];
 
-		if ($temporarily['count'] || $permanently['count']) {
-			$message = 'BackgroundQueue: Failed jobs report: '
-				. $temporarily['count'] . 'x TEMPORARILY_FAILED' . ($temporarily['count'] ? ' (oldest ' . $temporarily['oldestCreatedAt'] . ')' : '')
+		if ($temporarily['count'] || $permanently['count'] || $longRunning['count']) {
+			$message = 'BackgroundQueue: Stuck jobs report: '
+				. $temporarily['count'] . 'x TEMPORARILY_FAILED' . ($temporarily['count'] ? ' (oldest ' . $temporarily['oldestSince'] . ')' : '')
 				. ', '
-				. $permanently['count'] . 'x PERMANENTLY_FAILED' . ($permanently['count'] ? ' (oldest ' . $permanently['oldestCreatedAt'] . ')' : '')
+				. $permanently['count'] . 'x PERMANENTLY_FAILED' . ($permanently['count'] ? ' (oldest ' . $permanently['oldestSince'] . ')' : '')
+				. ', '
+				. $longRunning['count'] . 'x PROCESSING running longer than ' . (self::LONG_PROCESSING_REPORT_THRESHOLD / 3600) . ' hours' . ($longRunning['count'] ? ' (since ' . $longRunning['oldestSince'] . ')' : '')
 				. '.';
-			$this->logger->log($permanently['count'] ? 'critical' : 'warning', new Exception($message));
+			$this->logger->log(($permanently['count'] || $longRunning['count']) ? 'critical' : 'warning', new Exception($message));
 		}
 
 		return $report;

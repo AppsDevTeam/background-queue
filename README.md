@@ -48,6 +48,7 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'onProcessingGetMetadata' => function(array $parameters): ?array {...}, // nepovinné
 	'stalledJobTimeout' => 3600, // nepovinné, po kolika sekundách bez zápisu se job ve stavu PROCESSING považuje za osiřelý (0 = vypnuto), viz 2.4
 	'heartbeatInterval' => 60, // nepovinné, minimální prodleva v sekundách mezi dvěma zápisy heartbeat(), viz 2.4
+	'lostMessageTimeout' => 3600, // nepovinné, po kolika sekundách bez zápisu se u jobu ve stavu READY/TEMPORARILY_FAILED považuje zpráva v brokeru za ztracenou a publikuje se znovu (0 = vypnuto), viz 2.5
 	'parametersFormat' => \ADT\BackgroundQueue\Entity\BackgroundJob::PARAMETERS_FORMAT_SERIALIZE, // nepovinné, určuje v jakém formátu budou do DB ukládána data v `background_job.parameters` (@see \ADT\BackgroundQueue\Entity\BackgroundJob::setParameters),
 ]);
 ```
@@ -210,7 +211,7 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 ### 2.2 Commandy
 
-`background-queue:process` Bez využití brokera zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `BROKER_FAILED`. V případě využití brokera zařadí znovu do brokera (a přepne na `READY`) záznamy ve stavu `STATE_BACK_TO_BROKER`, zpracuje rovnou záznamy ve stavu `BROKER_FAILED` (těm se publikace do brokera nepovedla) a navíc pustí do hry hlavu každé skupiny, která má nějaký job ve stavu `WAITING` - záchranná síť pro případ, že by ji neprobudil konzument předchůdce. Command je ideální spouštět cronem každou minutu. Stav `STATE_BACK_TO_BROKER` je typicky nastaven ručně v databázi těm záznamům, které chceme nechat znovu zpracovat.
+`background-queue:process` Bez využití brokera zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `BROKER_FAILED`. V případě využití brokera zařadí znovu do brokera (a přepne na `READY`) záznamy ve stavu `STATE_BACK_TO_BROKER`, zpracuje rovnou záznamy ve stavu `BROKER_FAILED` (těm se publikace do brokera nepovedla), pustí do hry hlavu každé skupiny, která má nějaký job ve stavu `WAITING` (záchranná síť pro případ, že by ji neprobudil konzument předchůdce), a znovu publikuje joby se ztracenou zprávou (viz 2.5). Command je ideální spouštět cronem každou minutu. Stav `STATE_BACK_TO_BROKER` je typicky nastaven ručně v databázi těm záznamům, které chceme nechat znovu zpracovat.
 
 `background-queue:clear-finished` Smaže všechny úspěšně zpracované záznamy.
 
@@ -269,6 +270,20 @@ nedělá nic.
 
 Bez middlewaru a bez volání `heartbeat()` tep nechodí vůbec a reaper se řídí jen tím, kdy do jobu naposledy
 zapsala samotná fronta (typicky claim). V takovém případě nechte `stalledJobTimeout` s velkou rezervou.
+
+### 2.5 Ztracené zprávy (job bez zprávy v brokeru)
+
+Řádek v databázi je zdroj pravdy, ale k životu ho v broker módu probouzí jediná zpráva v RabbitMQ — a ta
+může zaniknout: proces umře mezi DB zápisem a publishem, publish zůstane viset v transakčním bufferu bez
+nainstalovaného middlewaru, consumer spadne mezi ackem a claimem, výpadek sítě těsně po `basic_publish`,
+ruční purge fronty. Job ve stavu `READY` nebo `TEMPORARILY_FAILED` by pak visel navždy — a job se
+`serialGroup` by s sebou blokoval i celou svou skupinu.
+
+Pojistkou je `background-queue:process`: joby v těchto dvou stavech, do kterých déle než `lostMessageTimeout`
+sekund nikdo nezapsal a kterým už uplynul případný odklad (`availableFrom`), publikuje znovu. Falešný poplach
+je neškodný — pokud zpráva jen dlouho čekala v zaplněné frontě, duplicitní doručení zahodí podmíněný claim.
+Nastavte proto `lostMessageTimeout` s rezervou nad běžnou dobu čekání zprávy ve frontě, ať duplicity
+nevznikají zbytečně. Každý republish se zaloguje s úrovní `warning`.
 
 ### 3 Monitoring
 

@@ -44,7 +44,7 @@ Jedna velká třída, která vlastní vše: konfiguraci, DBAL connection, publik
 Téměř každá větev v `process()`/`save()` se odvíjí od toho, zda je nakonfigurován `producer`:
 
 - **Cron mód (bez producera):** `process()` spouští joby inline. Zpracovatelné stavy nezahrnují `STATE_BACK_TO_BROKER`.
-- **Broker mód (producer nastaven):** `process()` joby *nespouští*; přepne způsobilé řádky v DB zpět na `STATE_READY` a znovu publikuje jejich ID do brokera. Skutečná práce probíhá v `Consumer::consume()` → `processJob()`. Broker vždy nese pouze **ID jobu** (string); řádek v DB je vždy zdrojem pravdy.
+- **Broker mód (producer nastaven):** `process()` joby *nespouští*; přepne způsobilé řádky v DB zpět na `STATE_READY` a znovu publikuje jejich ID do brokera. Skutečná práce probíhá v `Consumer::consume()` → `processJob()`. Broker vždy nese pouze **ID jobu** (string); řádek v DB je vždy zdrojem pravdy. Protože ale řádek probouzí jediná zpráva v brokeru, běží na konci `process()` pojistka `republishLostMessages()`: joby v `READY`/`TEMPORARILY_FAILED` bez zápisu déle než `lostMessageTimeout` (default 3600 s) a s prošlým `availableFrom` znovu publikuje (podmíněný UPDATE, duplicitní zprávu zahodí podmíněný claim; opožděný duplikát na FINISHED řádku se proto v `processJob()` tiše přeskakuje).
 
 ### Stavový automat jobu (src/Entity/BackgroundJob.php)
 

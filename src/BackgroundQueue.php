@@ -58,6 +58,12 @@ class BackgroundQueue
 	// na běžící job bez ohledu na to, kolik dotazů callback udělá.
 	private const DEFAULT_HEARTBEAT_INTERVAL = 60;
 
+	// Jak dlouho (v sekundách) smí job ve stavu READY / TEMPORARILY_FAILED čekat bez jediného zápisu
+	// (a s prošlým availableFrom), než jeho zprávu prohlásíme za ztracenou a publikujeme znovu.
+	// Musí být s rezervou delší než běžná doba čekání zprávy ve frontě - při zaplněné frontě jinak
+	// vznikají neškodné, ale zbytečné duplicitní zprávy.
+	private const DEFAULT_LOST_MESSAGE_TIMEOUT = 3600;
+
 	private array $config;
 	private bool $connectionCreated = false;
 	private Connection $connection;
@@ -111,6 +117,9 @@ class BackgroundQueue
 		}
 		if (!isset($config['heartbeatInterval'])) {
 			$config['heartbeatInterval'] = self::DEFAULT_HEARTBEAT_INTERVAL;
+		}
+		if (!isset($config['lostMessageTimeout'])) {
+			$config['lostMessageTimeout'] = self::DEFAULT_LOST_MESSAGE_TIMEOUT;
 		}
 		$this->config = $config;
 		$this->connection = $config['connection'];
@@ -265,6 +274,77 @@ class BackgroundQueue
 		// Bez producera to netřeba: tam si WAITING joby vybírá přímo smyčka výš.
 		if ($this->getConfig()['producer']) {
 			$this->promoteWaitingJobs();
+			$this->republishLostMessages();
+		}
+	}
+
+	/**
+	 * Záchranná síť pro joby, jejichž zpráva se ztratila. Řádek v DB je zdroj pravdy, ale k životu ho
+	 * probouzí jediná zpráva v brokeru - a ta může zaniknout: proces umře mezi DB zápisem a publishem,
+	 * publish zůstane viset v bufferu transakce bez nainstalovaného middlewaru, konzument spadne mezi
+	 * ackem a claimem, výpadek sítě po basic_publish, ruční purge fronty. Job ve stavu READY nebo
+	 * TEMPORARILY_FAILED pak bez téhle pojistky visí navždy - process() tyhle stavy v broker módu záměrně
+	 * nerepublikuje a reaper řeší jen PROCESSING. Job se serialGroup navíc blokuje celou svou skupinu.
+	 *
+	 * Za ztracenou se zpráva považuje, když je job déle než lostMessageTimeout bez jediného zápisu
+	 * (updated_at) a zároveň mu už uplynul odklad (availableFrom) - u TEMPORARILY_FAILED tedy čekáme,
+	 * až doběhne backoff, aby se opakování neuspíšilo. Falešný poplach (zpráva jen dlouho čeká v zaplněné
+	 * frontě) je neškodný: duplicitní zprávu zahodí podmíněný claim, jen zbytečně projde brokerem.
+	 *
+	 * Republish jde přes podmíněný UPDATE stejně jako promotion: osvěží updated_at (ať se tentýž job
+	 * nerepublikuje každý běh cronu, dokud čeká ve frontě) a vynuluje postponed_by (odklad už uplynul,
+	 * nová zpráva může jít do fronty rovnou); publikuje se jen když UPDATE zabral.
+	 *
+	 * @throws Exception
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function republishLostMessages(): void
+	{
+		if (!$this->producer || !$this->config['lostMessageTimeout']) {
+			return;
+		}
+
+		$untouchedSince = (new DateTimeImmutable())->modify('-' . $this->config['lostMessageTimeout'] . ' seconds');
+
+		$qb = $this->createQueryBuilder()
+			->andWhere('state IN (:states)')
+			->setParameter('states', [BackgroundJob::STATE_READY, BackgroundJob::STATE_TEMPORARILY_FAILED])
+			->andWhere('updated_at < :untouchedSince')
+			->setParameter('untouchedSince', $untouchedSince->format('Y-m-d H:i:s'))
+			->orderBy('id', 'ASC');
+
+		/** @var BackgroundJob $_entity */
+		foreach ($this->fetchAll($qb, 1000) as $_entity) {
+			// Odklad (backoff po chybě) ještě neuplynul - zpráva legitimně čeká v TTL frontě.
+			// availableFrom se skládá z více sloupců, proto se filtruje tady a ne v SQL.
+			if ($_entity->getAvailableFrom() > new DateTime()) {
+				continue;
+			}
+
+			$affected = $this->connection->createQueryBuilder()
+				->update($this->config['tableName'])
+				->set('postponed_by', ':postponedBy')
+				->set('updated_at', ':updatedAt')
+				->where('id = :id')
+				->andWhere('state = :state')
+				->setParameter('postponedBy', null)
+				->setParameter('updatedAt', (new DateTimeImmutable())->format('Y-m-d H:i:s'))
+				->setParameter('id', $_entity->getId())
+				->setParameter('state', $_entity->getState())
+				->executeStatement();
+
+			if (!$affected) {
+				// Řádek se mezi SELECTem a UPDATEm změnil - job si mezitím někdo vzal, jeho zpráva tedy žije.
+				continue;
+			}
+
+			$_entity->setPostponedBy(null);
+			$this->publishToBroker($_entity);
+
+			// Nejde o chybu jobu, jen o ztracený transport - proto přímý log bez logException():
+			// ten by READY jobu navíc přepnul stav na PERMANENTLY_FAILED (viz jeho tělo).
+			$this->logger->log('warning', new Exception('BackgroundQueue: Lost broker message republished (ID: ' . $_entity->getId() . ').'));
 		}
 	}
 
@@ -286,10 +366,12 @@ class BackgroundQueue
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			// REDUNDANT job zařazený v brokeru je očekávaný stav (job byl coalescingem označen za nadbytečný
-			// až po zařazení jeho ID do brokera), proto ho tiše přeskočíme bez logu. Ostatní ne-ready stavy
-			// (FINISHED, PROCESSING jiným konzumentem, ...) logujeme dál.
-			if ($entity->getState() !== BackgroundJob::STATE_REDUNDANT) {
+			// REDUNDANT a FINISHED job zařazený v brokeru je očekávaný stav, proto se tiše přeskočí bez logu:
+			// REDUNDANT vzniká coalescingem až po zařazení ID do brokera, FINISHED je opožděný duplikát -
+			// typicky původní zpráva jobu, který mezitím doběhl přes republish ztracené zprávy
+			// (republishLostMessages), nebo RabbitMQ redelivery. Ostatní ne-ready stavy
+			// (PROCESSING jiným konzumentem, PERMANENTLY_FAILED, ...) logujeme dál.
+			if (!in_array($entity->getState(), [BackgroundJob::STATE_REDUNDANT, BackgroundJob::STATE_FINISHED], true)) {
 				$this->logException('Unexpected state "' .$entity->getState() . '".', $entity);
 			}
 			return;

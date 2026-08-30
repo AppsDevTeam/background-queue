@@ -896,6 +896,44 @@ class BackgroundQueueTest extends Unit
 	}
 
 	/**
+	 * Záchranná síť pro ztracené zprávy: job ve stavu READY/TEMPORARILY_FAILED, kterého se déle než
+	 * lostMessageTimeout nikdo nedotkl a jehož odklad už uplynul, se znovu publikuje do brokera.
+	 * Bez ní takový job (proces umřel mezi DB zápisem a publishem, purge fronty, ...) visí navždy.
+	 *
+	 * @throws Exception
+	 */
+	public function testProcessRepublishesLostMessages()
+	{
+		$backgroundQueue = self::getBackgroundQueue(true);
+		$table = $_ENV['PROJECT_DB_TABLENAME'];
+
+		$backgroundQueue->publish('processRecording', ['lost']);    // ztracená zpráva, po timeoutu -> republish
+		$backgroundQueue->publish('processRecording', ['fresh']);   // ztracená zpráva, ale v limitu -> nechat být
+		$backgroundQueue->publish('processRecording', ['backoff']); // po timeoutu, ale backoff neuplynul -> nechat být
+		[$lost, $fresh, $backoff] = self::fetchAllJobs($backgroundQueue);
+
+		// Simulace ztráty: všechny zprávy z publish() zahodíme.
+		self::getProducer()->purge('general_1');
+
+		$twoHoursAgo = (new DateTimeImmutable())->modify('-2 hours')->format('Y-m-d H:i:s');
+		self::rawConnection()->update($table, ['updated_at' => $twoHoursAgo], ['id' => $lost->getId()]);
+		self::rawConnection()->update($table, [
+			'state' => BackgroundJob::STATE_TEMPORARILY_FAILED,
+			'updated_at' => $twoHoursAgo,
+			'last_attempt_at' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+			'postponed_by' => 600000,
+		], ['id' => $backoff->getId()]);
+
+		$backgroundQueue->process();
+
+		$this->tester->assertEquals((string) $lost->getId(), self::getProducer()->consume(), 'ztracený job je zpět v brokeru');
+		$this->tester->assertNull(self::getProducer()->consume(), 'nic dalšího se nerepublikovalo');
+		$this->tester->assertEquals(BackgroundJob::STATE_READY, self::fetchJob($backgroundQueue, $lost->getId())->getState(), 'stav se republishem nemění');
+		$this->tester->assertNull(self::fetchJob($backgroundQueue, $lost->getId())->getPostponedBy(), 'odklad se vynuloval');
+		$this->tester->assertEquals(BackgroundJob::STATE_TEMPORARILY_FAILED, self::fetchJob($backgroundQueue, $backoff->getId())->getState(), 'job v backoffu zůstal nedotčený');
+	}
+
+	/**
 	 * Odklad do WAITING je podmíněný přechod: konzument se zastaralou entitou (RabbitMQ redelivery doručil
 	 * totéž ID dvěma konzumentům) nesmí přepsat PROCESSING jobu, který si mezitím claimnul někdo jiný.
 	 * Nepodmíněný zápis by běžící job poslal do WAITING, promotion by ho pustila znovu a běžel by dvakrát.

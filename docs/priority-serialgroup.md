@@ -727,11 +727,27 @@ Dokud se nesmažou, nic se nerozbije: `process()` je v broker módu nevybírá (
 a případná stará zpráva v brokeru skončí buď na `JobNotFoundException` (řádek už není), nebo
 na zalogované chybě „Callback does not exist" (řádek ještě je).
 
-### Co to nepokrývá
+### Ztracené zprávy (doplněno následně)
 
-Zůstává nezávislá třída visících jobů: job ve stavu `READY` nebo `TEMPORARILY_FAILED`, jehož
-zpráva se ztratila v brokeru. `process()` tyhle stavy v broker módu nerepublikuje a reaper
-řeší jen `PROCESSING`. Vědomě mimo rozsah této změny.
+Původně zůstávala nezávislá třída visících jobů: job ve stavu `READY` nebo
+`TEMPORARILY_FAILED`, jehož zpráva se ztratila v brokeru - `process()` tyhle stavy v broker
+módu nerepublikuje a reaper řeší jen `PROCESSING`. Zaniknout přitom zpráva může v pěti
+kódových oknech (proces umře mezi DB zápisem a publishem - v `publish()`, zápisu výsledku,
+deadlock větvi, reaperu i promotion), konfigurací (chybějící middleware + publish v
+transakci → zpráva zůstane v bufferu) i provozně (ack před zpracováním + pád konzumenta,
+síťové okno po `basic_publish`, purge fronty). U jobu se `serialGroup` navíc takový řádek
+blokuje celou skupinu: nástupci se každou minutu promotnou, narazí na blocker a vrátí se
+do WAITING, dokola.
+
+Uzavírá to `republishLostMessages()`, volaná na konci `process()` v broker módu: joby ve
+stavech `READY`/`TEMPORARILY_FAILED`, do kterých déle než `lostMessageTimeout` (default
+3600 s) nikdo nezapsal (`updated_at`) a kterým už uplynul odklad (`availableFrom` - u
+backoffu se čeká, až doběhne, aby se opakování neuspíšilo), znovu publikuje. Republish jde
+přes podmíněný UPDATE (osvěží `updated_at`, ať se tentýž job nerepublikuje každý běh;
+vynuluje `postponed_by`; publish jen když UPDATE zabral). Falešný poplach je neškodný -
+duplicitní zprávu zahodí podmíněný claim; proto se zároveň v `processJob()` ztišil log
+u opožděného duplikátu na FINISHED řádku (očekávaný důsledek pojistky, stejně jako
+REDUNDANT u coalescingu).
 
 ### Dovětek: zastaralá entita při redelivery (oprava navazující na podmíněnou promotion)
 
@@ -765,4 +781,5 @@ Regresně to hlídá `testWaitingWriteDoesNotClobberClaimedJob`.
 | `testPromoteWaitingJobLeavesNonWaitingJobAlone` | podmíněnost promotion na `WAITING` (žádné přepsání běžícího jobu) |
 | `testPermanentlyFailedJobIsNotUnfinished` | `TERMINAL_STATES` v `getUnfinishedJobIdentifiers()` |
 | `testWaitingWriteDoesNotClobberClaimedJob` | podmíněný odklad do WAITING (zastaralá entita při redelivery) |
+| `testProcessRepublishesLostMessages` | republish ztracených zpráv (timeout + respektování backoffu) |
 | `testPromoteWaitingJobsPicksGroupHeadByPriority` (dřív Test 7) | záchranná síť vybírá hlavu dle (priorita, ID) |

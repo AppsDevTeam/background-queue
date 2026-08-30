@@ -816,6 +816,57 @@ class BackgroundQueue
 		return $unfinishedJobIdentifiers;
 	}
 
+	/**
+	 * Denní monitoring (command background-queue:monitor): spočítá joby ve stavech, které vyžadují - nebo
+	 * při opakování budou vyžadovat - ruční zásah. PERMANENTLY_FAILED se sám už nikdy nespustí;
+	 * TEMPORARILY_FAILED se sice opakuje sám, ale job selhávající pořád dokola v něm bydlí navěky
+	 * (backoff má strop 16 minut a notifyOnNumberOfAttempts upozorní jen při přesně N-tém pokusu).
+	 * Ostatní stavy mají aktivní pojistku (reaper, promotion, republish), takže se v nich nic dlouhodobě nedrží.
+	 *
+	 * Je-li co hlásit, pošle report i do loggeru - stejným kanálem jako ostatní notifikace knihovny.
+	 * Úroveň je critical, obsahuje-li report PERMANENTLY_FAILED joby (bez zásahu se nic nestane),
+	 * jinak warning. Vrací počty a stáří nejstaršího jobu pro výpis commandu.
+	 *
+	 * @return array<int, array{count: int, oldestCreatedAt: ?string}> klíčem je stav
+	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	public function reportFailedJobs(): array
+	{
+		$states = [BackgroundJob::STATE_TEMPORARILY_FAILED, BackgroundJob::STATE_PERMANENTLY_FAILED];
+
+		$qb = $this->createQueryBuilder()
+			->select('state, COUNT(*) AS jobCount, MIN(created_at) AS oldestCreatedAt')
+			->andWhere('state IN (:states)')
+			->setParameter('states', $states)
+			->groupBy('state');
+
+		$report = [];
+		foreach ($states as $_state) {
+			$report[$_state] = ['count' => 0, 'oldestCreatedAt' => null];
+		}
+		foreach ($this->fetchAll($qb, null, false) as $_row) {
+			$report[(int) $_row['state']] = [
+				'count' => (int) $_row['jobCount'],
+				'oldestCreatedAt' => $_row['oldestCreatedAt'],
+			];
+		}
+
+		$temporarily = $report[BackgroundJob::STATE_TEMPORARILY_FAILED];
+		$permanently = $report[BackgroundJob::STATE_PERMANENTLY_FAILED];
+
+		if ($temporarily['count'] || $permanently['count']) {
+			$message = 'BackgroundQueue: Failed jobs report: '
+				. $temporarily['count'] . 'x TEMPORARILY_FAILED' . ($temporarily['count'] ? ' (oldest ' . $temporarily['oldestCreatedAt'] . ')' : '')
+				. ', '
+				. $permanently['count'] . 'x PERMANENTLY_FAILED' . ($permanently['count'] ? ' (oldest ' . $permanently['oldestCreatedAt'] . ')' : '')
+				. '.';
+			$this->logger->log($permanently['count'] ? 'critical' : 'warning', new Exception($message));
+		}
+
+		return $report;
+	}
+
 	public static function parseDsn($dsn): array
 	{
 		// Parse the DSN string

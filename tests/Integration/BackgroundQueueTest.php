@@ -896,6 +896,43 @@ class BackgroundQueueTest extends Unit
 	}
 
 	/**
+	 * Denní monitoring (background-queue:monitor): reportFailedJobs() spočítá joby ve stavech
+	 * TEMPORARILY_FAILED a PERMANENTLY_FAILED a je-li co hlásit, pošle report do loggeru
+	 * (testovací Logger místo logování vyhazuje výjimku, čímž kryje logovací větev).
+	 *
+	 * @throws Exception
+	 */
+	public function testReportFailedJobs()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$withLogger = self::getBackgroundQueue(false, false, true);
+		$table = $_ENV['PROJECT_DB_TABLENAME'];
+
+		// Prázdná tabulka: nic k hlášení, do loggeru nesmí nic přijít (Logger by vyhodil výjimku).
+		$report = $withLogger->reportFailedJobs();
+		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_TEMPORARILY_FAILED]['count']);
+		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_PERMANENTLY_FAILED]['count']);
+
+		$backgroundQueue->publish('processRecording', ['a']);
+		$backgroundQueue->publish('processRecording', ['b']);
+		$backgroundQueue->publish('processRecording', ['c']);
+		$backgroundQueue->publish('processRecording', ['d']); // zůstane READY - do reportu nepatří
+		[$a, $b, $c] = self::fetchAllJobs($backgroundQueue);
+
+		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_TEMPORARILY_FAILED], ['id' => $a->getId()]);
+		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_TEMPORARILY_FAILED], ['id' => $b->getId()]);
+		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_PERMANENTLY_FAILED], ['id' => $c->getId()]);
+
+		$report = $backgroundQueue->reportFailedJobs();
+		$this->tester->assertEquals(2, $report[BackgroundJob::STATE_TEMPORARILY_FAILED]['count']);
+		$this->tester->assertEquals(1, $report[BackgroundJob::STATE_PERMANENTLY_FAILED]['count']);
+		$this->tester->assertNotNull($report[BackgroundJob::STATE_TEMPORARILY_FAILED]['oldestCreatedAt']);
+
+		// Je-li co hlásit, jde report do loggeru stejným kanálem jako ostatní notifikace.
+		$this->assertThrows(Exception::class, fn() => $withLogger->reportFailedJobs());
+	}
+
+	/**
 	 * Záchranná síť pro ztracené zprávy: job ve stavu READY/TEMPORARILY_FAILED, kterého se déle než
 	 * lostMessageTimeout nikdo nedotkl a jehož odklad už uplynul, se znovu publikuje do brokera.
 	 * Bez ní takový job (proces umřel mezi DB zápisem a publishem, purge fronty, ...) visí navždy.

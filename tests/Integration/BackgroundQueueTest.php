@@ -252,7 +252,7 @@ class BackgroundQueueTest extends Unit
 		$backgroundJobs = self::fetchAllJobs($backgroundQueue);
 		$this->tester->assertEquals(true, $method->invoke($backgroundQueue, $backgroundJobs[0]));
 		$this->tester->assertEquals(false, $method->invoke($backgroundQueue, $backgroundJobs[1]));
-		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, $backgroundJobs[1]->getState(), 'state');
+		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, self::fetchJob($backgroundQueue, $backgroundJobs[1]->getId())->getState(), 'state');
 		if ($producer) {
 			self::getProducer()->consume();
 			self::getProducer()->consume();
@@ -893,6 +893,31 @@ class BackgroundQueueTest extends Unit
 
 		$this->tester->assertEquals(BackgroundJob::STATE_PROCESSING, self::fetchJob($backgroundQueue, $job->getId())->getState(), 'běžící job zůstal nedotčený');
 		$this->tester->assertNull(self::getProducer()->consume(), 'do brokera se nic nepublikovalo');
+	}
+
+	/**
+	 * Odklad do WAITING je podmíněný přechod: konzument se zastaralou entitou (RabbitMQ redelivery doručil
+	 * totéž ID dvěma konzumentům) nesmí přepsat PROCESSING jobu, který si mezitím claimnul někdo jiný.
+	 * Nepodmíněný zápis by běžící job poslal do WAITING, promotion by ho pustila znovu a běžel by dvakrát.
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testWaitingWriteDoesNotClobberClaimedJob()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$backgroundQueue->publish('processRecording', ['blocker'], 'group-clobber');
+		$backgroundQueue->publish('processRecording', ['x'], 'group-clobber');
+		[$blocker, $x] = self::fetchAllJobs($backgroundQueue); // $x drží zastaralou kopii ve stavu READY
+
+		// Mezitím si X claimnul jiný konzument.
+		self::rawConnection()->update($_ENV['PROJECT_DB_TABLENAME'], ['state' => BackgroundJob::STATE_PROCESSING], ['id' => $x->getId()]);
+
+		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('checkUnfinishedJobs');
+		$method->setAccessible(true);
+
+		$this->tester->assertFalse($method->invoke($backgroundQueue, $x), 'překážka ve skupině -> job se nezpracuje');
+		$this->tester->assertEquals(BackgroundJob::STATE_PROCESSING, self::fetchJob($backgroundQueue, $x->getId())->getState(), 'běžící job zůstal nedotčený');
 	}
 
 	/**

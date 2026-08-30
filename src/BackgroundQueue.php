@@ -319,6 +319,18 @@ class BackgroundQueue
 
 		$callback = null;
 		try {
+			// Entita se četla ještě před zámkem a mohla zastarat - typicky když RabbitMQ redelivery doručí
+			// totéž ID dvěma konzumentům: druhý tu čekal na zámek, zatímco první job claimnul a spustil callback.
+			// Bez čerstvého čtení by druhý konzument pracoval se stavem READY, našel by ve skupině překážku
+			// a běžící job by odložil do WAITING - odkud by ho promotion pustila třetímu konzumentovi podruhé.
+			// S čerstvým čtením uvidí PROCESSING a tiše skončí, stejně jako při neúspěšném claimu.
+			if ($serialGroup) {
+				$entity = $this->getEntity($id);
+				if (!$entity->isReadyForProcess()) {
+					return;
+				}
+			}
+
 			if (!$this->checkUnfinishedJobs($entity)) {
 				return;
 			}
@@ -1134,6 +1146,14 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Najde-li ve skupině předchůdce, odloží job do WAITING a vrátí false; jinak true (job smí běžet).
+	 *
+	 * Odklad je podmíněný přechod stejně jako claim a promotion: UPDATE zabere jen tehdy, je-li řádek
+	 * pořád v některém ze zpracovatelných stavů, a sahá jen na dotčené sloupce. Nepodmíněný zápis celé
+	 * entity by mohl přepsat PROCESSING jobu, který si mezitím claimnul duplicitní konzument (redelivery) -
+	 * běžící job by pak v DB tvrdil WAITING, promotion by ho pustila znovu a běžel by dvakrát.
+	 * Když UPDATE nezabere, vracíme přesto false: o job se stará ten, kdo ho claimnul.
+	 *
 	 * @throws SchemaException
 	 * @throws \Doctrine\DBAL\Exception
 	 */
@@ -1145,10 +1165,21 @@ class BackgroundQueue
 
 		if ($previousEntityId = $this->getPreviousUnfinishedJobId($entity)) {
 			try {
-				$entity->setState(BackgroundJob::STATE_WAITING);
-				$entity->setErrorMessage('Waiting for job ID ' . $previousEntityId);
-				$entity->setPostponedBy($this->config['waitingJobExpiration']);
-				$this->save($entity);
+				$this->connection->createQueryBuilder()
+					->update($this->config['tableName'])
+					->set('state', ':waitingState')
+					->set('error_message', ':errorMessage')
+					->set('postponed_by', ':postponedBy')
+					->set('updated_at', ':updatedAt')
+					->where('id = :id')
+					->andWhere('state IN (:claimableStates)')
+					->setParameter('waitingState', BackgroundJob::STATE_WAITING)
+					->setParameter('errorMessage', 'Waiting for job ID ' . $previousEntityId)
+					->setParameter('postponedBy', $this->config['waitingJobExpiration'])
+					->setParameter('updatedAt', (new DateTimeImmutable())->format('Y-m-d H:i:s'))
+					->setParameter('id', $entity->getId())
+					->setParameter('claimableStates', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER)
+					->executeStatement();
 			} catch (Exception $e) {
 				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 			}

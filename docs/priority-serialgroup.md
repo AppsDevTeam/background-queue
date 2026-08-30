@@ -733,6 +733,29 @@ Zůstává nezávislá třída visících jobů: job ve stavu `READY` nebo `TEMP
 zpráva se ztratila v brokeru. `process()` tyhle stavy v broker módu nerepublikuje a reaper
 řeší jen `PROCESSING`. Vědomě mimo rozsah této změny.
 
+### Dovětek: zastaralá entita při redelivery (oprava navazující na podmíněnou promotion)
+
+Podmíněný claim (Test 5) uzavřel dvojí *spuštění* při redelivery, ale zůstala příbuzná díra
+při dvojím *odkladu*: `processJob()` čte entitu ještě před zámkem skupiny. Konzument B
+s duplicitní zprávou mohl u zámku počkat, než si konzument A job claimne a rozjede callback -
+a pak pracovat se zastaralým stavem READY. Najde-li v tu chvíli ve skupině překážku (typicky
+nově vložený job s lepší prioritou), zapsal by nepodmíněným `save()` celý řádek zpět do
+`WAITING` - běžícímu jobu by přepsal `PROCESSING`, promotion by ho pustila třetímu
+konzumentovi a job by běžel dvakrát; mezitím by se mohl rozjet i jiný job téže skupiny
+(porušení sériovosti).
+
+Oprava kopíruje zavedený vzor podmíněných přechodů:
+
+1. **Čerstvé čtení pod zámkem** - po získání zámku skupiny se entita znovu načte z DB
+   a zopakuje se `isReadyForProcess()`; konzument B tak uvidí `PROCESSING` a tiše skončí.
+2. **Podmíněný odklad** - zápis WAITING v `checkUnfinishedJobs()` je
+   `UPDATE ... WHERE id = ? AND state IN (READY_TO_PROCESS_STATES)`, jen dotčené sloupce.
+   Přechod do WAITING tak nikdy nemůže přepsat řádek, který si mezitím někdo claimnul,
+   ať už ho zavolá kdokoli. Když UPDATE nezabere, vrací se přesto false - o job se stará
+   ten, kdo ho claimnul.
+
+Regresně to hlídá `testWaitingWriteDoesNotClobberClaimedJob`.
+
 ### Testy
 
 | Test | Pokrývá |
@@ -741,4 +764,5 @@ zpráva se ztratila v brokeru. `process()` tyhle stavy v broker módu nerepublik
 | `testTemporarilyFailedJobDoesNotWakeUpSuccessor` | job, který poběží znovu, je dál překážkou - nástupce se pustit nesmí |
 | `testPromoteWaitingJobLeavesNonWaitingJobAlone` | podmíněnost promotion na `WAITING` (žádné přepsání běžícího jobu) |
 | `testPermanentlyFailedJobIsNotUnfinished` | `TERMINAL_STATES` v `getUnfinishedJobIdentifiers()` |
+| `testWaitingWriteDoesNotClobberClaimedJob` | podmíněný odklad do WAITING (zastaralá entita při redelivery) |
 | `testPromoteWaitingJobsPicksGroupHeadByPriority` (dřív Test 7) | záchranná síť vybírá hlavu dle (priorita, ID) |

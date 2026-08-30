@@ -52,8 +52,8 @@ Stavy jsou celočíselné konstanty na `BackgroundJob` (`STATE_READY=1`, `STATE_
 
 Výsledek callbacku (`switch` v `processJob()`) je určen typem vyhozené výjimky:
 - `PermanentErrorException` / `TypeError` / holá `DieException` → `PERMANENTLY_FAILED`
-- `WaitingException` → znovu publikováno (klon) a ponecháno ve waiting; počítadlo pokusů se **nezvyšuje**
-- `SkipException` → tiše přeskočeno, stav zůstává
+- `WaitingException` → původní job se uzavře jako `FINISHED` a publikuje se jeho klon s odkladem `waitingJobExpiration` (`cloneAndPublish()`); počítadlo pokusů se tedy **nezvyšuje** - klon startuje od nuly. Nezaměňovat se stavem `WAITING` (ten patří čekání na předchůdce v serialGroup)
+- `SkipException` → job se uzavře jako `FINISHED` (s `error_message` výjimky), neopakuje se; u `RECURRING` jobu se přesto naplánuje další běh (klonuje ho FINISHED větev)
 - jakýkoli jiný `Throwable` → `TEMPORARILY_FAILED`, opakováno s exponenciálním backoffem (`getPostponement()`, zdvojnásobování, strop 16 minut)
 - bez vyhození výjimky → `FINISHED`
 

@@ -591,22 +591,22 @@ Jediný „velký" test. Ostatní testy jsou izolované a deterministické, ale 
 se projevuje **v broker módu** (kapitola „Důsledek", `docs/priority-serialgroup.md:41-46`),
 ne v cron módu. Tenhle test jako jediný projede celou produkční smyčku
 `process()` → publikace do prioritní fronty → konzumace → `checkUnfinishedJobs` → WAITING →
-`_processWaitingJobs` → zpět na READY → znovupublikace. Tím zároveň pokryje interakci s
-`processWaitingJobs()` (`src/BackgroundQueue.php:768`), která sdílí
-`findOldestUnfinishedJobIdsByGroup()` (řádek 594) - žádný z testů 1-5 ji neprověří.
+probuzení nástupce → zpět na READY → znovupublikace.
+
+(Pozn.: krok „WAITING → zpět na READY" dnes obstarává `promoteWaitingSuccessor()`, ne už
+zrušený interní job `_processWaitingJobs` - viz kapitola „Přepracování probouzení WAITING
+jobů" na konci.)
 
 - Konfigurace: `producer` zapnutý, `priorities` `[1, 2]`, callback `processRecording`,
   jako značku použít identifikátor jobu.
 - Do jedné `serialGroup` publikovat kanonický příklad `a1 b1 c2 d1 e1 f2 g1`.
 - V cyklu (s pojistným stropem iterací) opakovat:
   1. `process()` - v broker módu přepne způsobilé řádky na READY a publikuje jejich ID do
-     prioritních front; zároveň zaregistruje interní `_processWaitingJobs`
-     (`src/BackgroundQueue.php:192-194`).
+     prioritních front.
   2. konzumovat dostupné zprávy přes rozšířený `Producer` helper (prioritní fronty v pořadí
      priorit) a na každé ID zavolat `processJob()` - to je cesta, kterou v provozu jede
-     `Consumer::consume()`.
-  3. nechat proběhnout `_processWaitingJobs` (zkonzumovat a zpracovat i jeho job), aby se
-     nejstarší WAITING hlava skupiny vrátila na READY.
+     `Consumer::consume()`. Dojede-li job se `serialGroup`, `processJob()` sám vrátí hlavu
+     WAITING téže skupiny na READY a znovu ji publikuje.
   - cyklus končí, až nejsou žádné nedokončené joby.
 - **Aser pořadí:** `Mailer::$processOrder === ['a','b','d','e','g','c','f']` (priorita ASC,
   při shodě ID ASC) - stejný cíl jako 2b, ale přes reálnou broker cestu.
@@ -622,8 +622,8 @@ konkrétní větve levněji a stabilněji pokrývají jednotkové testy 2a/3/5.
 ### Test 7 - výběr hlavy skupiny dle (priorita, ID) v no-entity větvi
 
 Doplňkový, čistě deterministický test pro `findOldestUnfinishedJobIdsByGroup()` a navazující
-`processWaitingJobs()`. Happy-path Test 6 tuhle větev s daty neprověří (po opravě řazení se
-v něm do WAITING nic nedostane, takže `processWaitingJobs` jede naprázdno), proto ji testujeme
+`promoteWaitingJobs()`. Happy-path Test 6 tuhle větev s daty neprověří (po opravě řazení se
+v něm do WAITING nic nedostane, takže `promoteWaitingJobs` jede naprázdno), proto ji testujeme
 cíleně - včetně skupiny s "dírou" v prioritách (žádný job na nejvyšší prioritě). Zároveň
 regresně hlídá implementaci výběru hlavy přes odvozenou tabulku (viz kapitola „Náročnost,
 výběr hlavy skupiny a benchmark").
@@ -636,7 +636,7 @@ výběr hlavy skupiny a benchmark").
   hodnotu.
 - Všechny joby ručně přepnout na `STATE_WAITING`, pak reflexí:
   1. `findOldestUnfinishedJobIdsByGroup(STATE_WAITING)` → vrátí hlavy `[a2, b2]`.
-  2. `processWaitingJobs()` → přepne právě tyhle hlavy na `READY`, zbytek zůstane `WAITING`.
+  2. `promoteWaitingJobs()` → přepne právě tyhle hlavy na `READY`, zbytek zůstane `WAITING`.
 - Před starou logikou (`MIN(id)` bez priority) by hlavy vyšly `a1`/`b1` → test červeně chytí
   regresi.
 
@@ -649,5 +649,96 @@ výběr hlavy skupiny a benchmark").
 | 3 | bod 2 (klauzule PROCESSING) | reprodukce regrese sériovosti |
 | 4 | bod 3 (zámek na skupinu) | jen primitivum (race nereprodukovatelný single-process) |
 | 5 | bod 4 (podmíněný claim) | reprodukce redelivery race |
-| 6 | celá broker smyčka + `_processWaitingJobs` | end-to-end, vyžaduje RabbitMQ, nejdražší |
-| 7 | výběr hlavy skupiny dle (priorita, ID), `findOldestUnfinishedJobIdsByGroup`/`processWaitingJobs` | deterministická reprodukce, červený → zelený |
+| 6 | celá broker smyčka včetně probuzení nástupce | end-to-end, vyžaduje RabbitMQ, nejdražší |
+| 7 | výběr hlavy skupiny dle (priorita, ID), `findOldestUnfinishedJobIdsByGroup`/`promoteWaitingJobs` | deterministická reprodukce, červený → zelený |
+
+## Přepracování probouzení WAITING jobů
+
+Navazující změna na výše popsanou opravu. Řeší pozorování z provozu: *některé joby zůstávaly
+viset ve `STATE_WAITING`* a jejich skupina se už nikdy nerozjela.
+
+### Co bylo špatně
+
+Cesta z `WAITING` ven vedla v broker módu jediným místem - interním jobem
+`_processWaitingJobs`. Ten běžel v režimu `RECURRING` na nejvyšší prioritě, zhruba jednou za
+`waitingJobExpiration` se probral, každé skupině vrátil hlavu na `READY` a znovu se
+naklonoval. `process()` WAITING joby záměrně nerepublikoval, takže **žádná jiná vrstva
+neexistovala**. Liveness celého mechanismu tím visela na jednom řádku v DB - a ten se dal
+ztratit několika způsoby:
+
+- **PERMANENTLY_FAILED.** `process()` publikoval náhradní interní job jen tehdy, když
+  `getUnfinishedJobIdentifiers()` nic nevrátila. Ta ale za „nedokončené" považovala všechno
+  mimo `FINISHED_STATES`, tedy i trvale selhaný job. Jakmile interní job jednou skončil v
+  `PERMANENTLY_FAILED`, náhrada se nikdy nepublikovala a **všechny serial groupy zamrzly
+  natrvalo**, tiše. Totéž postihovalo každý uživatelský `RECURRING` job a blokovalo
+  `UNIQUE` identifikátory.
+- **Zabitý konzument.** Řádek zůstal v `PROCESSING`, což je taky „nedokončeno", takže
+  náhrada nepřišla až do zásahu reaperu - ve výchozím nastavení hodinu.
+- **Ztracená zpráva.** V broker módu `process()` nerepublikuje ani `READY`, ani
+  `TEMPORARILY_FAILED`; ztratí-li se zpráva interního jobu v brokeru, nevzkřísí ho nikdo.
+
+Druhá, nezávislá chyba: promotion `WAITING → READY` se zapisovala nepodmíněným
+`UPDATE ... WHERE id = ?` celé entity. `WAITING` je přitom v `READY_TO_PROCESS_STATES`, takže
+si takový job může konzument claimnout i přímo z brokera. Kolize pak běžícímu jobu přepsala
+`PROCESSING` zpátky na `READY` starými hodnotami a jiný konzument ho spustil podruhé.
+
+### Co s tím
+
+Poll nahradily tři vrstvy a interní job zmizel:
+
+1. **Probuzení nástupce (`promoteWaitingSuccessor`, hlavní cesta).** Jakmile job se
+   `serialGroup` dojede do stavu, ze kterého už není překážkou (`FINISHED`, `REDUNDANT`,
+   `PERMANENTLY_FAILED`), jeho vlastní konzument rovnou pustí do hry hlavu `WAITING` téže
+   skupiny. Latence je nulová a nezávisí na žádném dalším jobu.
+
+   Běží to **pod zámkem skupiny**, protože bez něj vede přímo sem tichý deadlock: konzument
+   nástupce si přečte předchůdce ještě běžícího (`PROCESSING`) a rozhodne se pro `WAITING`,
+   předchůdce mezitím zapíše výsledek a ve `WAITING` nikoho nenajde - a teprve pak nástupce
+   svůj `WAITING` zapíše. Nikdo už ho nevzbudí. Se zámkem buď počkáme, až nástupce svůj
+   `WAITING` dopíše, nebo ho předběhneme a on při své kontrole uvidí koncový stav a projde
+   rovnou. Předpoklad: zápis vlastního výsledku musí předcházet volání promotion.
+
+2. **Záchranná síť v `process()` (`promoteWaitingJobs`).** Každý běh cronu pustí hlavu každé
+   skupiny, která má něco ve `WAITING`. Jeden job na skupinu na běh, žádný thundering herd -
+   a hlavně: kdyby probuzení z bodu 1 z jakéhokoli důvodu neproběhlo (zabitý konzument,
+   ztracená zpráva, nezískaný zámek), nic neuvízne déle než do dalšího běhu cronu. Zámek se
+   tu nebere - promotion je podmíněná, takže nemůže nic přepsat, a čekání na zámek každé
+   skupiny by z jednoho běhu cronu udělalo libovolně dlouhý.
+
+3. **Podmíněná promotion (`promoteWaitingJob`).** `UPDATE ... WHERE id = ? AND state = WAITING`,
+   jen dotčené sloupce. Do brokera se publikuje jen tehdy, když UPDATE zabral. Tím padá
+   double-execution popsaná výše.
+
+K tomu sjednocení pojmu „nedokončeno": `getUnfinishedJobIdentifiers()` používá nový
+`BackgroundJob::TERMINAL_STATES` (= `FINISHED_STATES` + `PERMANENTLY_FAILED`), takže trvale
+selhaný job už nikoho neblokuje. To je stejná definice, jakou používá
+`getPreviousUnfinishedJobId()`; dřív se ty dvě metody rozcházely.
+
+### Upgrade
+
+Knihovna po zrušeném interním jobu neuklízí - jednorázový úklid by stál dotaz v každém běhu
+cronu. Po nasazení je proto potřeba zbylé řádky smazat ručně:
+
+```sql
+DELETE FROM background_job WHERE callback_name = '_processWaitingJobs';
+```
+
+Dokud se nesmažou, nic se nerozbije: `process()` je v broker módu nevybírá (jsou v `READY`)
+a případná stará zpráva v brokeru skončí buď na `JobNotFoundException` (řádek už není), nebo
+na zalogované chybě „Callback does not exist" (řádek ještě je).
+
+### Co to nepokrývá
+
+Zůstává nezávislá třída visících jobů: job ve stavu `READY` nebo `TEMPORARILY_FAILED`, jehož
+zpráva se ztratila v brokeru. `process()` tyhle stavy v broker módu nerepublikuje a reaper
+řeší jen `PROCESSING`. Vědomě mimo rozsah této změny.
+
+### Testy
+
+| Test | Pokrývá |
+|------|---------|
+| `testFinishedJobWakesUpWaitingSuccessor` | hlavní cesta: dokončený předchůdce probudí nástupce a vrátí ho do brokera |
+| `testTemporarilyFailedJobDoesNotWakeUpSuccessor` | job, který poběží znovu, je dál překážkou - nástupce se pustit nesmí |
+| `testPromoteWaitingJobLeavesNonWaitingJobAlone` | podmíněnost promotion na `WAITING` (žádné přepsání běžícího jobu) |
+| `testPermanentlyFailedJobIsNotUnfinished` | `TERMINAL_STATES` v `getUnfinishedJobIdentifiers()` |
+| `testPromoteWaitingJobsPicksGroupHeadByPriority` (dřív Test 7) | záchranná síť vybírá hlavu dle (priorita, ID) |

@@ -163,9 +163,9 @@ Záznam se uloží ve stavu `READY`.
 
 Parametr `$parameters` může přijímat jakýkoliv běžný typ (pole, objekt, string, ...) či jejich kombinace (pole objektů), a to dokonce i binární data.
 
-Parametr `$serialGroup` je nepovinný - jeho zadáním zajistítě, že všechny joby se stejným serialGroup budou provedeny sériově.
+Parametr `$serialGroup` je nepovinný - jeho zadáním zajistítě, že všechny joby se stejným serialGroup budou provedeny sériově. Job, který ve své skupině narazí na dosud nedokončeného předchůdce, se odloží do stavu `WAITING`; jakmile předchůdce dojede, jeho konzument sám vrátí hlavu skupiny (nejvyšší priorita, při shodě nejnižší ID) na `READY` a znovu ji zařadí do brokera. `background-queue:process` totéž dělá jako záchrannou síť pro případ, že by k probuzení nedošlo (zabitý konzument, ztracená zpráva).
 
-Parametr `$identifier` je nepovinný - pomocí něj si můžete označit joby vlastním identifikátorem a následně pomocí metody `getUnfinishedJobIdentifiers(array $identifiers = [])` zjistit, které z nich ještě nebyly provedeny.
+Parametr `$identifier` je nepovinný - pomocí něj si můžete označit joby vlastním identifikátorem a následně pomocí metody `getUnfinishedJobIdentifiers(array $identifiers = [])` zjistit, které z nich ještě nebyly provedeny. Za nedokončený se nepovažuje job ve stavu `FINISHED`, `REDUNDANT` ani `PERMANENTLY_FAILED` - trvale selhaný job už znovu nepoběží, takže by jinak zůstal „nedokončený" navždy.
 
 Parametr `$coalesceThreshold` je nepovinný a slouží ke slučování (coalescingu) překrývajících se jobů ve stejné `serialGroup`. Vyžaduje, aby byl nastaven i `$serialGroup` (jinak se vyhodí výjimka) - ten určuje rozsah slučování. Když se job se zadaným prahem **spustí**, označí všechny ostatní dosud nezpracované joby téže `serialGroup`, jejichž práh je **vyšší nebo stejný**, za `REDUNDANT` - tedy ty, které svým během pokryje.
 
@@ -184,7 +184,7 @@ Pozor: pořadí zpracování v rámci `serialGroup` se řídí prioritou a ID (p
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\PermanentErrorException`, záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně.
 
-Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, záznam se uloží ve stavu `WAITING` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Počítadlo pokusů se nezvyšuje.
+Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, původní záznam se uzavře jako `FINISHED` a místo něj se publikuje jeho klon s odkladem `waitingJobExpiration`. Počítadlo pokusů se tedy nezvyšuje - job se zkusí znovu jako nový záznam. (Nepleťte si to se stavem `WAITING`, do kterého se odkládají joby čekající na předchůdce ve své `serialGroup`.)
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\DieException`, zpracuje se vše dál podle exception, která je v `->getPrevious()` (a pokud žádná není, tak jako při `ADT\BackgroundQueue\Exception\PermanentErrorException`). Poté je (už před další iterací) konzumer ukončen.
 Toho lze využít například v `onError`, pokud v aplikaci dojde k uzavření Doctrine Entity manageru a další iterace konzumera by opět skončili chybou.
@@ -210,7 +210,7 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 ### 2.2 Commandy
 
-`background-queue:process` Bez využití brokera zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `BROKER_FAILED`. V případě využití brokera pak záznamy ve stavu `STATE_BACK_TO_BROKER`, `TEMPORARILY_FAILED` a `WAITING`. Command je ideální spouštět cronem každou minutu. V případě použití brokeru je záznam ve stavu `STATE_BACK_TO_BROKER`, `TEMPORARILY_FAILED` a `WAITING` zařazen znovu do brokera a stav je změněn na `READY`. Stav `STATE_BACK_TO_BROKER` je typicky nastaven ručně v databázi těm záznamům, které chceme nechat znovu zpracovat.
+`background-queue:process` Bez využití brokera zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `BROKER_FAILED`. V případě využití brokera zařadí znovu do brokera (a přepne na `READY`) záznamy ve stavu `STATE_BACK_TO_BROKER`, zpracuje rovnou záznamy ve stavu `BROKER_FAILED` (těm se publikace do brokera nepovedla) a navíc pustí do hry hlavu každé skupiny, která má nějaký job ve stavu `WAITING` - záchranná síť pro případ, že by ji neprobudil konzument předchůdce. Command je ideální spouštět cronem každou minutu. Stav `STATE_BACK_TO_BROKER` je typicky nastaven ručně v databázi těm záznamům, které chceme nechat znovu zpracovat.
 
 `background-queue:clear-finished` Smaže všechny úspěšně zpracované záznamy.
 
@@ -363,3 +363,15 @@ $this->backgroundQueue->publish('email', $parameters, $serialGroup, $identifier,
 
 - Nette - https://github.com/AppsDevTeam/background-queue-nette
 - Symfony - https://github.com/AppsDevTeam/background-queue-symfony
+
+### 7 Upgrade
+
+**Zrušení interního jobu `_processWaitingJobs`.** Joby čekající ve stavu `WAITING` dřív vracel do hry periodický interní job `_processWaitingJobs`. Byl to jediný bod selhání celého sériového zpracování: když skončil ve stavu `PERMANENTLY_FAILED`, náhrada se už nikdy nepublikovala a **všechny `serialGroup` skupiny zamrzly natrvalo**. Nahradilo ho probuzení nástupce přímo konzumentem předchůdce, se záchrannou sítí v `background-queue:process`.
+
+Knihovna už tenhle callback nikde neregistruje a po zbylých řádcích neuklízí. Po nasazení je smažte ručně:
+
+```sql
+DELETE FROM background_job WHERE callback_name = '_processWaitingJobs';
+```
+
+Dokud tam zůstanou, nic se nerozbije - jen se do logu můžou dostat chyby `Callback "_processWaitingJobs" does not exist.` ze starých zpráv v brokeru.

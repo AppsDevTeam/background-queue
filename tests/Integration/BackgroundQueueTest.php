@@ -476,7 +476,7 @@ class BackgroundQueueTest extends Unit
 
 	/**
 	 * Test 6 - komplexní broker-mode end-to-end přes celou smyčku
-	 * process() -> prioritní fronty -> consume -> checkUnfinishedJobs -> WAITING -> _processWaitingJobs.
+	 * process() -> prioritní fronty -> consume -> checkUnfinishedJobs -> WAITING -> promoteWaitingSuccessor.
 	 *
 	 * @see docs/priority-serialgroup.md "Test 6 - komplexní broker-mode end-to-end (celá smyčka)"
 	 *
@@ -494,7 +494,6 @@ class BackgroundQueueTest extends Unit
 			$backgroundQueue->publish('processRecording', [$mark], 'transcribe', null, ModeEnum::NORMAL, null, $priority);
 		}
 
-		// Bootstrap interního _processWaitingJobs (registruje se jen v broker módu přes process()).
 		$backgroundQueue->process();
 
 		// Konzumace v pořadí priorit + zpracování každého ID, dokud nejsou všechny pracovní joby hotové.
@@ -516,15 +515,16 @@ class BackgroundQueueTest extends Unit
 
 	/**
 	 * Test 7 - výběr hlavy skupiny dle (priorita, ID) v no-entity větvi: findOldestUnfinishedJobIdsByGroup()
-	 * a navazující processWaitingJobs(). Happy-path Test 6 tuhle větev nepokryje (tam se do WAITING nic nedostane),
-	 * proto ji testujeme cíleně, včetně skupiny s "dírou" v prioritách (žádný job na nejvyšší prioritě).
+	 * a navazující promoteWaitingJobs() (záchranná síť v process()). Happy-path Test 6 tuhle větev nepokryje
+	 * (tam se do WAITING nic nedostane), proto ji testujeme cíleně, včetně skupiny s "dírou" v prioritách
+	 * (žádný job na nejvyšší prioritě).
 	 *
 	 * @see docs/priority-serialgroup.md "Test 6", poznámka o sdílení findOldestUnfinishedJobIdsByGroup()
 	 *
 	 * @throws ReflectionException
 	 * @throws Exception
 	 */
-	public function testProcessWaitingJobsPicksGroupHeadByPriority()
+	public function testPromoteWaitingJobsPicksGroupHeadByPriority()
 	{
 		$backgroundQueue = self::getBackgroundQueue(priorities: [1, 2, 3]);
 
@@ -555,8 +555,8 @@ class BackgroundQueueTest extends Unit
 		sort($heads);
 		$this->tester->assertEquals([$ids['a2'], $ids['b2']], $heads, 'hlavy skupin dle (priorita, ID)');
 
-		// 2) processWaitingJobs přepne právě tyto hlavy zpět na READY, zbytek zůstane WAITING.
-		$process = $reflectionClass->getMethod('processWaitingJobs');
+		// 2) promoteWaitingJobs přepne právě tyto hlavy zpět na READY, zbytek zůstane WAITING.
+		$process = $reflectionClass->getMethod('promoteWaitingJobs');
 		$process->setAccessible(true);
 		$process->invoke($backgroundQueue);
 
@@ -819,6 +819,98 @@ class BackgroundQueueTest extends Unit
 		$backgroundQueue->processJob($next->getId());
 
 		$this->tester->assertEquals(['dead', 'next'], Mailer::$processOrder, 'skupina doběhla v pořadí');
+	}
+
+	/**
+	 * Hlavní cesta ven z WAITING: jakmile předchůdce dojede, jeho konzument sám pustí do hry hlavu skupiny.
+	 * Dřív tohle uměl jen periodický interní job _processWaitingJobs - a když ten z jakéhokoli důvodu
+	 * přestal existovat, zůstala celá skupina viset ve WAITING navždy.
+	 *
+	 * @throws Exception
+	 */
+	public function testFinishedJobWakesUpWaitingSuccessor()
+	{
+		$backgroundQueue = self::getBackgroundQueue(true);
+		$backgroundQueue->publish('processRecording', ['first'], 'group-wakeup');
+		$backgroundQueue->publish('processRecording', ['second'], 'group-wakeup');
+		[$first, $second] = self::fetchAllJobs($backgroundQueue);
+
+		// Nástupce narazí na dosud nezpracovaného předchůdce a odloží se.
+		$backgroundQueue->processJob($second->getId());
+		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, self::fetchJob($backgroundQueue, $second->getId())->getState(), 'nástupce jde do WAITING');
+
+		// Ať je jasné, že ID nástupce do fronty přibylo až teď a není to jeho původní zpráva z publish().
+		self::getProducer()->purge('general_1');
+
+		$backgroundQueue->processJob($first->getId());
+
+		$this->tester->assertEquals(BackgroundJob::STATE_FINISHED, self::fetchJob($backgroundQueue, $first->getId())->getState(), 'předchůdce dojel');
+		$this->tester->assertEquals(BackgroundJob::STATE_READY, self::fetchJob($backgroundQueue, $second->getId())->getState(), 'nástupce je probuzený');
+		$this->tester->assertNull(self::fetchJob($backgroundQueue, $second->getId())->getPostponedBy(), 'probuzený job už nemá čekat');
+		$this->tester->assertEquals((string) $second->getId(), self::getProducer()->consume(), 'nástupce je zpátky v brokeru');
+	}
+
+	/**
+	 * Job, který skončil v TEMPORARILY_FAILED, je pro skupinu pořád překážkou (poběží znovu), takže za něj
+	 * nástupce pustit nesmíme - jinak by se sériovost porušila právě při opakování.
+	 *
+	 * @throws Exception
+	 */
+	public function testTemporarilyFailedJobDoesNotWakeUpSuccessor()
+	{
+		$backgroundQueue = self::getBackgroundQueue(true);
+		$backgroundQueue->publish('processWithTemporaryError', null, 'group-nowakeup');
+		$backgroundQueue->publish('processRecording', ['second'], 'group-nowakeup');
+		[$first, $second] = self::fetchAllJobs($backgroundQueue);
+
+		$backgroundQueue->processJob($second->getId());
+		$backgroundQueue->processJob($first->getId());
+
+		$this->tester->assertEquals(BackgroundJob::STATE_TEMPORARILY_FAILED, self::fetchJob($backgroundQueue, $first->getId())->getState(), 'předchůdce poběží znovu');
+		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, self::fetchJob($backgroundQueue, $second->getId())->getState(), 'nástupce dál čeká');
+	}
+
+	/**
+	 * Probuzení je podmíněné na WAITING a sahá jen na sloupce, které mění. WAITING je totiž v
+	 * READY_TO_PROCESS_STATES, takže si job může konzument claimnout i přímo z brokera; nepodmíněný zápis
+	 * by běžícímu jobu přepsal PROCESSING zpátky na READY a jiný konzument by ho spustil podruhé.
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testPromoteWaitingJobLeavesNonWaitingJobAlone()
+	{
+		$backgroundQueue = self::getBackgroundQueue(true);
+		$backgroundQueue->publish('processRecording', ['running'], 'group-conditional');
+		$job = self::fetchAllJobs($backgroundQueue)[0];
+
+		self::rawConnection()->update($_ENV['PROJECT_DB_TABLENAME'], ['state' => BackgroundJob::STATE_PROCESSING], ['id' => $job->getId()]);
+		self::getProducer()->purge('general_1');
+
+		$promote = (new \ReflectionClass(BackgroundQueue::class))->getMethod('promoteWaitingJob');
+		$promote->setAccessible(true);
+		$promote->invoke($backgroundQueue, $job->getId());
+
+		$this->tester->assertEquals(BackgroundJob::STATE_PROCESSING, self::fetchJob($backgroundQueue, $job->getId())->getState(), 'běžící job zůstal nedotčený');
+		$this->tester->assertNull(self::getProducer()->consume(), 'do brokera se nic nepublikovalo');
+	}
+
+	/**
+	 * Trvale selhaný job se už nikdy nespustí, takže ho nesmíme počítat mezi nedokončené - jinak by
+	 * RECURRING job po prvním trvalém selhání zmizel nadobro a UNIQUE identifier zůstal navěky zablokovaný.
+	 *
+	 * @throws Exception
+	 */
+	public function testPermanentlyFailedJobIsNotUnfinished()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$backgroundQueue->publish('processWithPermanentError', null, null, 'recurring-identifier', ModeEnum::RECURRING);
+		$job = self::fetchAllJobs($backgroundQueue)[0];
+
+		$backgroundQueue->processJob($job->getId());
+
+		$this->tester->assertEquals(BackgroundJob::STATE_PERMANENTLY_FAILED, self::fetchJob($backgroundQueue, $job->getId())->getState());
+		$this->tester->assertEquals([], $backgroundQueue->getUnfinishedJobIdentifiers(['recurring-identifier']), 'trvale selhaný job není nedokončený');
 	}
 
 	private static function finishedCount(string $serialGroup): int

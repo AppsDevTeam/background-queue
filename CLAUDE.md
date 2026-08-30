@@ -61,7 +61,18 @@ Výsledek callbacku (`switch` v `processJob()`) je určen typem vyhozené výjim
 
 ### serialGroup → sériové zpracování a mechanismus WAITING
 
-Joby sdílející `serialGroup` běží striktně v pořadí podle ID. `checkUnfinishedJobs()` hledá starší nedokončený job ve stejné skupině; pokud ho najde, aktuální job se odloží do `STATE_WAITING`. V broker módu interní opakující se job `_processWaitingJobs` (`CallbackNameEnum::PROCESS_WAITING_JOBS`, registrovaný automaticky při nastaveném produceru) periodicky přepíná nejstarší WAITING job v každé skupině zpět na READY a znovu ho publikuje. Tento interní job je v módu `RECURRING` a po každém úspěšném běhu se z DB maže (jeho historie nemá hodnotu).
+Joby sdílející `serialGroup` běží striktně v pořadí podle (priorita, ID). `checkUnfinishedJobs()` hledá ve skupině předchůdce (`getPreviousUnfinishedJobId()`); pokud ho najde, aktuální job se odloží do `STATE_WAITING`.
+
+Ven z WAITING vedou dvě vrstvy:
+
+- **`promoteWaitingSuccessor()` - hlavní cesta.** Na konci `processJob()` (a v REDUNDANT větvi): dojel-li job se `serialGroup` do stavu, ze kterého už není překážkou (`FINISHED`, `REDUNDANT`, `PERMANENTLY_FAILED`), jeho vlastní konzument rovnou pustí do hry hlavu WAITING téže skupiny. Běží **pod zámkem skupiny** - bez něj vzniká tichý deadlock, kdy nástupce zapíše svůj WAITING až poté, co ho předchůdce marně hledal.
+- **`promoteWaitingJobs()` - záchranná síť.** Volá se na konci `process()` v broker módu, pustí hlavu každé skupiny s nějakým WAITING jobem. Jeden job na skupinu na běh; kryje případy, kdy probuzení neproběhlo (zabitý konzument, ztracená zpráva). Zámek nebere.
+
+Samotná promotion (`promoteWaitingJob()`) je podmíněná: `UPDATE ... WHERE id = ? AND state = WAITING`, jen dotčené sloupce, publikace do brokera jen když UPDATE zabral. WAITING je totiž v `READY_TO_PROCESS_STATES`, takže si takový job může konzument claimnout i přímo z brokera.
+
+Dřív to obstarával interní opakující se job `_processWaitingJobs`; ten byl zrušen (byl jediný bod selhání - po `PERMANENTLY_FAILED` už se nikdy nenahradil a všechny skupiny zamrzly). Zbylé řádky v ostrých databázích se mažou ručně, knihovna po nich neuklízí. Podrobně v `docs/priority-serialgroup.md`, kapitola „Přepracování probouzení WAITING jobů".
+
+Pozn. k pojmu „nedokončeno": `getPreviousUnfinishedJobId()` bere jako blokující `READY_TO_PROCESS_STATES + PROCESSING`, `getUnfinishedJobIdentifiers()` (RECURRING/UNIQUE) používá `BackgroundJob::TERMINAL_STATES` = `FINISHED_STATES` + `PERMANENTLY_FAILED`. `FINISHED_STATES` samo znamená „vyřízeno v pořádku" a řídí jen `finished_at`.
 
 ### ModeEnum (normal / unique / recurring)
 

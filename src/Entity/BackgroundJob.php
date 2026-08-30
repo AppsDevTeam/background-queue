@@ -36,6 +36,13 @@ final class BackgroundJob
 		self::STATE_REDUNDANT => self::STATE_REDUNDANT,
 	];
 
+	// Stavy, ze kterých už job sám od sebe nikam nepokračuje - je dojetý, ať dopadl jakkoli.
+	// Nezaměňovat s FINISHED_STATES: ty znamenají "vyřízeno v pořádku" a řídí finished_at.
+	// Rozdíl je právě PERMANENTLY_FAILED: hotový není, ale čekat na něj je čekání navěky.
+	const TERMINAL_STATES = self::FINISHED_STATES + [
+		self::STATE_PERMANENTLY_FAILED => self::STATE_PERMANENTLY_FAILED,
+	];
+
 	private ?int $id = null;
 	private string $queue;
 	private ?int $priority;

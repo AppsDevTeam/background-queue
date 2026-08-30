@@ -14,13 +14,13 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	private array $initQueues = [];
 
 	/**
-	 * Zprávy se zpožděnou recirkulací (publikované s "expiration", tj. postponeBy).
+	 * Zprávy se zpožděnou recirkulací (publikované s "expiration", tj. postponeBy) - typicky opakování po
+	 * TEMPORARILY_FAILED nebo klon po WaitingException.
 	 * Reálný Producer je posílá do TTL fronty "<prioritní_fronta>_<expiration>" s dead-letter zpět do prioritní
 	 * fronty, takže se v ní objeví až po uplynutí "expiration" ms. Tady to modelujeme deterministicky in-memory:
-	 * zpožděná zpráva se nevydá, dokud jsou k dispozici okamžité zprávy. Bez toho by se nekonečně recirkulující
-	 * _processWaitingJobs (běží na nejvyšší prioritě) okamžitě vracel do své fronty a zablokoval consume() smyčku
-	 * (livelock). V produkci k tomu nedochází právě díky tomuto zpoždění, ne přes skutečné AMQP TTL fronty
-	 * (ty by mezi testy protékaly a nafukovaly getMessageCount).
+	 * zpožděná zpráva se nevydá, dokud jsou k dispozici okamžité zprávy. Bez toho by se job, který se sám
+	 * donekonečna přepublikovává, okamžitě vracel do své fronty a zablokoval consume() smyčku (livelock).
+	 * Neděláme to přes skutečné AMQP TTL fronty - ty by mezi testy protékaly a nafukovaly getMessageCount.
 	 *
 	 * @var array<int, array{queue: string, priority: int, id: string}>
 	 */

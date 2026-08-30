@@ -4,7 +4,6 @@ namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Broker\Producer;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
-use ADT\BackgroundQueue\Entity\Enums\CallbackNameEnum;
 use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
 use ADT\BackgroundQueue\Exception\DieException;
 use ADT\BackgroundQueue\Exception\JobNotFoundException;
@@ -113,18 +112,6 @@ class BackgroundQueue
 		if (!isset($config['heartbeatInterval'])) {
 			$config['heartbeatInterval'] = self::DEFAULT_HEARTBEAT_INTERVAL;
 		}
-		if ($config['producer']) {
-			// _processWaitingJobs běží na nejvyšší prioritě (null => první priorita v seznamu), aby obnova WAITING jobů
-			// nikdy nehladověla - jinak by při trvalém zatížení vyšších priorit serial groupy uvízly. Jeho nekonečné
-			// opakování nehladoví nižší priority díky zpoždění recirkulace: cloneAndPublish ho přepublikuje s
-			// postponeBy = waitingJobExpiration, takže se v nejvyšší frontě objevuje jen periodicky, ne nepřetržitě.
-			$config['callbacks'][CallbackNameEnum::PROCESS_WAITING_JOBS->value] = [
-				'callback' => [$this, trim(CallbackNameEnum::PROCESS_WAITING_JOBS->value, '_')],
-				'queue' => null,
-				'priority' => null
-			];
-		}
-
 		$this->config = $config;
 		$this->connection = $config['connection'];
 		$this->logger = $config['logger'] ?: new NullLogger();
@@ -237,12 +224,11 @@ class BackgroundQueue
 		if ($this->getConfig()['producer']) {
 			unset ($states[BackgroundJob::STATE_READY]);
 			unset ($states[BackgroundJob::STATE_TEMPORARILY_FAILED]);
+
+			// WAITING se hromadně nerepublikuje: u velké skupiny by se do brokera naráz nasypaly všechny
+			// její čekající joby, každý by narazil na téhož předchůdce a vrátil se rovnou zpátky do WAITING.
+			// Místo toho promoteWaitingJobs() níž pustí z každé skupiny jen její hlavu.
 			unset ($states[BackgroundJob::STATE_WAITING]);
-
-			if (!$this->getUnfinishedJobIdentifiers([CallbackNameEnum::PROCESS_WAITING_JOBS->value])) {
-				$this->publish(CallbackNameEnum::PROCESS_WAITING_JOBS->value, identifier: CallbackNameEnum::PROCESS_WAITING_JOBS->value, mode: ModeEnum::RECURRING);
-			}
-
 		} else {
 			// Nemáme producera
 
@@ -271,6 +257,14 @@ class BackgroundQueue
 				$_entity->setProcessedByBroker(false);
 				$this->processJob($_entity->getId());
 			}
+		}
+
+		// Záchranná síť pro WAITING joby. Hlavní cesta je probuzení hned po dokončení předchůdce
+		// (promoteWaitingSuccessor v processJob), tohle ho jen zálohuje pro případy, kdy k němu nedošlo -
+		// konzument umřel mezi zápisem výsledku a probuzením, zpráva se v brokeru ztratila, apod.
+		// Bez producera to netřeba: tam si WAITING joby vybírá přímo smyčka výš.
+		if ($this->getConfig()['producer']) {
+			$this->promoteWaitingJobs();
 		}
 	}
 
@@ -304,6 +298,9 @@ class BackgroundQueue
 		if ($this->isRedundant($entity)) {
 			$entity->setState(BackgroundJob::STATE_REDUNDANT);
 			$this->save($entity);
+			// I tímhle přechodem job přestal být překážkou pro svou skupinu, takže se za sebou musí uklidit
+			// stejně jako dole po doběhnutí callbacku.
+			$this->promoteWaitingSuccessor($entity);
 			return;
 		}
 
@@ -470,11 +467,6 @@ class BackgroundQueue
 			if ($state === BackgroundJob::STATE_FINISHED) {
 				if ($entity->isModeRecurring()) {
 					$this->cloneAndPublish($entity);
-
-					// Interní podpůrný job se v DB jen hromadí a jeho historie nemá hodnotu, proto dokončený záznam rovnou smažeme.
-					if ($entity->getCallbackName() === CallbackNameEnum::PROCESS_WAITING_JOBS->value) {
-						$this->deleteJob($entity->getId());
-					}
 				}
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				$this->publishToBroker($entity);
@@ -487,6 +479,8 @@ class BackgroundQueue
 				// odeslání emailu o chybě v callbacku
 				$this->logException('Permanent error occured.', $entity, $e);
 			}
+
+			$this->promoteWaitingSuccessor($entity);
 		} catch (Exception $innerEx) {
 			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $innerEx);
 		}
@@ -685,6 +679,11 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Identifikátory jobů, které ještě mají něco před sebou. Trvale selhaný job se nepočítá: znovu už
+	 * nepoběží, takže by ho tahle metoda držela jako "nedokončený" navždy - a s ním i všechno, co se na ni
+	 * ptá. Kvůli tomu se dřív RECURRING job po jednom trvalém selhání už nikdy nenaplánoval
+	 * (viz cloneAndPublish) a UNIQUE identifier zůstal natrvalo zablokovaný.
+	 *
 	 * @throws Exception
 	 * @throws \Doctrine\DBAL\Exception
 	 */
@@ -692,7 +691,7 @@ class BackgroundQueue
 	{
 		$qb = $this->createQueryBuilder();
 
-		$states = BackgroundJob::FINISHED_STATES;
+		$states = BackgroundJob::TERMINAL_STATES;
 		if ($excludeProcessing) {
 			$states[BackgroundJob::STATE_PROCESSING] = BackgroundJob::STATE_PROCESSING;
 		}
@@ -1082,14 +1081,6 @@ class BackgroundQueue
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private function deleteJob(int $id): void
-	{
-		$this->connection->delete($this->config['tableName'], ['id' => $id]);
-	}
-
-	/**
-	 * @throws \Doctrine\DBAL\Exception
-	 */
 	private function createSchemaManager(): AbstractSchemaManager
 	{
 		return method_exists($this->connection, 'createSchemaManager')
@@ -1196,19 +1187,137 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Probudí nástupce právě dokončeného jobu: přestal-li tenhle job svým posledním přechodem blokovat
+	 * svou serialGroup, pustí do hry její hlavu čekající ve WAITING. Tohle je hlavní (a jediná rychlá)
+	 * cesta, jak se z WAITING ven - promoteWaitingJobs() v process() je jen záchranná síť.
+	 *
+	 * Běží pod zámkem skupiny, protože jinak sem vede tichý deadlock: konzument nástupce si přečte tenhle
+	 * job ještě běžící (PROCESSING), rozhodne se pro WAITING, my mezitím zapíšeme výsledek a nikoho ve
+	 * WAITING nenajdeme - a teprve pak nástupce svůj WAITING zapíše. Nikdo už ho nevzbudí. Se zámkem buď
+	 * počkáme, až nástupce svůj WAITING dopíše (a pak ho najdeme), nebo ho předběhneme a on při své kontrole
+	 * uvidí náš koncový stav a projde rovnou. Zápis vlastního výsledku proto musí předcházet tomuhle volání.
+	 *
+	 * Bez producera se neděje nic: WAITING joby si tam vybírá přímo process().
+	 *
 	 * @throws SchemaException
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
 	 */
-	private function processWaitingJobs(): void
+	private function promoteWaitingSuccessor(BackgroundJob $entity): void
+	{
+		if (!$this->producer || !$serialGroup = $entity->getSerialGroup()) {
+			return;
+		}
+
+		// Job, který zůstal v některém ze zpracovatelných stavů (typicky TEMPORARILY_FAILED) nebo pořád běží,
+		// je pro skupinu dál překážkou - viz getPreviousUnfinishedJobId(). Pouštět za něj nástupce nesmíme.
+		if ($entity->isReadyForProcess() || $entity->getState() === BackgroundJob::STATE_PROCESSING) {
+			return;
+		}
+
+		if (!$this->acquireGroupLock($serialGroup)) {
+			// Zámek drží konzument jiného jobu téže skupiny; jeho vlastní probuzení nástupce nebo příští
+			// běh promoteWaitingJobs() to dožene. Kvůli tomu nemá cenu shazovat právě dokončený job.
+			return;
+		}
+
+		try {
+			if ($id = $this->findWaitingGroupHeadId($serialGroup)) {
+				$this->promoteWaitingJob($id);
+			}
+		} finally {
+			$this->releaseGroupLock($serialGroup);
+		}
+	}
+
+	/**
+	 * Záchranná síť: pustí do hry hlavu každé skupiny, která má nějaký job ve WAITING. Volá se z process(),
+	 * takže žádný WAITING job neuvízne déle než do dalšího běhu cronu, i kdyby probuzení po předchůdci
+	 * z jakéhokoli důvodu neproběhlo (zabitý konzument, ztracená zpráva v brokeru, nezískaný zámek).
+	 *
+	 * Zámek skupiny se tu záměrně nebere: promoteWaitingJob() je podmíněný na stav, takže nemůže nic přepsat,
+	 * a čekání až GROUP_LOCK_TIMEOUT sekund na každou skupinu by z jednoho běhu cronu udělalo libovolně dlouhý.
+	 * Nanejvýš tak o jedno probuzení přijdeme a dožene ho běh za minutu - přesně na to tahle vrstva je.
+	 *
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	private function promoteWaitingJobs(): void
 	{
 		foreach ($this->findOldestUnfinishedJobIdsByGroup(BackgroundJob::STATE_WAITING) as $id) {
-			$_entity = $this->getEntity($id);
-
-			$_entity->setState(BackgroundJob::STATE_READY);
-			$this->save($_entity);
-			$this->publishToBroker($_entity);
+			$this->promoteWaitingJob((int) $id);
 		}
+	}
+
+	/**
+	 * Přepne jeden job z WAITING na READY a zařadí ho do brokera.
+	 *
+	 * UPDATE je podmíněný na WAITING a sahá jen na sloupce, které mění - WAITING je totiž v
+	 * READY_TO_PROCESS_STATES, takže si takový job může konzument claimnout i přímo z brokera (redelivery,
+	 * stará zpráva ve frontě). Nepodmíněný zápis celé entity by pak běžícímu jobu přepsal PROCESSING zpátky
+	 * na READY starými hodnotami a jiný konzument by ho spustil podruhé.
+	 *
+	 * Do brokera publikujeme jen tehdy, když UPDATE zabral, ať do fronty neteče ID jobu, který si mezitím
+	 * vzal někdo jiný.
+	 *
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	private function promoteWaitingJob(int $id): void
+	{
+		$affected = $this->connection->createQueryBuilder()
+			->update($this->config['tableName'])
+			->set('state', ':readyState')
+			->set('error_message', ':errorMessage')
+			->set('postponed_by', ':postponedBy')
+			->set('updated_at', ':updatedAt')
+			->where('id = :id')
+			->andWhere('state = :waitingState')
+			->setParameter('readyState', BackgroundJob::STATE_READY)
+			->setParameter('errorMessage', null)
+			// Odklad si job nesl jen jako pojistku proti přetáčení ve staré poll smyčce. Sem se dostane až
+			// když jeho předchůdce doopravdy uvolnil cestu, takže může jít do fronty rovnou.
+			->setParameter('postponedBy', null)
+			->setParameter('updatedAt', (new DateTimeImmutable())->format('Y-m-d H:i:s'))
+			->setParameter('id', $id)
+			->setParameter('waitingState', BackgroundJob::STATE_WAITING)
+			->executeStatement();
+
+		if (!$affected) {
+			return;
+		}
+
+		$entity = $this->getEntity($id);
+		$this->publishToBroker($entity);
+	}
+
+	/**
+	 * ID hlavy WAITING jobů dané skupiny, tj. toho, který má jít první: nejvyšší priorita (nejnižší číslo),
+	 * při shodě nejnižší ID. Stejné pořadí, jaké používá getPreviousUnfinishedJobId() i
+	 * findOldestUnfinishedJobIdsByGroup(), jen pro jednu skupinu.
+	 *
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function findWaitingGroupHeadId(string $serialGroup): ?int
+	{
+		$id = $this->connection->createQueryBuilder()
+			->select('id')
+			->from($this->config['tableName'])
+			->where('queue LIKE :queue')
+			->andWhere('state = :state')
+			->andWhere('serial_group = :serialGroup')
+			->orderBy('priority', 'ASC')
+			->addOrderBy('id', 'ASC')
+			->setParameter('queue', $this->config['queue'] . '%')
+			->setParameter('state', BackgroundJob::STATE_WAITING)
+			->setParameter('serialGroup', $serialGroup)
+			->setMaxResults(1)
+			->executeQuery()
+			->fetchOne();
+
+		return $id === false ? null : (int) $id;
 	}
 
 	private function createQueryBuilder(): QueryBuilder

@@ -546,7 +546,12 @@ class BackgroundQueue
 					break;
 				case $e instanceof DieException:    // Pokud to došlo sem, tak ta DieException nemá $e->getPrevious(), takže ji označíme jako STATE_PERMANENTLY_FAILED
 				case $e instanceof PermanentErrorException:
-				case $e instanceof TypeError:
+				// Error = chyba v kódu, kterou opakování nespraví: špatně pojmenovaný argument,
+				// volání metody nad null, dělení nulou. Dřív tu stál jen TypeError, takže zbytek
+				// propadal do default a job se zkoušel donekonečna - reálně jsme takhle měli
+				// export s 29 pokusy. Vlastní výjimky balíku dědí z Exception, takže je tahle
+				// větev nemůže přebrat.
+				case $e instanceof Error:
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
 					break;
 				case $e instanceof WaitingException:

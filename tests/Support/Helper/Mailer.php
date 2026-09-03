@@ -93,6 +93,24 @@ class Mailer
 
 	}
 
+	/** Chybne pojmenovany argument - presne to, na cem uviznul export */
+	public function processWithUnknownNamedParameter(array $parameters): void
+	{
+
+	}
+
+	public function processWithMethodCallOnNull(): void
+	{
+		/** @var ?self $nothing */
+		$nothing = null;
+		$nothing->process();
+	}
+
+	public function processWithDivisionByZero(): void
+	{
+		intdiv(1, 0);
+	}
+
 	public function processWithOnErrorException(): void
 	{
 		throw new OnErrorException();

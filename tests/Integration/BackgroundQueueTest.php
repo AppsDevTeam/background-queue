@@ -188,6 +188,23 @@ class BackgroundQueueTest extends Unit
 				'callback' => 'processWithTypeError',
 				'expectedState' => BackgroundJob::STATE_PERMANENTLY_FAILED,
 			],
+			// Nasledujici tri jsou Error, ale ne TypeError. Driv propadaly do vetve pro
+			// opakovatelne chyby, takze se job s chybou v kodu zkousel donekonecna.
+			'process with unknown named parameter' => [
+				'callback' => 'processWithUnknownNamedParameter',
+				'expectedState' => BackgroundJob::STATE_PERMANENTLY_FAILED,
+				// klic parametru se musi lisit od nazvu argumentu callbacku, jinak by to
+				// projelo; prazdne parametry by daly ArgumentCountError, tedy TypeError
+				'parameters' => ['neznamyParametr' => 1],
+			],
+			'process with method call on null' => [
+				'callback' => 'processWithMethodCallOnNull',
+				'expectedState' => BackgroundJob::STATE_PERMANENTLY_FAILED,
+			],
+			'process with division by zero' => [
+				'callback' => 'processWithDivisionByZero',
+				'expectedState' => BackgroundJob::STATE_PERMANENTLY_FAILED,
+			],
 			'process with on error exception' => [
 				'callback' => 'processWithOnErrorException',
 				'expectedState' => BackgroundJob::STATE_TEMPORARILY_FAILED,
@@ -201,10 +218,10 @@ class BackgroundQueueTest extends Unit
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
 	 */
-	public function testProcess(string $callback, int $expectedState)
+	public function testProcess(string $callback, int $expectedState, ?array $parameters = null)
 	{
 		$backgroundQueue = self::getBackgroundQueue();
-		$backgroundQueue->publish($callback);
+		$backgroundQueue->publish($callback, $parameters);
 
 		/** @var BackgroundJob[] $backgroundJobs */
 		$backgroundJobs = self::fetchAllJobs($backgroundQueue);
@@ -1076,6 +1093,9 @@ class BackgroundQueueTest extends Unit
 				'processWithPermanentError' => [new Mailer(), 'processWithPermanentError'],
 				'processWithWaitingException' => [new Mailer(), 'processWithWaitingException'],
 				'processWithTypeError' => [new Mailer(), 'processWithTypeError'],
+				'processWithUnknownNamedParameter' => [new Mailer(), 'processWithUnknownNamedParameter'],
+				'processWithMethodCallOnNull' => [new Mailer(), 'processWithMethodCallOnNull'],
+				'processWithDivisionByZero' => [new Mailer(), 'processWithDivisionByZero'],
 				'processWithOnErrorException' => [new Mailer(), 'processWithOnErrorException'],
 				'processRecording' => [new Mailer(), 'processRecording'],
 				'processWithHeartbeat' => [new Mailer(), 'processWithHeartbeat'],

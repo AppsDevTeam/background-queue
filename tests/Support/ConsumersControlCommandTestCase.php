@@ -120,7 +120,7 @@ abstract class ConsumersControlCommandTestCase extends Unit
 		$producer = new class implements Producer {
 			public array $calls = [];
 
-			public function publish(string $id, string $queue, string $priority, ?int $expiration = null): void
+			public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void
 			{
 			}
 

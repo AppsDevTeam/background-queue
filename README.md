@@ -207,9 +207,9 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 `background-queue:clear-finished 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
 
-`background-queue:reload-consumers NUMBER [QUEUE] [-l LABEL1,LABEL2,...]` Pošle NUMBER restartovacích (DIE) zpráv. Bez `-l` do sdílené DIE fronty dané QUEUE, s `-l` cíleně do DIE fronty každého uvedeného labelu (viz `background-queue:consume -l`).
+`background-queue:reload-consumers NUMBER [QUEUE] [-l LABEL1,LABEL2,...]` Pošle NUMBER restartovacích (DIE) zpráv. Bez `-l` do sdílené řídicí fronty dané QUEUE, s `-l` cíleně do řídicí fronty každého uvedeného labelu - do každé z nich NUMBER zpráv (viz sekce [Restart a zastavení konzumerů](#6-restart-a-zastavení-konzumerů)).
 
-`background-queue:shutdown-consumers NUMBER [QUEUE] [-l LABEL1,LABEL2,...]` Funguje stejně jako `reload-consumers` (stejné cílení přes QUEUE a `-l`), ale místo restartu konzumery **řízeně zastaví** - dojedou rozdělaný job, další si nevezmou a ukončí se exit kódem určeným k tomu, aby je supervisor už znovu nenastartoval (viz sekce [Řízené zastavení konzumerů](#6-řízené-zastavení-konzumerů-nice-shutdown)).
+`background-queue:shutdown-consumers NUMBER [QUEUE] [-l LABEL1,LABEL2,...]` Funguje stejně jako `reload-consumers` (stejné cílení přes QUEUE a `-l`), ale místo restartu konzumery **řízeně zastaví** - dojedou rozdělaný job, další si nevezmou a ukončí se exit kódem určeným k tomu, aby je supervisor už znovu nenastartoval (viz sekce [Řízené zastavení](#62-řízené-zastavení-nice-shutdown)).
 
 `background-queue:update-schema` Aktualizuje databázové schéma, pokud je potřeba.
 
@@ -296,14 +296,40 @@ Můžeme tedy jednoho konzumera vyhradit například na rozesílání registrač
 Tím zajistíme, že rychlé odeslání registračního emailu nebude čekat na dlouho trvající úlohy, protože je odbaví první konzumer.
 Ale pokud by se vyskytlo více požadavků na zasílání emailů, po nějaké době je začnou odbavovat všichni konzumeři.
 
-Příkazu `background-queue:consume` máme dále možnost nastavit parametrem `-l` (label) jmenovku konzumera. Konzumer s labelem dostane vlastní DIE frontu (`<queue>_0_<label>`), takže ho lze při `background-queue:reload-consumers` restartovat cíleně pomocí `-l label1,label2,...`, aniž by DIE zprávy "snědl" jiný konzumer.
-Aby šel každý konzumer restartovat samostatně, dej každému unikátní label - konzumeři se stejným labelem totiž jednu DIE frontu sdílejí. Bez labelu zůstává chování jako dřív: všichni konzumeři sdílejí jednu DIE frontu.
+Dále máme možnost prioritu nastavenou pro callback přetížit při vkládání záznamu v metodě `publish`. Například víme, že se jedná o rozesílání newsletterů.
+Tedy se jedná o zasílání emailů, ale s nízkou prioritou zpracování.
 
-### 6 Řízené zastavení konzumerů (nice shutdown)
+```
+$priority = null; // aplikuje se priorita 10 z nastavení pro callback
+if ($isNewsletter) {
+	$priority = 25;
+}
+$this->backgroundQueue->publish('email', $parameters, $serialGroup, $identifier, $isUnique, $availableAt, $priority);
+```
 
-Konzumery typicky spouští a hlídá [supervisor](http://supervisord.org/) - když proces skončí, podle konfigurace ho znovu nastartuje. Toho využívá `background-queue:reload-consumers`: pošle DIE zprávu, konzumer se po dojetí rozdělaného jobu ukončí (exit kód `0`) a supervisor ho nahodí znovu. Tím se konzumeři "obmění" (např. kvůli nasazení nové verze kódu).
 
-Někdy ale chceme konzumery zastavit a **nenechat je znovu nastartovat** - třeba před restartem serveru nebo údržbou. K tomu slouží `background-queue:shutdown-consumers`. Funguje úplně stejně jako `reload-consumers` (stejné cílení přes QUEUE a `-l`), jen konzumer po dojetí rozdělaného jobu skončí dohodnutým **exit kódem `100`** (`ADT\BackgroundQueue\Broker\PhpAmqpLib\Producer::NICE_SHUTDOWN_EXIT_CODE`). V obou případech konzumer nejprve dokončí právě zpracovávaný job a teprve pak se ukončí - žádný job se neztratí ani nepřeruší.
+### 6 Restart a zastavení konzumerů
+
+Konzumery typicky spouští a hlídá [supervisor](http://supervisord.org/) - když proces skončí, podle konfigurace ho znovu nastartuje. Toho využívají příkazy `background-queue:reload-consumers` (restart) a `background-queue:shutdown-consumers` (řízené zastavení): pošlou konzumerovi řídicí zprávu, kterou si vyzvedne místo dalšího jobu. Řídicí zprávy chodí do vlastní fronty s nejvyšší prioritou (`<queue>_0`), takže je konzumer kontroluje dřív než prioritní fronty s joby.
+
+V obou případech konzumer nejprve **dokončí právě zpracovávaný job** a teprve pak se ukončí - žádný job se neztratí ani nepřeruší.
+
+#### 6.1 Cílený restart pomocí labelu
+
+Příkazu `background-queue:consume` máme možnost nastavit parametrem `-l` (label) jmenovku konzumera. Konzumer s labelem dostane vlastní řídicí frontu (`<queue>_0_<label>`), takže ho lze pomocí `-l label1,label2,...` restartovat nebo zastavit cíleně, aniž by řídicí zprávu "snědl" jiný konzumer.
+Aby šel každý konzumer řídit samostatně, dej každému unikátní label - konzumeři se stejným labelem totiž jednu řídicí frontu sdílejí. Bez labelu zůstává chování jako dřív: všichni konzumeři sdílejí jednu řídicí frontu.
+
+> ⚠️ **Konzumer s labelem sdílenou řídicí frontu vůbec nekonzumuje.** `reload-consumers NUMBER` bez `-l` ho tedy **mine** - zpráva zůstane ležet ve sdílené frontě. Pokud nasazuješ labely na konzumery, které se dosud restartovaly bez `-l`, uprav i deploy skripty, jinak se z restartu tiše stane no-op.
+
+> ⚠️ **S unikátními labely posílej NUMBER = 1.** Řídicí fronta je durable, takže každá zpráva navíc v ní zůstane ležet a sebere ji **až příští konzumer po startu**. U reloadu to znamená několik zbytečných restartů po sobě, u shutdownu je to horší: nově nastartovaný konzumer se okamžitě ukončí shutdown exit kódem a supervisor ho podle konfigurace níže už nenahodí. NUMBER > 1 dává smysl jen u sdílené fronty, kde odpovídá počtu konzumerů, které chceš zasáhnout.
+>
+> Zbylé řídicí zprávy vyčistíš purgnutím dané fronty, např. přes RabbitMQ Management (Queues -> `<queue>_0_<label>` -> Purge Messages) nebo pomocí `rabbitmqctl purge_queue <queue>_0_<label>`.
+
+Label se stává součástí názvu fronty, proto nesmí obsahovat oddělovač `_` a nesmí být prázdný. Zároveň ho **drž stabilní** (typicky podle jména supervisor programu) - label odvozený od PID nebo časové značky by při každém startu založil novou trvalou frontu, kterou už nikdo nikdy nezkonzumuje ani nesmaže.
+
+#### 6.2 Řízené zastavení (nice shutdown)
+
+Někdy chceme konzumery zastavit a **nenechat je znovu nastartovat** - třeba před restartem serveru nebo údržbou. K tomu slouží `background-queue:shutdown-consumers`. Funguje úplně stejně jako `reload-consumers` (stejné cílení přes QUEUE a `-l`), jen konzumer po dojetí rozdělaného jobu skončí dohodnutým **exit kódem `100`** (`ADT\BackgroundQueue\Broker\PhpAmqpLib\Producer::NICE_SHUTDOWN_EXIT_CODE`) místo exit kódu `0` u reloadu.
 
 Aby supervisor uměl odlišit "restartuj" (reload) od "nech být" (shutdown), nastav v konfiguraci hlídaného programu `exitcodes` na shutdown exit kód a `autorestart=unexpected`:
 
@@ -324,19 +350,7 @@ Sémantika `autorestart=unexpected` (mimochodem výchozí hodnota): supervisor r
 
 Výchozí `exitcodes` je `0`, proto je nutné ho přepsat na `100` - jinak by byl naopak restartován běžný konec a nice shutdown by se choval jako pád. Pozor také, že `autorestart` se uplatní až pro proces, který úspěšně naběhl (stav `RUNNING`); rozběh řídí `startsecs`/`startretries`.
 
-Dále máme možnost prioritu nastavenou pro callback přetížit při vkládání záznamu v metodě `publish`. Například víme, že se jedná o rozesílání newsletterů.
-Tedy se jedná o zasílání emailů, ale s nízkou prioritou zpracování.
-
-```
-$priority = null; // aplikuje se priorita 10 z nastavení pro callback
-if ($isNewsletter) {
-	$priority = 25;
-}
-$this->backgroundQueue->publish('email', $parameters, $serialGroup, $identifier, $isUnique, $availableAt, $priority);
-```
-
-
-### 6 Integrace do frameworků
+### 7 Integrace do frameworků
 
 - Nette - https://github.com/AppsDevTeam/background-queue-nette
 - Symfony - https://github.com/AppsDevTeam/background-queue-symfony

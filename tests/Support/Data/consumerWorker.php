@@ -1,14 +1,16 @@
 <?php
 
 /**
- * Fixtura pro ShutdownConsumersCommandTest::testConsumerExitsWithNiceShutdownCode.
+ * Fixtura pro ConsumerControlQueueTest.
  *
- * Spustí reálného PhpAmqpLib konzumera proti RabbitMQ. Jakmile z top-priority (DIE) fronty dostane
- * SHUTDOWN zprávu, konzumer se ukončí kódem Producer::NICE_SHUTDOWN_EXIT_CODE. Skript běží jako
- * samostatný proces právě proto, že exit() v konzumeru by jinak ukončil i celý test runner -
+ * Spustí reálného PhpAmqpLib konzumera proti RabbitMQ. Jakmile ze své řídicí fronty dostane SHUTDOWN
+ * zprávu, ukončí se kódem Producer::NICE_SHUTDOWN_EXIT_CODE; na DIE se ukončí kódem 0. Skript běží
+ * jako samostatný proces právě proto, že exit() v konzumeru by jinak ukončil i celý test runner -
  * jedině subprocess umožní exit kód odchytit a ověřit.
  *
- * Argument: $argv[1] = název základní fronty (musí sedět s frontou, do které test pošle SHUTDOWN).
+ * Argumenty:
+ *   $argv[1] = název základní fronty (musí sedět s frontou, do které test pošle řídicí zprávu)
+ *   $argv[2] = label konzumera (volitelný; s ním konzumer čte vlastní řídicí frontu "<queue>_0_<label>")
  */
 
 require dirname(__DIR__, 3) . '/vendor/autoload.php';
@@ -19,6 +21,7 @@ use ADT\BackgroundQueue\Broker\PhpAmqpLib\Manager;
 use Doctrine\DBAL\DriverManager;
 
 $queue = $argv[1];
+$label = $argv[2] ?? null;
 
 $manager = new Manager(
 	[
@@ -42,5 +45,5 @@ $backgroundQueue = new BackgroundQueue([
 
 $consumer = new Consumer($manager, $backgroundQueue);
 
-// Nekonečná consume smyčka; SHUTDOWN zpráva (čekající ve frontě) ji ukončí přes exit(NICE_SHUTDOWN_EXIT_CODE).
-$consumer->consume($queue, [10]);
+// Nekonečná consume smyčka; řídicí zpráva ji ukončí přes die() / exit(NICE_SHUTDOWN_EXIT_CODE).
+$consumer->consume($queue, [10], $label);

@@ -23,6 +23,7 @@ use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\SchemaException;
 use Doctrine\DBAL\Types\Types;
+use Error;
 use Exception;
 use InvalidArgumentException;
 use Nette\Utils\JsonException;
@@ -31,7 +32,6 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use RuntimeException;
 use Throwable;
-use TypeError;
 
 class BackgroundQueue
 {

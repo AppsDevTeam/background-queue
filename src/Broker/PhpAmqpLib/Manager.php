@@ -15,6 +15,7 @@ class Manager
 
 	private array $connectionParams;
 	private array $queueParams;
+	private array $queueArguments;
 
 	private ?AMQPStreamConnection $connection = null;
 	private ?AMQPChannel $channel = null;
@@ -24,16 +25,21 @@ class Manager
 	private array $initExchanges;
 	private  bool $initQos = false;
 
-	public function __construct(array $connectionParams, array $queueParams)
+	/**
+	 * @param array<string, array> $queueArguments Map of queue name needle => additional AMQP arguments.
+	 *        Arguments are applied to every queue whose name contains the given needle.
+	 */
+	public function __construct(array $connectionParams, array $queueParams, array $queueArguments = [])
 	{
 		$this->connectionParams = $connectionParams;
 		$this->queueParams = $queueParams;
+		$this->queueArguments = $queueArguments;
 	}
 
 	private function getConnection(): AMQPStreamConnection
 	{
 		if (!$this->connection) {
-			$this->connection = new AMQPStreamConnection($this->connectionParams['host'], $this->connectionParams['port'] ?? 5672, $this->connectionParams['user'], $this->connectionParams['password']);
+			$this->connection = new AMQPStreamConnection($this->connectionParams['host'], $this->connectionParams['port'] ?? 5672, $this->connectionParams['user'], $this->connectionParams['password'], $this->connectionParams['vhost'] ?? '/');
 		}
 
 		return $this->connection;
@@ -111,6 +117,11 @@ class Manager
 		}
 
 		$arguments = $this->queueParams['arguments'];
+		foreach ($this->queueArguments as $needle => $queueArguments) {
+			if (str_contains($queue, $needle)) {
+				$arguments = array_merge($arguments, $queueArguments);
+			}
+		}
 		if ($additionalArguments) {
 			$arguments = array_merge($arguments, $additionalArguments);
 		}

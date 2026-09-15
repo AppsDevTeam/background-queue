@@ -4,7 +4,6 @@ namespace ADT\BackgroundQueue;
 
 use ADT\BackgroundQueue\Broker\Producer;
 use ADT\BackgroundQueue\Entity\BackgroundJob;
-use ADT\BackgroundQueue\Entity\Enums\CallbackNameEnum;
 use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
 use ADT\BackgroundQueue\Exception\DieException;
 use ADT\BackgroundQueue\Exception\JobNotFoundException;
@@ -50,6 +49,26 @@ class BackgroundQueue
 	private const COALESCE_DEADLOCK_MAX_ATTEMPTS = 5;
 	private const COALESCE_DEADLOCK_RETRY_DELAY = 100000; // 100 ms
 
+	// Jak dlouho (v sekundách) smí job zůstat v PROCESSING bez jediného zápisu, než ho reaper prohlásí
+	// za osiřelého. Musí být s rezervou delší než nejdelší běh callbacku, který netepe přes heartbeat().
+	private const DEFAULT_STALLED_JOB_TIMEOUT = 3600;
+
+	// Minimální prodleva (v sekundách) mezi dvěma zápisy heartbeat(). Tep chodí z každého dotazu
+	// callbacku (viz Middleware\Connection), takže throttling drží zátěž na jednom UPDATE za minutu
+	// na běžící job bez ohledu na to, kolik dotazů callback udělá.
+	private const DEFAULT_HEARTBEAT_INTERVAL = 60;
+
+	// Jak dlouho (v sekundách) smí job ve stavu READY / TEMPORARILY_FAILED čekat bez jediného zápisu
+	// (a s prošlým availableFrom), než jeho zprávu prohlásíme za ztracenou a publikujeme znovu.
+	// Musí být s rezervou delší než běžná doba čekání zprávy ve frontě - při zaplněné frontě jinak
+	// vznikají neškodné, ale zbytečné duplicitní zprávy.
+	private const DEFAULT_LOST_MESSAGE_TIMEOUT = 3600;
+
+	// Od kolika sekund běhu hlásí reportStuckJobs() job v PROCESSING jako podezřelý. Kryje callback
+	// zaseknutý v nekonečné smyčce, který si přes middleware pořád tepe - updated_at se posouvá, takže
+	// na něj reaper (stalledJobTimeout) nikdy nedosáhne. Měří se od last_attempt_at (začátek běhu).
+	private const LONG_PROCESSING_REPORT_THRESHOLD = 86400;
+
 	private array $config;
 	private bool $connectionCreated = false;
 	private Connection $connection;
@@ -59,6 +78,12 @@ class BackgroundQueue
 	private array $entitiesToPublish = [];
 	private array $bulkDatabaseEntities = [];
 	private bool $shouldDie = false;
+
+	// Job, který právě běží v tomto procesu. Drží ho heartbeat(), aby callback nemusel dostávat
+	// žádný kontext - stačí mu zavolat $backgroundQueue->heartbeat().
+	private ?BackgroundJob $currentJob = null;
+	private ?float $lastHeartbeatAt = null;
+	private bool $heartbeatInProgress = false;
 
 	/**
 	 * @throws Exception
@@ -92,18 +117,15 @@ class BackgroundQueue
 		if (!isset($config['bulkSize'])) {
 			$config['bulkSize'] = 1;
 		}
-		if ($config['producer']) {
-			// _processWaitingJobs běží na nejvyšší prioritě (null => první priorita v seznamu), aby obnova WAITING jobů
-			// nikdy nehladověla - jinak by při trvalém zatížení vyšších priorit serial groupy uvízly. Jeho nekonečné
-			// opakování nehladoví nižší priority díky zpoždění recirkulace: cloneAndPublish ho přepublikuje s
-			// postponeBy = waitingJobExpiration, takže se v nejvyšší frontě objevuje jen periodicky, ne nepřetržitě.
-			$config['callbacks'][CallbackNameEnum::PROCESS_WAITING_JOBS->value] = [
-				'callback' => [$this, trim(CallbackNameEnum::PROCESS_WAITING_JOBS->value, '_')],
-				'queue' => null,
-				'priority' => null
-			];
+		if (!isset($config['stalledJobTimeout'])) {
+			$config['stalledJobTimeout'] = self::DEFAULT_STALLED_JOB_TIMEOUT;
 		}
-
+		if (!isset($config['heartbeatInterval'])) {
+			$config['heartbeatInterval'] = self::DEFAULT_HEARTBEAT_INTERVAL;
+		}
+		if (!isset($config['lostMessageTimeout'])) {
+			$config['lostMessageTimeout'] = self::DEFAULT_LOST_MESSAGE_TIMEOUT;
+		}
 		$this->config = $config;
 		$this->connection = $config['connection'];
 		$this->logger = $config['logger'] ?: new NullLogger();
@@ -208,16 +230,19 @@ class BackgroundQueue
 	 */
 	public function process(): void
 	{
+		// Nejdřív ukliď po konzumerech, kteří umřeli uprostřed jobu. Bez toho by jejich řádky zůstaly
+		// navždy v PROCESSING a u jobů se serialGroup by s sebou stáhly i celou svou skupinu.
+		$this->reapStalledJobs();
+
 		$states = BackgroundJob::READY_TO_PROCESS_STATES;
 		if ($this->getConfig()['producer']) {
 			unset ($states[BackgroundJob::STATE_READY]);
 			unset ($states[BackgroundJob::STATE_TEMPORARILY_FAILED]);
+
+			// WAITING se hromadně nerepublikuje: u velké skupiny by se do brokera naráz nasypaly všechny
+			// její čekající joby, každý by narazil na téhož předchůdce a vrátil se rovnou zpátky do WAITING.
+			// Místo toho promoteWaitingJobs() níž pustí z každé skupiny jen její hlavu.
 			unset ($states[BackgroundJob::STATE_WAITING]);
-
-			if (!$this->getUnfinishedJobIdentifiers([CallbackNameEnum::PROCESS_WAITING_JOBS->value])) {
-				$this->publish(CallbackNameEnum::PROCESS_WAITING_JOBS->value, identifier: CallbackNameEnum::PROCESS_WAITING_JOBS->value, mode: ModeEnum::RECURRING);
-			}
-
 		} else {
 			// Nemáme producera
 
@@ -226,7 +251,8 @@ class BackgroundQueue
 
 		$qb = $this->createQueryBuilder()
 			->andWhere('state IN (:state)')
-			->setParameter('state',  $states);
+			->setParameter('state',  $states)
+			->orderBy('id', 'ASC');
 
 		/** @var BackgroundJob $_entity */
 		foreach ($this->fetchAll($qb, 1000) as $_entity) {
@@ -245,6 +271,85 @@ class BackgroundQueue
 				$_entity->setProcessedByBroker(false);
 				$this->processJob($_entity->getId());
 			}
+		}
+
+		// Záchranná síť pro WAITING joby. Hlavní cesta je probuzení hned po dokončení předchůdce
+		// (promoteWaitingSuccessor v processJob), tohle ho jen zálohuje pro případy, kdy k němu nedošlo -
+		// konzument umřel mezi zápisem výsledku a probuzením, zpráva se v brokeru ztratila, apod.
+		// Bez producera to netřeba: tam si WAITING joby vybírá přímo smyčka výš.
+		if ($this->getConfig()['producer']) {
+			$this->promoteWaitingJobs();
+			$this->republishLostMessages();
+		}
+	}
+
+	/**
+	 * Záchranná síť pro joby, jejichž zpráva se ztratila. Řádek v DB je zdroj pravdy, ale k životu ho
+	 * probouzí jediná zpráva v brokeru - a ta může zaniknout: proces umře mezi DB zápisem a publishem,
+	 * publish zůstane viset v bufferu transakce bez nainstalovaného middlewaru, konzument spadne mezi
+	 * ackem a claimem, výpadek sítě po basic_publish, ruční purge fronty. Job ve stavu READY nebo
+	 * TEMPORARILY_FAILED pak bez téhle pojistky visí navždy - process() tyhle stavy v broker módu záměrně
+	 * nerepublikuje a reaper řeší jen PROCESSING. Job se serialGroup navíc blokuje celou svou skupinu.
+	 *
+	 * Za ztracenou se zpráva považuje, když je job déle než lostMessageTimeout bez jediného zápisu
+	 * (updated_at) a zároveň mu už uplynul odklad (availableFrom) - u TEMPORARILY_FAILED tedy čekáme,
+	 * až doběhne backoff, aby se opakování neuspíšilo. Falešný poplach (zpráva jen dlouho čeká v zaplněné
+	 * frontě) je neškodný: duplicitní zprávu zahodí podmíněný claim, jen zbytečně projde brokerem.
+	 *
+	 * Republish jde přes podmíněný UPDATE stejně jako promotion: osvěží updated_at (ať se tentýž job
+	 * nerepublikuje každý běh cronu, dokud čeká ve frontě) a vynuluje postponed_by (odklad už uplynul,
+	 * nová zpráva může jít do fronty rovnou); publikuje se jen když UPDATE zabral.
+	 *
+	 * @throws Exception
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function republishLostMessages(): void
+	{
+		if (!$this->producer || !$this->config['lostMessageTimeout']) {
+			return;
+		}
+
+		$untouchedSince = (new DateTimeImmutable())->modify('-' . $this->config['lostMessageTimeout'] . ' seconds');
+
+		$qb = $this->createQueryBuilder()
+			->andWhere('state IN (:states)')
+			->setParameter('states', [BackgroundJob::STATE_READY, BackgroundJob::STATE_TEMPORARILY_FAILED])
+			->andWhere('updated_at < :untouchedSince')
+			->setParameter('untouchedSince', $untouchedSince->format('Y-m-d H:i:s'))
+			->orderBy('id', 'ASC');
+
+		/** @var BackgroundJob $_entity */
+		foreach ($this->fetchAll($qb, 1000) as $_entity) {
+			// Odklad (backoff po chybě) ještě neuplynul - zpráva legitimně čeká v TTL frontě.
+			// availableFrom se skládá z více sloupců, proto se filtruje tady a ne v SQL.
+			if ($_entity->getAvailableFrom() > new DateTime()) {
+				continue;
+			}
+
+			$affected = $this->connection->createQueryBuilder()
+				->update($this->config['tableName'])
+				->set('postponed_by', ':postponedBy')
+				->set('updated_at', ':updatedAt')
+				->where('id = :id')
+				->andWhere('state = :state')
+				->setParameter('postponedBy', null)
+				->setParameter('updatedAt', (new DateTimeImmutable())->format('Y-m-d H:i:s'))
+				->setParameter('id', $_entity->getId())
+				->setParameter('state', $_entity->getState())
+				->executeStatement();
+
+			if (!$affected) {
+				// Řádek se mezi SELECTem a UPDATEm změnil - job si mezitím někdo vzal, jeho zpráva tedy žije.
+				continue;
+			}
+
+			$_entity->setPostponedBy(null);
+			$this->publishToBroker($_entity);
+
+			// Nejde o chybu jobu, jen o ztracený transport - proto přímý log bez logException():
+			// ten by READY jobu navíc přepnul stav na PERMANENTLY_FAILED (viz jeho tělo).
+			$this->logger->log('warning', new Exception('BackgroundQueue: Lost broker message republished (ID: ' . $_entity->getId() . ').'));
 		}
 	}
 
@@ -266,10 +371,12 @@ class BackgroundQueue
 		// Další consumer dostane tuto zprávu znovu, zjistí, že není ve stavu pro zpracování a ukončí zpracování (return).
 		// Consumer nespadne (zpráva se nezačne zpracovávat), metoda process() vrátí TRUE, zpráva se v RabbitMq se označí jako zpracovaná.
 		if (!$entity->isReadyForProcess()) {
-			// REDUNDANT job zařazený v brokeru je očekávaný stav (job byl coalescingem označen za nadbytečný
-			// až po zařazení jeho ID do brokera), proto ho tiše přeskočíme bez logu. Ostatní ne-ready stavy
-			// (FINISHED, PROCESSING jiným konzumentem, ...) logujeme dál.
-			if ($entity->getState() !== BackgroundJob::STATE_REDUNDANT) {
+			// REDUNDANT a FINISHED job zařazený v brokeru je očekávaný stav, proto se tiše přeskočí bez logu:
+			// REDUNDANT vzniká coalescingem až po zařazení ID do brokera, FINISHED je opožděný duplikát -
+			// typicky původní zpráva jobu, který mezitím doběhl přes republish ztracené zprávy
+			// (republishLostMessages), nebo RabbitMQ redelivery. Ostatní ne-ready stavy
+			// (PROCESSING jiným konzumentem, PERMANENTLY_FAILED, ...) logujeme dál.
+			if (!in_array($entity->getState(), [BackgroundJob::STATE_REDUNDANT, BackgroundJob::STATE_FINISHED], true)) {
 				$this->logException('Unexpected state "' .$entity->getState() . '".', $entity);
 			}
 			return;
@@ -278,6 +385,15 @@ class BackgroundQueue
 		if ($this->isRedundant($entity)) {
 			$entity->setState(BackgroundJob::STATE_REDUNDANT);
 			$this->save($entity);
+			// I tímhle přechodem job přestal být překážkou pro svou skupinu, takže se za sebou musí uklidit
+			// stejně jako dole po doběhnutí callbacku. Selhání probuzení (např. chyba zámku při ztraceném
+			// spojení) nesmí propadnout ven - zpráva je už acknutá a job korektně uzavřený, výjimka by jen
+			// zbytečně shodila konzumenta; zameškané probuzení dožene promoteWaitingJobs() v cronu.
+			try {
+				$this->promoteWaitingSuccessor($entity);
+			} catch (Exception $e) {
+				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
+			}
 			return;
 		}
 
@@ -296,6 +412,18 @@ class BackgroundQueue
 
 		$callback = null;
 		try {
+			// Entita se četla ještě před zámkem a mohla zastarat - typicky když RabbitMQ redelivery doručí
+			// totéž ID dvěma konzumentům: druhý tu čekal na zámek, zatímco první job claimnul a spustil callback.
+			// Bez čerstvého čtení by druhý konzument pracoval se stavem READY, našel by ve skupině překážku
+			// a běžící job by odložil do WAITING - odkud by ho promotion pustila třetímu konzumentovi podruhé.
+			// S čerstvým čtením uvidí PROCESSING a tiše skončí, stejně jako při neúspěšném claimu.
+			if ($serialGroup) {
+				$entity = $this->getEntity($id);
+				if (!$entity->isReadyForProcess()) {
+					return;
+				}
+			}
+
 			if (!$this->checkUnfinishedJobs($entity)) {
 				return;
 			}
@@ -367,6 +495,13 @@ class BackgroundQueue
 		// v ostatních případech vše proběhlo v pořádku, nastaví se stav dokončeno
 		$e = null;
 		$state = BackgroundJob::STATE_FINISHED;
+
+		// Od téhle chvíle až do konce callbacku se job považuje za běžící v tomto procesu, aby mu
+		// heartbeat() mohl posouvat updated_at bez toho, že by mu callback musel cokoli předávat.
+		// Claim výše už updated_at osvěžil, takže tep se pošle nejdřív za heartbeatInterval.
+		$this->currentJob = $entity;
+		$this->lastHeartbeatAt = microtime(true);
+
 		try {
 			if ($this->config['onBeforeProcess']) {
 				$this->config['onBeforeProcess']($entity->getParameters());
@@ -411,7 +546,12 @@ class BackgroundQueue
 					break;
 				case $e instanceof DieException:    // Pokud to došlo sem, tak ta DieException nemá $e->getPrevious(), takže ji označíme jako STATE_PERMANENTLY_FAILED
 				case $e instanceof PermanentErrorException:
-				case $e instanceof TypeError:
+				// Error = chyba v kódu, kterou opakování nespraví: špatně pojmenovaný argument,
+				// volání metody nad null, dělení nulou. Dřív tu stál jen TypeError, takže zbytek
+				// propadal do default a job se zkoušel donekonečna - reálně jsme takhle měli
+				// export s 29 pokusy. Vlastní výjimky balíku dědí z Exception, takže je tahle
+				// větev nemůže přebrat.
+				case $e instanceof Error:
 					$state = BackgroundJob::STATE_PERMANENTLY_FAILED;
 					break;
 				case $e instanceof WaitingException:
@@ -422,6 +562,11 @@ class BackgroundQueue
 					$entity->setPostponedBy(self::getPostponement($entity->getNumberOfAttempts()));
 					break;
 			}
+		} finally {
+			// Výsledek si už zapíše kód níž; kdyby tu heartbeat() zůstal natažený, oživoval by řádek,
+			// o který se nikdo nestará.
+			$this->currentJob = null;
+			$this->lastHeartbeatAt = null;
 		}
 
 		// zpracování výsledku
@@ -432,11 +577,6 @@ class BackgroundQueue
 			if ($state === BackgroundJob::STATE_FINISHED) {
 				if ($entity->isModeRecurring()) {
 					$this->cloneAndPublish($entity);
-
-					// Interní podpůrný job se v DB jen hromadí a jeho historie nemá hodnotu, proto dokončený záznam rovnou smažeme.
-					if ($entity->getCallbackName() === CallbackNameEnum::PROCESS_WAITING_JOBS->value) {
-						$this->deleteJob($entity->getId());
-					}
 				}
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				$this->publishToBroker($entity);
@@ -449,8 +589,101 @@ class BackgroundQueue
 				// odeslání emailu o chybě v callbacku
 				$this->logException('Permanent error occured.', $entity, $e);
 			}
+
+			$this->promoteWaitingSuccessor($entity);
 		} catch (Exception $innerEx) {
 			$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $innerEx);
+		}
+	}
+
+	/**
+	 * Vrátí do hry joby, které uvízly v PROCESSING po konzumerovi, jenž skončil bez zápisu výsledku -
+	 * typicky SIGKILL od OOM killeru, pád kontejneru nebo reboot hostu. Uvnitř procesu se proti tomu
+	 * zajistit nelze (žádný PHP kód se už nespustí), takže je to jediná pojistka, která takový případ
+	 * pokryje. Bez ní řádek zůstane ve PROCESSING navěky: ten stav není v READY_TO_PROCESS_STATES,
+	 * takže ho nikdo nevyzvedne, a getPreviousUnfinishedJobId() ho navíc bere jako překážku, takže
+	 * všechny další joby téže serialGroup skončí natrvalo ve WAITING.
+	 *
+	 * Živost se záměrně nezjišťuje z PID. Ten platí jen v rámci jednoho kontejneru (nemáme sdílený
+	 * PID namespace), takže cron na druhém hostu o něm nemůže nic tvrdit, a při jednom procesu na job
+	 * se navíc rychle recykluje. Místo toho se spoléhá na updated_at, který posouvá dopředu každý
+	 * zápis do jobu a volitelně i heartbeat() z dlouhého callbacku.
+	 *
+	 * @throws Exception
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	public function reapStalledJobs(): void
+	{
+		if (!$this->config['stalledJobTimeout']) {
+			return;
+		}
+
+		$stalledBefore = (new DateTimeImmutable())->modify('-' . $this->config['stalledJobTimeout'] . ' seconds');
+
+		$qb = $this->createQueryBuilder()
+			->andWhere('state = :state')
+			->setParameter('state', BackgroundJob::STATE_PROCESSING)
+			->andWhere('updated_at < :stalledBefore')
+			->setParameter('stalledBefore', $stalledBefore->format('Y-m-d H:i:s'))
+			->orderBy('id', 'ASC');
+
+		/** @var BackgroundJob $_entity */
+		foreach ($this->fetchAll($qb, 1000) as $_entity) {
+			if (!$this->reapStalledJob($_entity)) {
+				// Řádek se mezi SELECTem a UPDATEm změnil - sebral ho jiný běh reaperu (process() běží
+				// na každém hostu samostatně, CommandLock je jen souborový) nebo konzumer, který se
+				// mezitím ozval. Ať už nastalo cokoli, tenhle běh do toho nemá co mluvit.
+				continue;
+			}
+
+			$this->publishToBroker($_entity);
+			$this->logException('Stalled job reaped.', $_entity);
+		}
+	}
+
+	/**
+	 * Potvrzení, že job pořád běží - reaper pak pozná rozdíl mezi "běží dlouho" a "konzumer umřel",
+	 * takže stalledJobTimeout nemusí být nastavený podle nejdelšího možného běhu callbacku.
+	 *
+	 * Volat to nikdo nemusí: pokud si aplikace nainstalovala BackgroundQueueMiddleware na své DBAL
+	 * spojení (viz README), posílá se tep sám z databázové aktivity callbacku. Metoda je veřejná pro
+	 * callbacky, které chtějí tepat i v úsecích bez dotazů do databáze.
+	 *
+	 * Zapisuje se cíleným UPDATEm mimo entitu, aby to nekolidovalo s jejím stavem v paměti. Podmínka na
+	 * PROCESSING brání oživení řádku, který už mezitím dokončil někdo jiný. Mimo zpracování jobu (a při
+	 * volání častěji než heartbeatInterval) metoda nedělá nic, takže ji lze volat jakkoli často.
+	 */
+	public function heartbeat(): void
+	{
+		if (!$this->currentJob) {
+			return;
+		}
+
+		// Kdyby tep šel přes spojení s nainstalovaným middlewarem, zavolal by si sám sebe.
+		if ($this->heartbeatInProgress) {
+			return;
+		}
+
+		$now = microtime(true);
+		if ($this->lastHeartbeatAt !== null && $now - $this->lastHeartbeatAt < $this->config['heartbeatInterval']) {
+			return;
+		}
+		$this->lastHeartbeatAt = $now;
+		$this->heartbeatInProgress = true;
+
+		try {
+			$this->connection->update(
+				$this->config['tableName'],
+				['updated_at' => (new DateTimeImmutable())->format('Y-m-d H:i:s')],
+				['id' => $this->currentJob->getId(), 'state' => BackgroundJob::STATE_PROCESSING]
+			);
+		} catch (Throwable $e) {
+			// Tep není kritický: job běží dál a nejhůř ho po timeoutu sebere reaper. Zvednutá výjimka
+			// by naopak vyletěla uprostřed callbacku a shodila by práci, která je jinak v pořádku.
+			$this->logger->log('warning', new Exception('BackgroundQueue: Heartbeat failed (ID: ' . $this->currentJob->getId() . ').', 0, $e));
+		} finally {
+			$this->heartbeatInProgress = false;
 		}
 	}
 
@@ -556,6 +789,11 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Identifikátory jobů, které ještě mají něco před sebou. Trvale selhaný job se nepočítá: znovu už
+	 * nepoběží, takže by ho tahle metoda držela jako "nedokončený" navždy - a s ním i všechno, co se na ni
+	 * ptá. Kvůli tomu se dřív RECURRING job po jednom trvalém selhání už nikdy nenaplánoval
+	 * (viz cloneAndPublish) a UNIQUE identifier zůstal natrvalo zablokovaný.
+	 *
 	 * @throws Exception
 	 * @throws \Doctrine\DBAL\Exception
 	 */
@@ -563,7 +801,7 @@ class BackgroundQueue
 	{
 		$qb = $this->createQueryBuilder();
 
-		$states = BackgroundJob::FINISHED_STATES;
+		$states = BackgroundJob::TERMINAL_STATES;
 		if ($excludeProcessing) {
 			$states[BackgroundJob::STATE_PROCESSING] = BackgroundJob::STATE_PROCESSING;
 		}
@@ -586,6 +824,79 @@ class BackgroundQueue
 		}
 
 		return $unfinishedJobIdentifiers;
+	}
+
+	/**
+	 * Denní monitoring (command background-queue:monitor): spočítá joby ve stavech, které vyžadují - nebo
+	 * při opakování budou vyžadovat - ruční zásah. PERMANENTLY_FAILED se sám už nikdy nespustí;
+	 * TEMPORARILY_FAILED se sice opakuje sám, ale job selhávající pořád dokola v něm bydlí navěky
+	 * (backoff má strop 16 minut a notifyOnNumberOfAttempts upozorní jen při přesně N-tém pokusu).
+	 * K tomu PROCESSING běžící déle než LONG_PROCESSING_REPORT_THRESHOLD: callback zaseknutý v nekonečné
+	 * smyčce, který přes middleware pořád tepe, reaperu nikdy nezestárne - tohle je jediné místo, které
+	 * ho zviditelní. Ostatní stavy mají aktivní pojistku (reaper, promotion, republish), takže se v nich
+	 * nic dlouhodobě nedrží.
+	 *
+	 * Je-li co hlásit, pošle report i do loggeru - stejným kanálem jako ostatní notifikace knihovny.
+	 * Úroveň je critical, obsahuje-li report PERMANENTLY_FAILED nebo dlouhoběžící PROCESSING joby
+	 * (ani jedno se bez zásahu nespraví), jinak warning. Vrací počty a stáří nejstaršího jobu pro výpis
+	 * commandu; u PROCESSING se stářím míní začátek běhu (last_attempt_at), u ostatních vznik jobu.
+	 *
+	 * @return array<int, array{count: int, oldestSince: ?string}> klíčem je stav
+	 * @throws Exception
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	public function reportStuckJobs(): array
+	{
+		$states = [BackgroundJob::STATE_TEMPORARILY_FAILED, BackgroundJob::STATE_PERMANENTLY_FAILED];
+
+		$qb = $this->createQueryBuilder()
+			->select('state, COUNT(*) AS jobCount, MIN(created_at) AS oldestSince')
+			->andWhere('state IN (:states)')
+			->setParameter('states', $states)
+			->groupBy('state');
+
+		$report = [];
+		foreach ($states as $_state) {
+			$report[$_state] = ['count' => 0, 'oldestSince' => null];
+		}
+		foreach ($this->fetchAll($qb, null, false) as $_row) {
+			$report[(int) $_row['state']] = [
+				'count' => (int) $_row['jobCount'],
+				'oldestSince' => $_row['oldestSince'],
+			];
+		}
+
+		// Dlouhoběžící PROCESSING se měří od začátku běhu (last_attempt_at), ne od updated_at -
+		// ten hung callbacku posouvá heartbeat, což je přesně důvod, proč na něj reaper nedosáhne.
+		$runningSince = (new DateTimeImmutable())->modify('-' . self::LONG_PROCESSING_REPORT_THRESHOLD . ' seconds');
+		$qb = $this->createQueryBuilder()
+			->select('COUNT(*) AS jobCount, MIN(last_attempt_at) AS oldestSince')
+			->andWhere('state = :processingState')
+			->setParameter('processingState', BackgroundJob::STATE_PROCESSING)
+			->andWhere('last_attempt_at < :runningSince')
+			->setParameter('runningSince', $runningSince->format('Y-m-d H:i:s'));
+		$row = $this->fetchAll($qb, null, false)[0];
+		$report[BackgroundJob::STATE_PROCESSING] = [
+			'count' => (int) $row['jobCount'],
+			'oldestSince' => $row['jobCount'] ? $row['oldestSince'] : null,
+		];
+
+		$temporarily = $report[BackgroundJob::STATE_TEMPORARILY_FAILED];
+		$permanently = $report[BackgroundJob::STATE_PERMANENTLY_FAILED];
+		$longRunning = $report[BackgroundJob::STATE_PROCESSING];
+
+		if ($temporarily['count'] || $permanently['count'] || $longRunning['count']) {
+			$message = 'BackgroundQueue: Stuck jobs report: '
+				. $temporarily['count'] . 'x TEMPORARILY_FAILED' . ($temporarily['count'] ? ' (oldest ' . $temporarily['oldestSince'] . ')' : '')
+				. ', '
+				. $permanently['count'] . 'x PERMANENTLY_FAILED' . ($permanently['count'] ? ' (oldest ' . $permanently['oldestSince'] . ')' : '')
+				. ', '
+				. $longRunning['count'] . 'x PROCESSING running longer than ' . (self::LONG_PROCESSING_REPORT_THRESHOLD / 3600) . ' hours' . ($longRunning['count'] ? ' (since ' . $longRunning['oldestSince'] . ')' : '')
+				. '.';
+			$this->logger->log(($permanently['count'] || $longRunning['count']) ? 'critical' : 'warning', new Exception($message));
+		}
+
+		return $report;
 	}
 
 	public static function parseDsn($dsn): array
@@ -807,9 +1118,11 @@ class BackgroundQueue
 			return true;
 		}
 
-		if ($entity->getState() === BackgroundJob::STATE_READY) {
-			$entity->setUpdatedAt(new DateTimeImmutable());
-		}
+		// Každý zápis do existujícího řádku je důkaz, že se o job někdo stará. Díky tomu znamená
+		// updated_at "naposledy sáhnuto" a reaper podle něj pozná osiřelé PROCESSING joby, aniž by
+		// musel zjišťovat živost procesu. Dřív se osvěžoval jen při přechodu na READY, takže by
+		// každý další save() vrátil tep zpátky do minulosti hodnotou, kterou entita drží z claimu.
+		$entity->setUpdatedAt(new DateTimeImmutable());
 
 		// Podmíněný claim (atomické převzetí ke zpracování): přechod do PROCESSING smí uspět jen jednomu konzumentovi.
 		// Pokud řádek mezitím změnil stav (typicky RabbitMQ redelivery doručil totéž ID dvěma konzumentům),
@@ -837,6 +1150,42 @@ class BackgroundQueue
 			->andWhere('state IN (:__states)')
 			->setParameter('__id', $entity->getId())
 			->setParameter('__states', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER);
+
+		foreach ($entity->getDatabaseValues() as $column => $value) {
+			$qb->set($column, ':' . $column)
+				->setParameter($column, $value);
+		}
+
+		return $qb->executeStatement() > 0;
+	}
+
+	/**
+	 * Přepne osiřelý job z PROCESSING na TEMPORARILY_FAILED, aby ho příští běh vyzvedl.
+	 *
+	 * UPDATE je podmíněný na stav i na původní updated_at - tedy na to, že se řádek od SELECTu
+	 * v reapStalledJobs() nezměnil. Bezpodmínečný save() by přepsal stav, který mezitím zapsal
+	 * někdo jiný: reaper na druhém hostu, čerstvý tep dosud živého konzumera, nebo dokonce
+	 * konzumer, který si job už legitimně převzal. Vrací true, když UPDATE zabral.
+	 *
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function reapStalledJob(BackgroundJob $entity): bool
+	{
+		$stalledSince = $entity->getUpdatedAt()->format('Y-m-d H:i:s');
+
+		$entity->setState(BackgroundJob::STATE_TEMPORARILY_FAILED)
+			->setErrorMessage('Job was stalled in the processing state since ' . $stalledSince . ' (PID ' . $entity->getPid() . '); the consumer died without writing a result.')
+			->setPostponedBy(self::getPostponement($entity->getNumberOfAttempts()));
+		$entity->setUpdatedAt(new DateTimeImmutable());
+
+		$qb = $this->connection->createQueryBuilder()
+			->update($this->config['tableName'])
+			->where('id = :__id')
+			->andWhere('state = :__state')
+			->andWhere('updated_at = :__updatedAt')
+			->setParameter('__id', $entity->getId())
+			->setParameter('__state', BackgroundJob::STATE_PROCESSING)
+			->setParameter('__updatedAt', $stalledSince);
 
 		foreach ($entity->getDatabaseValues() as $column => $value) {
 			$qb->set($column, ':' . $column)
@@ -915,14 +1264,6 @@ class BackgroundQueue
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private function deleteJob(int $id): void
-	{
-		$this->connection->delete($this->config['tableName'], ['id' => $id]);
-	}
-
-	/**
-	 * @throws \Doctrine\DBAL\Exception
-	 */
 	private function createSchemaManager(): AbstractSchemaManager
 	{
 		return method_exists($this->connection, 'createSchemaManager')
@@ -976,6 +1317,14 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Najde-li ve skupině předchůdce, odloží job do WAITING a vrátí false; jinak true (job smí běžet).
+	 *
+	 * Odklad je podmíněný přechod stejně jako claim a promotion: UPDATE zabere jen tehdy, je-li řádek
+	 * pořád v některém ze zpracovatelných stavů, a sahá jen na dotčené sloupce. Nepodmíněný zápis celé
+	 * entity by mohl přepsat PROCESSING jobu, který si mezitím claimnul duplicitní konzument (redelivery) -
+	 * běžící job by pak v DB tvrdil WAITING, promotion by ho pustila znovu a běžel by dvakrát.
+	 * Když UPDATE nezabere, vracíme přesto false: o job se stará ten, kdo ho claimnul.
+	 *
 	 * @throws SchemaException
 	 * @throws \Doctrine\DBAL\Exception
 	 */
@@ -987,10 +1336,21 @@ class BackgroundQueue
 
 		if ($previousEntityId = $this->getPreviousUnfinishedJobId($entity)) {
 			try {
-				$entity->setState(BackgroundJob::STATE_WAITING);
-				$entity->setErrorMessage('Waiting for job ID ' . $previousEntityId);
-				$entity->setPostponedBy($this->config['waitingJobExpiration']);
-				$this->save($entity);
+				$this->connection->createQueryBuilder()
+					->update($this->config['tableName'])
+					->set('state', ':waitingState')
+					->set('error_message', ':errorMessage')
+					->set('postponed_by', ':postponedBy')
+					->set('updated_at', ':updatedAt')
+					->where('id = :id')
+					->andWhere('state IN (:claimableStates)')
+					->setParameter('waitingState', BackgroundJob::STATE_WAITING)
+					->setParameter('errorMessage', 'Waiting for job ID ' . $previousEntityId)
+					->setParameter('postponedBy', $this->config['waitingJobExpiration'])
+					->setParameter('updatedAt', (new DateTimeImmutable())->format('Y-m-d H:i:s'))
+					->setParameter('id', $entity->getId())
+					->setParameter('claimableStates', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER)
+					->executeStatement();
 			} catch (Exception $e) {
 				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
 			}
@@ -1029,19 +1389,137 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Probudí nástupce právě dokončeného jobu: přestal-li tenhle job svým posledním přechodem blokovat
+	 * svou serialGroup, pustí do hry její hlavu čekající ve WAITING. Tohle je hlavní (a jediná rychlá)
+	 * cesta, jak se z WAITING ven - promoteWaitingJobs() v process() je jen záchranná síť.
+	 *
+	 * Běží pod zámkem skupiny, protože jinak sem vede tichý deadlock: konzument nástupce si přečte tenhle
+	 * job ještě běžící (PROCESSING), rozhodne se pro WAITING, my mezitím zapíšeme výsledek a nikoho ve
+	 * WAITING nenajdeme - a teprve pak nástupce svůj WAITING zapíše. Nikdo už ho nevzbudí. Se zámkem buď
+	 * počkáme, až nástupce svůj WAITING dopíše (a pak ho najdeme), nebo ho předběhneme a on při své kontrole
+	 * uvidí náš koncový stav a projde rovnou. Zápis vlastního výsledku proto musí předcházet tomuhle volání.
+	 *
+	 * Bez producera se neděje nic: WAITING joby si tam vybírá přímo process().
+	 *
 	 * @throws SchemaException
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
 	 */
-	private function processWaitingJobs(): void
+	private function promoteWaitingSuccessor(BackgroundJob $entity): void
+	{
+		if (!$this->producer || !$serialGroup = $entity->getSerialGroup()) {
+			return;
+		}
+
+		// Job, který zůstal v některém ze zpracovatelných stavů (typicky TEMPORARILY_FAILED) nebo pořád běží,
+		// je pro skupinu dál překážkou - viz getPreviousUnfinishedJobId(). Pouštět za něj nástupce nesmíme.
+		if ($entity->isReadyForProcess() || $entity->getState() === BackgroundJob::STATE_PROCESSING) {
+			return;
+		}
+
+		if (!$this->acquireGroupLock($serialGroup)) {
+			// Zámek drží konzument jiného jobu téže skupiny; jeho vlastní probuzení nástupce nebo příští
+			// běh promoteWaitingJobs() to dožene. Kvůli tomu nemá cenu shazovat právě dokončený job.
+			return;
+		}
+
+		try {
+			if ($id = $this->findWaitingGroupHeadId($serialGroup)) {
+				$this->promoteWaitingJob($id);
+			}
+		} finally {
+			$this->releaseGroupLock($serialGroup);
+		}
+	}
+
+	/**
+	 * Záchranná síť: pustí do hry hlavu každé skupiny, která má nějaký job ve WAITING. Volá se z process(),
+	 * takže žádný WAITING job neuvízne déle než do dalšího běhu cronu, i kdyby probuzení po předchůdci
+	 * z jakéhokoli důvodu neproběhlo (zabitý konzument, ztracená zpráva v brokeru, nezískaný zámek).
+	 *
+	 * Zámek skupiny se tu záměrně nebere: promoteWaitingJob() je podmíněný na stav, takže nemůže nic přepsat,
+	 * a čekání až GROUP_LOCK_TIMEOUT sekund na každou skupinu by z jednoho běhu cronu udělalo libovolně dlouhý.
+	 * Nanejvýš tak o jedno probuzení přijdeme a dožene ho běh za minutu - přesně na to tahle vrstva je.
+	 *
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	private function promoteWaitingJobs(): void
 	{
 		foreach ($this->findOldestUnfinishedJobIdsByGroup(BackgroundJob::STATE_WAITING) as $id) {
-			$_entity = $this->getEntity($id);
-
-			$_entity->setState(BackgroundJob::STATE_READY);
-			$this->save($_entity);
-			$this->publishToBroker($_entity);
+			$this->promoteWaitingJob((int) $id);
 		}
+	}
+
+	/**
+	 * Přepne jeden job z WAITING na READY a zařadí ho do brokera.
+	 *
+	 * UPDATE je podmíněný na WAITING a sahá jen na sloupce, které mění - WAITING je totiž v
+	 * READY_TO_PROCESS_STATES, takže si takový job může konzument claimnout i přímo z brokera (redelivery,
+	 * stará zpráva ve frontě). Nepodmíněný zápis celé entity by pak běžícímu jobu přepsal PROCESSING zpátky
+	 * na READY starými hodnotami a jiný konzument by ho spustil podruhé.
+	 *
+	 * Do brokera publikujeme jen tehdy, když UPDATE zabral, ať do fronty neteče ID jobu, který si mezitím
+	 * vzal někdo jiný.
+	 *
+	 * @throws SchemaException
+	 * @throws \Doctrine\DBAL\Exception
+	 * @throws Exception
+	 */
+	private function promoteWaitingJob(int $id): void
+	{
+		$affected = $this->connection->createQueryBuilder()
+			->update($this->config['tableName'])
+			->set('state', ':readyState')
+			->set('error_message', ':errorMessage')
+			->set('postponed_by', ':postponedBy')
+			->set('updated_at', ':updatedAt')
+			->where('id = :id')
+			->andWhere('state = :waitingState')
+			->setParameter('readyState', BackgroundJob::STATE_READY)
+			->setParameter('errorMessage', null)
+			// Odklad si job nesl jen jako pojistku proti přetáčení ve staré poll smyčce. Sem se dostane až
+			// když jeho předchůdce doopravdy uvolnil cestu, takže může jít do fronty rovnou.
+			->setParameter('postponedBy', null)
+			->setParameter('updatedAt', (new DateTimeImmutable())->format('Y-m-d H:i:s'))
+			->setParameter('id', $id)
+			->setParameter('waitingState', BackgroundJob::STATE_WAITING)
+			->executeStatement();
+
+		if (!$affected) {
+			return;
+		}
+
+		$entity = $this->getEntity($id);
+		$this->publishToBroker($entity);
+	}
+
+	/**
+	 * ID hlavy WAITING jobů dané skupiny, tj. toho, který má jít první: nejvyšší priorita (nejnižší číslo),
+	 * při shodě nejnižší ID. Stejné pořadí, jaké používá getPreviousUnfinishedJobId() i
+	 * findOldestUnfinishedJobIdsByGroup(), jen pro jednu skupinu.
+	 *
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function findWaitingGroupHeadId(string $serialGroup): ?int
+	{
+		$id = $this->connection->createQueryBuilder()
+			->select('id')
+			->from($this->config['tableName'])
+			->where('queue LIKE :queue')
+			->andWhere('state = :state')
+			->andWhere('serial_group = :serialGroup')
+			->orderBy('priority', 'ASC')
+			->addOrderBy('id', 'ASC')
+			->setParameter('queue', $this->config['queue'] . '%')
+			->setParameter('state', BackgroundJob::STATE_WAITING)
+			->setParameter('serialGroup', $serialGroup)
+			->setMaxResults(1)
+			->executeQuery()
+			->fetchOne();
+
+		return $id === false ? null : (int) $id;
 	}
 
 	private function createQueryBuilder(): QueryBuilder

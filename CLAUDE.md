@@ -44,7 +44,7 @@ Jedna velká třída, která vlastní vše: konfiguraci, DBAL connection, publik
 Téměř každá větev v `process()`/`save()` se odvíjí od toho, zda je nakonfigurován `producer`:
 
 - **Cron mód (bez producera):** `process()` spouští joby inline. Zpracovatelné stavy nezahrnují `STATE_BACK_TO_BROKER`.
-- **Broker mód (producer nastaven):** `process()` joby *nespouští*; přepne způsobilé řádky v DB zpět na `STATE_READY` a znovu publikuje jejich ID do brokera. Skutečná práce probíhá v `Consumer::consume()` → `processJob()`. Broker vždy nese pouze **ID jobu** (string); řádek v DB je vždy zdrojem pravdy.
+- **Broker mód (producer nastaven):** `process()` joby *nespouští*; přepne způsobilé řádky v DB zpět na `STATE_READY` a znovu publikuje jejich ID do brokera. Skutečná práce probíhá v `Consumer::consume()` → `processJob()`. Broker vždy nese pouze **ID jobu** (string); řádek v DB je vždy zdrojem pravdy. Protože ale řádek probouzí jediná zpráva v brokeru, běží na konci `process()` pojistka `republishLostMessages()`: joby v `READY`/`TEMPORARILY_FAILED` bez zápisu déle než `lostMessageTimeout` (default 3600 s) a s prošlým `availableFrom` znovu publikuje (podmíněný UPDATE, duplicitní zprávu zahodí podmíněný claim; opožděný duplikát na FINISHED řádku se proto v `processJob()` tiše přeskakuje).
 
 ### Stavový automat jobu (src/Entity/BackgroundJob.php)
 
@@ -52,8 +52,8 @@ Stavy jsou celočíselné konstanty na `BackgroundJob` (`STATE_READY=1`, `STATE_
 
 Výsledek callbacku (`switch` v `processJob()`) je určen typem vyhozené výjimky:
 - `PermanentErrorException` / `TypeError` / holá `DieException` → `PERMANENTLY_FAILED`
-- `WaitingException` → znovu publikováno (klon) a ponecháno ve waiting; počítadlo pokusů se **nezvyšuje**
-- `SkipException` → tiše přeskočeno, stav zůstává
+- `WaitingException` → původní job se uzavře jako `FINISHED` a publikuje se jeho klon s odkladem `waitingJobExpiration` (`cloneAndPublish()`); počítadlo pokusů se tedy **nezvyšuje** - klon startuje od nuly. Nezaměňovat se stavem `WAITING` (ten patří čekání na předchůdce v serialGroup)
+- `SkipException` → job se uzavře jako `FINISHED` (s `error_message` výjimky), neopakuje se; u `RECURRING` jobu se přesto naplánuje další běh (klonuje ho FINISHED větev)
 - jakýkoli jiný `Throwable` → `TEMPORARILY_FAILED`, opakováno s exponenciálním backoffem (`getPostponement()`, zdvojnásobování, strop 16 minut)
 - bez vyhození výjimky → `FINISHED`
 
@@ -61,7 +61,18 @@ Výsledek callbacku (`switch` v `processJob()`) je určen typem vyhozené výjim
 
 ### serialGroup → sériové zpracování a mechanismus WAITING
 
-Joby sdílející `serialGroup` běží striktně v pořadí podle ID. `checkUnfinishedJobs()` hledá starší nedokončený job ve stejné skupině; pokud ho najde, aktuální job se odloží do `STATE_WAITING`. V broker módu interní opakující se job `_processWaitingJobs` (`CallbackNameEnum::PROCESS_WAITING_JOBS`, registrovaný automaticky při nastaveném produceru) periodicky přepíná nejstarší WAITING job v každé skupině zpět na READY a znovu ho publikuje. Tento interní job je v módu `RECURRING` a po každém úspěšném běhu se z DB maže (jeho historie nemá hodnotu).
+Joby sdílející `serialGroup` běží striktně v pořadí podle (priorita, ID). `checkUnfinishedJobs()` hledá ve skupině předchůdce (`getPreviousUnfinishedJobId()`); pokud ho najde, aktuální job se odloží do `STATE_WAITING`.
+
+Ven z WAITING vedou dvě vrstvy:
+
+- **`promoteWaitingSuccessor()` - hlavní cesta.** Na konci `processJob()` (a v REDUNDANT větvi): dojel-li job se `serialGroup` do stavu, ze kterého už není překážkou (`FINISHED`, `REDUNDANT`, `PERMANENTLY_FAILED`), jeho vlastní konzument rovnou pustí do hry hlavu WAITING téže skupiny. Běží **pod zámkem skupiny** - bez něj vzniká tichý deadlock, kdy nástupce zapíše svůj WAITING až poté, co ho předchůdce marně hledal.
+- **`promoteWaitingJobs()` - záchranná síť.** Volá se na konci `process()` v broker módu, pustí hlavu každé skupiny s nějakým WAITING jobem. Jeden job na skupinu na běh; kryje případy, kdy probuzení neproběhlo (zabitý konzument, ztracená zpráva). Zámek nebere.
+
+Samotná promotion (`promoteWaitingJob()`) je podmíněná: `UPDATE ... WHERE id = ? AND state = WAITING`, jen dotčené sloupce, publikace do brokera jen když UPDATE zabral. WAITING je totiž v `READY_TO_PROCESS_STATES`, takže si takový job může konzument claimnout i přímo z brokera. Stejně podmíněný je i opačný přechod - odklad do WAITING v `checkUnfinishedJobs()` (`WHERE state IN READY_TO_PROCESS_STATES`); navíc se entita po získání zámku skupiny znovu načítá z DB, aby konzument se zastaralou kopií (redelivery) nepřepsal PROCESSING běžícího jobu.
+
+Dřív to obstarával interní opakující se job `_processWaitingJobs`; ten byl zrušen (byl jediný bod selhání - po `PERMANENTLY_FAILED` už se nikdy nenahradil a všechny skupiny zamrzly). Zbylé řádky v ostrých databázích se mažou ručně, knihovna po nich neuklízí. Podrobně v `docs/priority-serialgroup.md`, kapitola „Přepracování probouzení WAITING jobů".
+
+Pozn. k pojmu „nedokončeno": `getPreviousUnfinishedJobId()` bere jako blokující `READY_TO_PROCESS_STATES + PROCESSING`, `getUnfinishedJobIdentifiers()` (RECURRING/UNIQUE) používá `BackgroundJob::TERMINAL_STATES` = `FINISHED_STATES` + `PERMANENTLY_FAILED`. `FINISHED_STATES` samo znamená „vyřízeno v pořádku" a řídí jen `finished_at`.
 
 ### ModeEnum (normal / unique / recurring)
 
@@ -100,6 +111,7 @@ Všechny příkazy kromě `ConsumeCommand` rozšiřují lokální abstraktní `C
 
 - `background-queue:process` - vstupní bod pro cron (spouštět každou minutu).
 - `background-queue:consume [queue] -j <jobs> -p <priorities> -l <label>` - dlouhoběžící brokerový konzumer; `-p` přijímá rozsahy jako `20-40`, `25-`, `-20`; `-l` je volitelný label pro cílený restart.
+- `background-queue:monitor` - denní monitoring (spouštět cronem o půlnoci): `reportStuckJobs()` spočítá joby v `TEMPORARILY_FAILED`, `PERMANENTLY_FAILED` a `PROCESSING` běžící déle než 24 h (tepající hung callback, na který reaper nedosáhne) a je-li co hlásit, pošle report do loggeru (critical při PERMANENTLY_FAILED / dlouhém PROCESSING, jinak warning).
 - `background-queue:reload-consumers <number> [queue] [-l label1,label2]` a `background-queue:shutdown-consumers <number> [queue] [-l label1,label2]` (řízené zastavení = reload, ale s exit kódem `NICE_SHUTDOWN_EXIT_CODE`, který supervisor nerestartuje). Oba stojí na společném `ConsumersControlCommand`, který drží cílení, validaci vstupu (`number` musí být číslo - jinak by kvůli porovnání int se stringem v PHP 8 vznikla nekonečná smyčka) i trim labelů; potomek dodá jen typ zprávy.
 - `background-queue:clear-finished [days]`, `background-queue:update-schema`.
 

@@ -46,6 +46,9 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'onError' => function(Throwable $e, array $parameters) {...},  // nepovinné
 	'onAfterProcess' => function(array $parameters) {...}, // nepovinné
 	'onProcessingGetMetadata' => function(array $parameters): ?array {...}, // nepovinné
+	'stalledJobTimeout' => 3600, // nepovinné, po kolika sekundách bez zápisu se job ve stavu PROCESSING považuje za osiřelý (0 = vypnuto), viz 2.4
+	'heartbeatInterval' => 60, // nepovinné, minimální prodleva v sekundách mezi dvěma zápisy heartbeat(), viz 2.4
+	'lostMessageTimeout' => 3600, // nepovinné, po kolika sekundách bez zápisu se u jobu ve stavu READY/TEMPORARILY_FAILED považuje zpráva v brokeru za ztracenou a publikuje se znovu (0 = vypnuto), viz 2.5
 	'parametersFormat' => \ADT\BackgroundQueue\Entity\BackgroundJob::PARAMETERS_FORMAT_SERIALIZE, // nepovinné, určuje v jakém formátu budou do DB ukládána data v `background_job.parameters` (@see \ADT\BackgroundQueue\Entity\BackgroundJob::setParameters),
 ]);
 ```
@@ -97,7 +100,14 @@ $queueParams = [
     'arguments' => ['x-queue-type' => ['S', 'quorum']]
 ];
 
-$manager = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Manager($connectionParams, $queueParams);
+// nepovinné: per-queue AMQP argumenty
+// klíč = část názvu fronty, hodnota = argumenty aplikované na každou frontu, jejíž název daný řetězec obsahuje
+// příklad: fronta "transcribe" poběží přes single active consumer (jen jeden aktivní consumer napříč všemi)
+$queueArguments = [
+    'transcribe' => ['x-single-active-consumer' => ['t', true]]
+];
+
+$manager = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Manager($connectionParams, $queueParams, $queueArguments);
 $producer = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Producer();
 $consumer = new \ADT\BackgroundQueue\Broker\PhpAmqpLib\Consumer();
 
@@ -154,9 +164,9 @@ Záznam se uloží ve stavu `READY`.
 
 Parametr `$parameters` může přijímat jakýkoliv běžný typ (pole, objekt, string, ...) či jejich kombinace (pole objektů), a to dokonce i binární data.
 
-Parametr `$serialGroup` je nepovinný - jeho zadáním zajistítě, že všechny joby se stejným serialGroup budou provedeny sériově.
+Parametr `$serialGroup` je nepovinný - jeho zadáním zajistítě, že všechny joby se stejným serialGroup budou provedeny sériově. Job, který ve své skupině narazí na dosud nedokončeného předchůdce, se odloží do stavu `WAITING`; jakmile předchůdce dojede, jeho konzument sám vrátí hlavu skupiny (nejvyšší priorita, při shodě nejnižší ID) na `READY` a znovu ji zařadí do brokera. `background-queue:process` totéž dělá jako záchrannou síť pro případ, že by k probuzení nedošlo (zabitý konzument, ztracená zpráva).
 
-Parametr `$identifier` je nepovinný - pomocí něj si můžete označit joby vlastním identifikátorem a následně pomocí metody `getUnfinishedJobIdentifiers(array $identifiers = [])` zjistit, které z nich ještě nebyly provedeny.
+Parametr `$identifier` je nepovinný - pomocí něj si můžete označit joby vlastním identifikátorem a následně pomocí metody `getUnfinishedJobIdentifiers(array $identifiers = [])` zjistit, které z nich ještě nebyly provedeny. Za nedokončený se nepovažuje job ve stavu `FINISHED`, `REDUNDANT` ani `PERMANENTLY_FAILED` - trvale selhaný job už znovu nepoběží, takže by jinak zůstal „nedokončený" navždy.
 
 Parametr `$coalesceThreshold` je nepovinný a slouží ke slučování (coalescingu) překrývajících se jobů ve stejné `serialGroup`. Vyžaduje, aby byl nastaven i `$serialGroup` (jinak se vyhodí výjimka) - ten určuje rozsah slučování. Když se job se zadaným prahem **spustí**, označí všechny ostatní dosud nezpracované joby téže `serialGroup`, jejichž práh je **vyšší nebo stejný**, za `REDUNDANT` - tedy ty, které svým během pokryje.
 
@@ -175,7 +185,7 @@ Pozor: pořadí zpracování v rámci `serialGroup` se řídí prioritou a ID (p
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\PermanentErrorException`, záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně.
 
-Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, záznam se uloží ve stavu `WAITING` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Počítadlo pokusů se nezvyšuje.
+Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, původní záznam se uzavře jako `FINISHED` a místo něj se publikuje jeho klon s odkladem `waitingJobExpiration`. Počítadlo pokusů se tedy nezvyšuje - job se zkusí znovu jako nový záznam. (Nepleťte si to se stavem `WAITING`, do kterého se odkládají joby čekající na předchůdce ve své `serialGroup`.)
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\DieException`, zpracuje se vše dál podle exception, která je v `->getPrevious()` (a pokud žádná není, tak jako při `ADT\BackgroundQueue\Exception\PermanentErrorException`). Poté je (už před další iterací) konzumer ukončen.
 Toho lze využít například v `onError`, pokud v aplikaci dojde k uzavření Doctrine Entity manageru a další iterace konzumera by opět skončili chybou.
@@ -201,7 +211,9 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 ### 2.2 Commandy
 
-`background-queue:process` Bez využití brokera zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `BROKER_FAILED`. V případě využití brokera pak záznamy ve stavu `STATE_BACK_TO_BROKER`, `TEMPORARILY_FAILED` a `WAITING`. Command je ideální spouštět cronem každou minutu. V případě použití brokeru je záznam ve stavu `STATE_BACK_TO_BROKER`, `TEMPORARILY_FAILED` a `WAITING` zařazen znovu do brokera a stav je změněn na `READY`. Stav `STATE_BACK_TO_BROKER` je typicky nastaven ručně v databázi těm záznamům, které chceme nechat znovu zpracovat.
+`background-queue:process` Bez využití brokera zpracuje všechny záznamy ve stavu `READY`, `TEMPORARILY_FAILED`, `WAITING` a `BROKER_FAILED`. V případě využití brokera zařadí znovu do brokera (a přepne na `READY`) záznamy ve stavu `STATE_BACK_TO_BROKER`, zpracuje rovnou záznamy ve stavu `BROKER_FAILED` (těm se publikace do brokera nepovedla), pustí do hry hlavu každé skupiny, která má nějaký job ve stavu `WAITING` (záchranná síť pro případ, že by ji neprobudil konzument předchůdce), a znovu publikuje joby se ztracenou zprávou (viz 2.5). Command je ideální spouštět cronem každou minutu. Stav `STATE_BACK_TO_BROKER` je typicky nastaven ručně v databázi těm záznamům, které chceme nechat znovu zpracovat.
+
+`background-queue:monitor` Jednorázově spočítá zaseklé joby: stavy `TEMPORARILY_FAILED` a `PERMANENTLY_FAILED` — jediné dva, ve kterých se joby drží dlouhodobě (ostatní stavy mají aktivní pojistku, viz 2.4 a 2.5) — a k tomu joby ve stavu `PROCESSING` běžící déle než 24 hodin. Ty kryjí jediný slepý bod reaperu: callback zaseknutý v nekonečné smyčce, který si přes middleware pořád posílá tep, takže pro reaper nikdy nezestárne. Počty vypíše na výstup a je-li co hlásit, pošle report i do loggeru: s úrovní `critical`, obsahuje-li `PERMANENTLY_FAILED` nebo dlouhoběžící `PROCESSING` joby (ani jedno se bez ručního zásahu nespraví), jinak `warning`. Ideální spouštět cronem jednou denně o půlnoci (`0 0 * * *`).
 
 `background-queue:clear-finished` Smaže všechny úspěšně zpracované záznamy.
 
@@ -218,6 +230,64 @@ Všechny commandy jsou chráněny proti vícenásobnému spuštění.
 ### 2.3 Callbacky
 
 Využivát můžete také 2 callbacky `onBeforeProcess` a `onAfterProcess`, v nichž například můžete provést přepinání databází.
+
+### 2.4 Osiřelé joby (zabitý consumer)
+
+Když consumer umře uprostřed callbacku, nezapíše výsledek a záznam zůstane ve stavu `PROCESSING`. Ten stav
+není mezi zpracovatelnými, takže ho už nikdo nikdy nevyzvedne — a u jobů se `serialGroup` je to horší:
+běžící job se bere jako překážka, takže se celá skupina natrvalo zasekne ve stavu `WAITING`.
+
+Dokud jde o chybu, kterou PHP stihne obsloužit (výjimka, fatální chyba), řeší to standardní stavový automat.
+Proti tvrdému ukončení procesu (SIGKILL od OOM killeru, pád kontejneru, reboot hostu) se ale uvnitř procesu
+zajistit nedá nic — žádný PHP kód se už nespustí. Na to je reaper: `background-queue:process` na začátku
+každého běhu vrátí joby, které jsou ve stavu `PROCESSING` a déle než `stalledJobTimeout` sekund se do nich
+nikdo nezapsal, do stavu `TEMPORARILY_FAILED`. Odtud je vezme běžná cesta opakování.
+
+Živost se záměrně nezjišťuje ze sloupce `pid`. Ten platí jen v rámci jednoho kontejneru, takže cron na jiném
+hostu o něm nemůže nic tvrdit, a při jednom procesu na job se navíc rychle recykluje. Místo toho se posuzuje
+sloupec `updated_at`, který posune dopředu každý zápis do jobu.
+
+Reaper tedy potřebuje odlišit „běží dlouho" od „consumer umřel". K tomu slouží tep: `updated_at` se posouvá
+dopředu i během běhu callbacku, takže `stalledJobTimeout` nemusí být nastavený podle nejdelšího možného běhu.
+
+**Máte-li nainstalovaný `BackgroundQueueMiddleware` (viz 6), děje se to samo a nemusíte udělat nic.** Middleware
+sedí na aplikačním DBAL spojení, takže každý dotaz callbacku pošle tep — automaticky pro všechny joby, bez
+jediného řádku v jejich kódu. Throttling drží zátěž na jednom `UPDATE` za `heartbeatInterval` sekund na
+běžící job bez ohledu na to, kolik dotazů callback udělá.
+
+Zbývají dva případy, kdy tep sám nedojde:
+
+- callback má dlouhý úsek **bez dotazů do databáze** (generování souboru v paměti, čekání na cizí API),
+- callback visí v **jednom dlouhém dotazu** — tep se pošle až po jeho dokončení.
+
+Pro ty je `heartbeat()` veřejná metoda, kterou si callback může zavolat sám:
+
+```php
+foreach ($tisiceZaznamu as $zaznam) {
+	$backgroundQueue->heartbeat();
+	// ... vlastní práce ...
+}
+```
+
+Volat ji lze jakkoli často — zapisuje nejvýš jednou za `heartbeatInterval` sekund a mimo zpracování jobu
+nedělá nic.
+
+Bez middlewaru a bez volání `heartbeat()` tep nechodí vůbec a reaper se řídí jen tím, kdy do jobu naposledy
+zapsala samotná fronta (typicky claim). V takovém případě nechte `stalledJobTimeout` s velkou rezervou.
+
+### 2.5 Ztracené zprávy (job bez zprávy v brokeru)
+
+Řádek v databázi je zdroj pravdy, ale k životu ho v broker módu probouzí jediná zpráva v RabbitMQ — a ta
+může zaniknout: proces umře mezi DB zápisem a publishem, publish zůstane viset v transakčním bufferu bez
+nainstalovaného middlewaru, consumer spadne mezi ackem a claimem, výpadek sítě těsně po `basic_publish`,
+ruční purge fronty. Job ve stavu `READY` nebo `TEMPORARILY_FAILED` by pak visel navždy — a job se
+`serialGroup` by s sebou blokoval i celou svou skupinu.
+
+Pojistkou je `background-queue:process`: joby v těchto dvou stavech, do kterých déle než `lostMessageTimeout`
+sekund nikdo nezapsal a kterým už uplynul případný odklad (`availableFrom`), publikuje znovu. Falešný poplach
+je neškodný — pokud zpráva jen dlouho čekala v zaplněné frontě, duplicitní doručení zahodí podmíněný claim.
+Nastavte proto `lostMessageTimeout` s rezervou nad běžnou dobu čekání zprávy ve frontě, ať duplicity
+nevznikají zbytečně. Každý republish se zaloguje s úrovní `warning`.
 
 ### 3 Monitoring
 
@@ -354,3 +424,15 @@ Výchozí `exitcodes` je `0`, proto je nutné ho přepsat na `100` - jinak by by
 
 - Nette - https://github.com/AppsDevTeam/background-queue-nette
 - Symfony - https://github.com/AppsDevTeam/background-queue-symfony
+
+### 7 Upgrade
+
+**Zrušení interního jobu `_processWaitingJobs`.** Joby čekající ve stavu `WAITING` dřív vracel do hry periodický interní job `_processWaitingJobs`. Byl to jediný bod selhání celého sériového zpracování: když skončil ve stavu `PERMANENTLY_FAILED`, náhrada se už nikdy nepublikovala a **všechny `serialGroup` skupiny zamrzly natrvalo**. Nahradilo ho probuzení nástupce přímo konzumentem předchůdce, se záchrannou sítí v `background-queue:process`.
+
+Knihovna už tenhle callback nikde neregistruje a po zbylých řádcích neuklízí. Po nasazení je smažte ručně:
+
+```sql
+DELETE FROM background_job WHERE callback_name = '_processWaitingJobs';
+```
+
+Dokud tam zůstanou, nic se nerozbije - jen se do logu můžou dostat chyby `Callback "_processWaitingJobs" does not exist.` ze starých zpráv v brokeru.

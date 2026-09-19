@@ -99,16 +99,21 @@ Pozn. k pojmu „nedokončeno": `getPreviousUnfinishedJobId()` bere jako blokuj�
 
 ### Brokerová abstrakce (src/Broker/)
 
-`Producer` a `Consumer` jsou rozhraní - přines si libovolný broker. K dispozici je hotová implementace `PhpAmqpLib` (volitelná závislost; viz README pro doporučené omezení `conflict` pinující `php-amqplib` na `^3.0`). Priorita je modelována jako **samostatné fronty** pojmenované `<queue>_<priority>`; `QUEUE_TOP_PRIORITY = 0` je vyhrazena pro řídicí (DIE) zprávy, takže ji konzumeři kontrolují jako první. `publishDie()` + tělo `DIE` je způsob, jak `reload-consumers` elegantně restartuje běžící konzumery.
+`Producer` a `Consumer` jsou rozhraní - přines si libovolný broker. K dispozici je hotová implementace `PhpAmqpLib` (volitelná závislost; viz README pro doporučené omezení `conflict` pinující `php-amqplib` na `^3.0`). Priorita je modelována jako **samostatné fronty** pojmenované `<queue>_<priority>` (`Manager::getQueueWithPriority()`); `QUEUE_TOP_PRIORITY = 0` je vyhrazena pro **řídicí frontu**, takže ji konzumeři kontrolují jako první. Publikování jobu (`publish()`, bere `int $priority`) a řídicích zpráv (`publishDie()` / `publishShutdown()`, berou label) jsou dvě samostatné cesty nad společným privátním `publishToQueue()` - v názvu fronty se tedy nikdy nemíchá priorita s labelem.
+
+Název řídicí fronty sestavuje `Manager::getControlQueue($queue, ?$label)`, seznam front ke konzumaci (řídicí první, pak prioritní) `Manager::getConsumedQueues()`. Konzumer spuštěný s **labelem** (`consume -l <label>`) dostane vlastní řídicí frontu `<queue>_0_<label>`; díky tomu lze přes `reload-consumers -l label1,label2` cílit právě na něj. **Pozor:** labelovaný konzumer pak sdílenou `<queue>_0` už vůbec nekonzumuje, takže ho `reload-consumers` bez `-l` mine (pokryto v `ConsumerControlQueueTest`). Label nesmí obsahovat oddělovač `_` (`QUEUE_NAME_PARTS_DELIMITER`) ani být prázdný - hlídá `Manager::validateLabel()`, která vyhazuje `Exception\InvalidArgumentException`.
+
+Vedle `DIE` existuje druhá řídicí zpráva `SHUTDOWN` (`publishShutdown()`, posílá ji `shutdown-consumers` se stejným cílením přes label). Liší se jen exit kódem po dojetí rozdělaného jobu: `DIE` ukončí konzumera přes `die()` (exit 0, supervisor ho typicky restartuje), `SHUTDOWN` přes `exit(Producer::NICE_SHUTDOWN_EXIT_CODE)` (= 100). Ten kód patří do supervisor `exitcodes` při `autorestart=unexpected`, takže konzumer už znovu nenaběhne - "nice shutdown" pro řízené zastavení (např. před restartem serveru). Řídicí fronty jsou durable, takže zpráva navíc v nich zůstane ležet a sebere ji až příští konzumer po startu - u unikátních labelů se proto posílá `NUMBER = 1`. Detaily a vzor konfigurace supervisoru viz README sekce 6.
 
 ### Konzolové příkazy (src/Console/)
 
 Všechny příkazy kromě `ConsumeCommand` rozšiřují lokální abstraktní `Command`, který obaluje běh do `ADT\CommandLock` (`FileSystemStorage` pod `tempDir`), takže nemohou běžet souběžně samy se sebou.
 
 - `background-queue:process` - vstupní bod pro cron (spouštět každou minutu).
-- `background-queue:consume [queue] -j <jobs> -p <priorities>` - dlouhoběžící brokerový konzumer; `-p` přijímá rozsahy jako `20-40`, `25-`, `-20`.
+- `background-queue:consume [queue] -j <jobs> -p <priorities> -l <label>` - dlouhoběžící brokerový konzumer; `-p` přijímá rozsahy jako `20-40`, `25-`, `-20`; `-l` je volitelný label pro cílený restart.
 - `background-queue:monitor` - denní monitoring (spouštět cronem o půlnoci): `reportStuckJobs()` spočítá joby v `TEMPORARILY_FAILED`, `PERMANENTLY_FAILED` a `PROCESSING` běžící déle než 24 h (tepající hung callback, na který reaper nedosáhne) a je-li co hlásit, pošle report do loggeru (critical při PERMANENTLY_FAILED / dlouhém PROCESSING, jinak warning).
-- `background-queue:clear-finished [days]`, `background-queue:reload-consumers <number> [queue]`, `background-queue:update-schema`.
+- `background-queue:reload-consumers <number> [queue] [-l label1,label2]` a `background-queue:shutdown-consumers <number> [queue] [-l label1,label2]` (řízené zastavení = reload, ale s exit kódem `NICE_SHUTDOWN_EXIT_CODE`, který supervisor nerestartuje). Oba stojí na společném `ConsumersControlCommand`, který drží cílení, validaci vstupu (`number` musí být číslo - jinak by kvůli porovnání int se stringem v PHP 8 vznikla nekonečná smyčka) i trim labelů; potomek dodá jen typ zprávy.
+- `background-queue:clear-finished [days]`, `background-queue:update-schema`.
 
 ### Hromadný insert
 

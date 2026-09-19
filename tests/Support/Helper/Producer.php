@@ -47,7 +47,12 @@ class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		$this->getChannel()->wait_for_pending_acks();
 	}
 
-	public function publishDie(string $queue): void
+	public function publishDie(string $queue, ?string $consumerLabel = null): void
+	{
+
+	}
+
+	public function publishShutdown(string $queue, ?string $consumerLabel = null): void
 	{
 
 	}

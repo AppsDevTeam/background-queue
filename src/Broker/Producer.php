@@ -5,5 +5,6 @@ namespace ADT\BackgroundQueue\Broker;
 interface Producer
 {
 	public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void;
-	public function publishDie(string $queue): void;
+	public function publishDie(string $queue, ?string $consumerLabel = null): void;
+	public function publishShutdown(string $queue, ?string $consumerLabel = null): void;
 }

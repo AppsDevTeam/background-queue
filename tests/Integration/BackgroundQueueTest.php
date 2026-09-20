@@ -1030,6 +1030,33 @@ class BackgroundQueueTest extends Unit
 	}
 
 	/**
+	 * Dokončený RECURRING běh se po naklonování maže - historie nemá hodnotu a jen roste. Na identifikátor
+	 * tak v tabulce zbývá vždy jen aktuální klon; selhané běhy se nemažou (nejsou FINISHED).
+	 *
+	 * @throws Exception
+	 */
+	public function testRecurringJobKeepsOnlyLatestRow()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+
+		$backgroundQueue->publish('processRecording', ['r1'], null, 'recurring-cleanup', ModeEnum::RECURRING);
+		$first = self::fetchAllJobs($backgroundQueue)[0];
+
+		$backgroundQueue->processJob($first->getId());
+
+		$jobs = self::fetchAllJobs($backgroundQueue);
+		$this->tester->assertCount(1, $jobs, 'zbývá jen jeden řádek');
+		$this->tester->assertNotEquals($first->getId(), $jobs[0]->getId(), 'a je to nový klon, ne dokončený běh');
+		$this->tester->assertEquals(BackgroundJob::STATE_READY, $jobs[0]->getState());
+		$this->tester->assertEquals('recurring-cleanup', $jobs[0]->getIdentifier());
+
+		// Opožděný duplikát zprávy smazaného řádku (redelivery/republish) se tiše přeskočí,
+		// nesmí shodit konzumenta výjimkou JobNotFoundException.
+		$backgroundQueue->processJob($first->getId());
+		$this->tester->assertCount(1, self::fetchAllJobs($backgroundQueue), 'duplikát nic nezměnil');
+	}
+
+	/**
 	 * Trvale selhaný job se už nikdy nespustí, takže ho nesmíme počítat mezi nedokončené - jinak by
 	 * RECURRING job po prvním trvalém selhání zmizel nadobro a UNIQUE identifier zůstal navěky zablokovaný.
 	 *

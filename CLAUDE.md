@@ -77,7 +77,7 @@ Pozn. k pojmu „nedokončeno": `getPreviousUnfinishedJobId()` bere jako blokuj�
 ### ModeEnum (normal / unique / recurring)
 
 - `UNIQUE` - vyžaduje `identifier`; `isRedundant()` označí job jako `REDUNDANT`, pokud existuje starší job se stejným identifikátorem.
-- `RECURRING` - vyžaduje `identifier`; při `FINISHED` se job naklonuje a znovu publikuje (`cloneAndPublish()`), ale jen pokud už neexistuje nedokončený job s tímto identifikátorem.
+- `RECURRING` - vyžaduje `identifier`; při `FINISHED` se job naklonuje a znovu publikuje (`cloneAndPublish()`), ale jen pokud už neexistuje nedokončený job s tímto identifikátorem. Dokončený běh se po naklonování rovnou maže (historie nemá hodnotu a jen roste), takže na identifikátor zbývá v tabulce jediný řádek; selhané běhy se nemažou. Opožděný duplikát zprávy smazaného řádku proto `processJob()` tiše přeskakuje (`JobNotFoundException`).
 
 ### parameters: serialize vs JSON
 

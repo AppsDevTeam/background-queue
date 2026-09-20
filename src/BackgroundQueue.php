@@ -364,7 +364,14 @@ class BackgroundQueue
 		// U publishera chceme transakci stejnou s flush, proto používáme stejné connection jako je v aplikaci. Ale u consumera chceme vlastní connection, aby když se revertne aplikační transakce, tak aby consumer mohl zapsat chybový stav k BackgroundJob.
 		$this->createConnection();
 
-		$entity = $this->getEntity($id);
+		try {
+			$entity = $this->getEntity($id);
+		} catch (JobNotFoundException) {
+			// Opožděný duplikát zprávy smazaného řádku je očekávaný stav - typicky dokončený RECURRING
+			// běh (jeho řádek se po naklonování maže) nebo ručně uklizený záznam. Tiše přeskočit;
+			// výjimka by zbytečně shodila konzumenta.
+			return;
+		}
 
 		// Zpráva není ke zpracování v případě, že nemá stav READY nebo ERROR_REPEATABLE
 		// Pokud při zpracování zprávy nastane chyba, zpráva zůstane ve stavu PROCESSING a consumer se ukončí.
@@ -418,7 +425,13 @@ class BackgroundQueue
 			// a běžící job by odložil do WAITING - odkud by ho promotion pustila třetímu konzumentovi podruhé.
 			// S čerstvým čtením uvidí PROCESSING a tiše skončí, stejně jako při neúspěšném claimu.
 			if ($serialGroup) {
-				$entity = $this->getEntity($id);
+				try {
+					$entity = $this->getEntity($id);
+				} catch (JobNotFoundException) {
+					// Duplicitní konzument mohl u zámku počkat, než originál doběhl celý cyklus
+					// [claim -> callback -> FINISHED -> smazání RECURRING řádku]. Stejný případ jako výše.
+					return;
+				}
 				if (!$entity->isReadyForProcess()) {
 					return;
 				}
@@ -577,6 +590,12 @@ class BackgroundQueue
 			if ($state === BackgroundJob::STATE_FINISHED) {
 				if ($entity->isModeRecurring()) {
 					$this->cloneAndPublish($entity);
+
+					// Historie dokončených RECURRING běhů nemá hodnotu a jen roste (minutový job = ~1440
+					// řádků denně), aktuální stav vždy nese nejnovější klon. Dokončený běh proto rovnou
+					// mažeme - na identifikátor tak v tabulce zbývá jediný řádek. Selhané běhy se nemažou
+					// (nejsou FINISHED), takže chyby zůstávají viditelné pro monitor i ruční zásah.
+					$this->deleteJob($entity->getId());
 				}
 			} elseif ($state === BackgroundJob::STATE_TEMPORARILY_FAILED) {
 				$this->publishToBroker($entity);
@@ -1259,6 +1278,14 @@ class BackgroundQueue
 	private function getGroupLockName(string $serialGroup): string
 	{
 		return 'bgq:' . crc32($serialGroup);
+	}
+
+	/**
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function deleteJob(int $id): void
+	{
+		$this->connection->delete($this->config['tableName'], ['id' => $id]);
 	}
 
 	/**

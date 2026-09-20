@@ -51,7 +51,7 @@ Téměř každá větev v `process()`/`save()` se odvíjí od toho, zda je nakon
 Stavy jsou celočíselné konstanty na `BackgroundJob` (`STATE_READY=1`, `STATE_PROCESSING=2`, `STATE_FINISHED=3`, `STATE_TEMPORARILY_FAILED=4`, `STATE_PERMANENTLY_FAILED=5`, `STATE_WAITING=6`, `STATE_REDUNDANT=7`, `STATE_BROKER_FAILED=8`, `STATE_BACK_TO_BROKER=-1`). Dotazy řídí `READY_TO_PROCESS_STATES` a `FINISHED_STATES`.
 
 Výsledek callbacku (`switch` v `processJob()`) je určen typem vyhozené výjimky:
-- `PermanentErrorException` / `TypeError` / holá `DieException` → `PERMANENTLY_FAILED`
+- `PermanentErrorException` / jakýkoli PHP `Error` (chyba v kódu - TypeError, dělení nulou, volání nad null, ...) / holá `DieException` → `PERMANENTLY_FAILED`
 - `WaitingException` → původní job se uzavře jako `FINISHED` a publikuje se jeho klon s odkladem `waitingJobExpiration` (`cloneAndPublish()`); počítadlo pokusů se tedy **nezvyšuje** - klon startuje od nuly. Nezaměňovat se stavem `WAITING` (ten patří čekání na předchůdce v serialGroup)
 - `SkipException` → job se uzavře jako `FINISHED` (s `error_message` výjimky), neopakuje se; u `RECURRING` jobu se přesto naplánuje další běh (klonuje ho FINISHED větev)
 - jakýkoli jiný `Throwable` → `TEMPORARILY_FAILED`, opakováno s exponenciálním backoffem (`getPostponement()`, zdvojnásobování, strop 16 minut)

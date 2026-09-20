@@ -183,7 +183,7 @@ $this->backgroundQueue->publish(
 
 Pozor: pořadí zpracování v rámci `serialGroup` se řídí prioritou a ID (pořadím vložení), nikoli prahem. Coalescing tedy spolehlivě šetří práci, dokud joby s nižším prahem vznikají dříve (mají nižší ID). Pokud výjimečně vznikne dříve job s vyšším prahem, oba joby doběhnou - výsledek je korektní, jen bez úspory.
 
-Pokud callback vyhodí `ADT\BackgroundQueue\Exception\PermanentErrorException`, záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně.
+Pokud callback vyhodí `ADT\BackgroundQueue\Exception\PermanentErrorException` nebo jakoukoli PHP `Error` (chyba v kódu — `TypeError`, dělení nulou, volání metody nad `null`, špatně pojmenovaný argument, ...), záznam se uloží ve stavu `PERMANENTLY_FAILED` a je potřeba jej zpracovat ručně. Chybu v kódu opakování nespraví, takže se takový job neopakuje.
 
 Pokud callback vyhodí `ADT\BackgroundQueue\Exception\WaitingException`, původní záznam se uzavře jako `FINISHED` a místo něj se publikuje jeho klon s odkladem `waitingJobExpiration`. Počítadlo pokusů se tedy nezvyšuje - job se zkusí znovu jako nový záznam. (Nepleťte si to se stavem `WAITING`, do kterého se odkládají joby čekající na předchůdce ve své `serialGroup`.)
 
@@ -205,7 +205,7 @@ public function onError(\Throwable $exception) {
 }
 ```
 
-Pokud callback vyhodí jakýkoliv jiný error nebo exception implementující `Throwable`, záznam se uloží ve stavu `TEMPORARILY_FAILED` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Po `notifyOnNumberOfAttempts` je zaslána notifikace. Prodleva mezi každým dalším opakováním je prodloužena o dvojnásobek času, maximálně však na dobu 16 minut.
+Pokud callback vyhodí jakoukoliv jinou exception, záznam se uloží ve stavu `TEMPORARILY_FAILED` a zkusí se zpracovat při přištím spuštění `background-queue:process` commandu (viz níže). Po `notifyOnNumberOfAttempts` je zaslána notifikace. Prodleva mezi každým dalším opakováním je prodloužena o dvojnásobek času, maximálně však na dobu 16 minut.
 
 Ve všech ostatních případech se záznam uloží jako úspěšně dokončený ve stavu `STATE_FINISHED`.
 

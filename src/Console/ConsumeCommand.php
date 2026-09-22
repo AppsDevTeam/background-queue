@@ -26,6 +26,7 @@ class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 		$this->addArgument('queue', InputArgument::OPTIONAL);
 		$this->addOption('jobs', 'j', InputOption::VALUE_REQUIRED, 'Number of jobs consumed by one consumer in one process', 1);
 		$this->addOption('priorities', 'p', InputOption::VALUE_REQUIRED, 'Priorities for consume (e.g. 10, 20-40, 25-, -20)');
+		$this->addOption('label', 'l', InputOption::VALUE_REQUIRED, 'Consumer label giving this consumer its own control queue, so that reload-consumers and shutdown-consumers can target it');
 	}
 
 	/**
@@ -36,14 +37,24 @@ class ConsumeCommand extends \Symfony\Component\Console\Command\Command
 		$jobs = $input->getOption('jobs');
 		$priorities = $this->getPrioritiesListBasedConfig($input->getOption('priorities'));
 
+		// Label se stává součástí názvu řídicí fronty, takže okolní mezery zahodíme - jinak by
+		// "-l ' worker'" tiše vyrobil jinou frontu, než na kterou cílí reload/shutdown-consumers.
+		$label = $input->getOption('label');
+		$label = is_null($label) ? null : trim($label);
+
 		if (!is_numeric($jobs)) {
 			$output->writeln("<error>Option --jobs has to be integer</error>");
 			return self::FAILURE;
 		}
 
+		if ($label === '') {
+			$output->writeln("<error>Option --label cannot be empty</error>");
+			return self::FAILURE;
+		}
+
 		for ($i = 0; $i < (int)$jobs; $i++) {
 			$this->backgroundQueue->dieIfNecessary();
-			$this->consumer->consume($this->backgroundQueue->getQueue($input->getArgument('queue')), $priorities);
+			$this->consumer->consume($this->backgroundQueue->getQueue($input->getArgument('queue')), $priorities, $label);
 		}
 
 		return self::SUCCESS;

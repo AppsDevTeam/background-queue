@@ -11,6 +11,14 @@ readonly class Producer implements \ADT\BackgroundQueue\Broker\Producer
 {
 	const DIE = 'die';
 
+	// "Nice shutdown": konzumer dojede rozdělaný job, vezme si tuto řídicí zprávu místo dalšího jobu
+	// a ukončí se s NICE_SHUTDOWN_EXIT_CODE. Na rozdíl od DIE (exit 0, supervisor konzumera restartuje)
+	// je tento exit kód určen k zařazení do supervisor "exitcodes", takže proces už znovu nenaběhne.
+	// Slouží k řízenému zastavení konzumerů (např. před restartem serveru).
+	const SHUTDOWN = 'shutdown';
+
+	const NICE_SHUTDOWN_EXIT_CODE = 100;
+
 	public function __construct(private Manager $manager)
 	{
 	}
@@ -20,7 +28,36 @@ readonly class Producer implements \ADT\BackgroundQueue\Broker\Producer
 	 */
 	public function publish(string $id, string $queue, int $priority, ?int $expiration = null): void
 	{
-		$queue = $this->manager->getQueueWithPriority($queue, $priority);
+		$this->publishToQueue($id, $this->manager->getQueueWithPriority($queue, $priority), $expiration);
+	}
+
+	/**
+	 * @throws Exception
+	 */
+	public function publishDie(string $queue, ?string $consumerLabel = null): void
+	{
+		$this->publishToQueue(self::DIE, $this->manager->getControlQueue($queue, $consumerLabel));
+	}
+
+	/**
+	 * Pošle do (případně label-specifické) řídicí fronty zprávu pro "nice shutdown" - konzumer se po dojetí
+	 * rozdělaného jobu ukončí s NICE_SHUTDOWN_EXIT_CODE a supervisor ho už nenastartuje (viz README).
+	 *
+	 * @throws Exception
+	 */
+	public function publishShutdown(string $queue, ?string $consumerLabel = null): void
+	{
+		$this->publishToQueue(self::SHUTDOWN, $this->manager->getControlQueue($queue, $consumerLabel));
+	}
+
+	/**
+	 * Odešle zprávu do konkrétní fronty. Prioritní i řídicí fronty jsou z pohledu AMQP totéž,
+	 * liší se jen názvem, proto obě cesty sdílejí tohle tělo.
+	 *
+	 * @throws Exception
+	 */
+	private function publishToQueue(string $body, string $queue, ?int $expiration = null): void
+	{
 		$exchange = $queue;
 
 		$this->manager->createExchange($exchange);
@@ -35,7 +72,7 @@ readonly class Producer implements \ADT\BackgroundQueue\Broker\Producer
 		}
 
 		try {
-			$this->manager->getChannel()->basic_publish($this->createMessage($id), $exchange, $expiration ? $queue . '_' . $expiration : $queue, true);
+			$this->manager->getChannel()->basic_publish($this->createMessage($body), $exchange, $expiration ? $queue . '_' . $expiration : $queue, true);
 		} catch (AMQPChannelClosedException $e) {
 			$this->manager->closeChannel(true);
 			throw $e;
@@ -44,14 +81,6 @@ readonly class Producer implements \ADT\BackgroundQueue\Broker\Producer
 			throw $e;
 		}
 
-	}
-
-	/**
-	 * @throws Exception
-	 */
-	public function publishDie(string $queue): void
-	{
-		$this->publish(self::DIE, $queue, Manager::QUEUE_TOP_PRIORITY);
 	}
 
 	private function createMessage(string $body): AMQPMessage

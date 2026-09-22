@@ -2,6 +2,7 @@
 
 namespace ADT\BackgroundQueue\Broker\PhpAmqpLib;
 
+use ADT\BackgroundQueue\Exception\InvalidArgumentException;
 use Exception;
 use PhpAmqpLib\Channel\AMQPChannel;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
@@ -10,6 +11,7 @@ use PhpAmqpLib\Message\AMQPMessage;
 class Manager
 {
 	const QUEUE_TOP_PRIORITY = 0;
+	const QUEUE_NAME_PARTS_DELIMITER = '_';
 
 	private array $connectionParams;
 	private array $queueParams;
@@ -157,6 +159,65 @@ class Manager
 
 	public function getQueueWithPriority(string $queue, int $priority): string
 	{
-		return $queue . '_' . $priority;
+		return $queue . self::QUEUE_NAME_PARTS_DELIMITER . $priority;
+	}
+
+	/**
+	 * Vrátí název řídicí fronty, do které chodí DIE a SHUTDOWN zprávy. Je to top-priority fronta,
+	 * takže ji konzumer kontroluje jako první - na řídicí zprávu tedy reaguje přednostně před dalším jobem.
+	 *
+	 * Bez labelu jde o sdílenou frontu "<queue>_0", ze které čtou všichni konzumeři bez labelu.
+	 * S labelem vznikne samostatná "<queue>_0_<label>", díky níž má takto označený konzumer vlastní
+	 * řídicí frontu a lze ho restartovat/zastavit cíleně (viz consume --label a reload-consumers --label).
+	 *
+	 * @throws InvalidArgumentException
+	 */
+	public function getControlQueue(string $queue, ?string $label = null): string
+	{
+		$controlQueue = $this->getQueueWithPriority($queue, self::QUEUE_TOP_PRIORITY);
+
+		if (is_null($label)) {
+			return $controlQueue;
+		}
+
+		self::validateLabel($label);
+
+		return $controlQueue . self::QUEUE_NAME_PARTS_DELIMITER . $label;
+	}
+
+	/**
+	 * Sestaví názvy všech front, ze kterých konzumer čte, a to v pořadí, v jakém je má kontrolovat.
+	 * Řídicí fronta je vždy první, prioritní fronty následují v zadaném pořadí priorit.
+	 *
+	 * @param int[] $priorities
+	 * @return string[]
+	 * @throws InvalidArgumentException
+	 */
+	public function getConsumedQueues(string $queue, array $priorities, ?string $label = null): array
+	{
+		$queues = [$this->getControlQueue($queue, $label)];
+
+		foreach ($priorities as $priority) {
+			$queues[] = $this->getQueueWithPriority($queue, $priority);
+		}
+
+		return $queues;
+	}
+
+	/**
+	 * Label se vkládá do názvu fronty za oddělovač, takže ho sám obsahovat nesmí. Prázdný label
+	 * odmítáme taky - vyrobil by frontu "<queue>_0_", kterou nelze odlišit od překlepu ve vstupu.
+	 *
+	 * @throws InvalidArgumentException
+	 */
+	public static function validateLabel(string $label): void
+	{
+		if ($label === '') {
+			throw new InvalidArgumentException('Consumer label cannot be empty.');
+		}
+
+		if (str_contains($label, self::QUEUE_NAME_PARTS_DELIMITER)) {
+			throw new InvalidArgumentException('Consumer label cannot contain "' . self::QUEUE_NAME_PARTS_DELIMITER . '".');
+		}
 	}
 }

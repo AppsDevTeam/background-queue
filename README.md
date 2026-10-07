@@ -215,9 +215,9 @@ Ve všech ostatních případech se záznam uloží jako úspěšně dokončený
 
 `background-queue:monitor` Jednorázově spočítá zaseklé joby: stavy `TEMPORARILY_FAILED` a `PERMANENTLY_FAILED` — jediné dva, ve kterých se joby drží dlouhodobě (ostatní stavy mají aktivní pojistku, viz 2.4 a 2.5) — a k tomu joby ve stavu `PROCESSING` běžící déle než 24 hodin. Ty kryjí jediný slepý bod reaperu: callback zaseknutý v nekonečné smyčce, který si přes middleware pořád posílá tep, takže pro reaper nikdy nezestárne. Počty vypíše na výstup a je-li co hlásit, pošle report i do loggeru: s úrovní `critical`, obsahuje-li `PERMANENTLY_FAILED` nebo dlouhoběžící `PROCESSING` joby (ani jedno se bez ručního zásahu nespraví), jinak `warning`. Ideální spouštět cronem jednou denně o půlnoci (`0 0 * * *`).
 
-`background-queue:clear-finished` Smaže všechny úspěšně zpracované záznamy.
+`background-queue:clear-finished` Smaže všechny vyřízené záznamy — stavy `FINISHED` i `REDUNDANT` (nadbytečné duplicity a joby pohlcené coalescingem).
 
-`background-queue:clear-finished 14` Smaže všechny úspěšně zpracované záznamy starší 14 dní.
+`background-queue:clear-finished 14` Totéž, ale jen záznamy vyřízené před více než 14 dny. Stáří se měří od vyřízení (`finished_at`), ne od vzniku záznamu; u starých řádků bez vyplněného `finished_at` se bere `created_at`.
 
 `background-queue:reload-consumers NUMBER [QUEUE] [-l LABEL1,LABEL2,...]` Pošle NUMBER restartovacích (DIE) zpráv. Bez `-l` do sdílené řídicí fronty dané QUEUE, s `-l` cíleně do řídicí fronty každého uvedeného labelu - do každé z nich NUMBER zpráv (viz sekce [Restart a zastavení konzumerů](#6-restart-a-zastavení-konzumerů)).
 

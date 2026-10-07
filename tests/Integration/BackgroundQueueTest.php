@@ -1074,6 +1074,70 @@ class BackgroundQueueTest extends Unit
 		$this->tester->assertEquals([], $backgroundQueue->getUnfinishedJobIdentifiers(['recurring-identifier']), 'trvale selhaný job není nedokončený');
 	}
 
+	/**
+	 * Úklid clear-finished maže všechny "vyřízeno v pořádku" stavy (FINISHED i REDUNDANT - ten se dřív
+	 * neuklízel vůbec a hromadil se navěky) a stáří měří od vyřízení (finished_at), ne od vzniku jobu;
+	 * u řádků bez finished_at (zapsaných před zavedením sloupce) se bere created_at.
+	 *
+	 * @throws Exception
+	 */
+	public function testClearFinishedJobs()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$table = $_ENV['PROJECT_DB_TABLENAME'];
+
+		foreach (['finishedOld', 'finishedFresh', 'redundant', 'legacyNoFinishedAt', 'failed'] as $_mark) {
+			$backgroundQueue->publish('processRecording', [$_mark]);
+		}
+		[$finishedOld, $finishedFresh, $redundant, $legacy, $failed] = self::fetchAllJobs($backgroundQueue);
+
+		$monthAgo = (new DateTimeImmutable())->modify('-30 days')->format('Y-m-d H:i:s');
+		$now = (new DateTimeImmutable())->format('Y-m-d H:i:s');
+
+		// Vyřízeno dávno -> při úklidu se smaže.
+		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_FINISHED, 'finished_at' => $monthAgo], ['id' => $finishedOld->getId()]);
+		// Vznikl dávno, ale vyřízen právě teď -> podle finished_at zůstává (podle created_at by se chybně smazal).
+		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_FINISHED, 'finished_at' => $now, 'created_at' => $monthAgo], ['id' => $finishedFresh->getId()]);
+		// REDUNDANT vyřízený dávno -> maže se stejně jako FINISHED.
+		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_REDUNDANT, 'finished_at' => $monthAgo], ['id' => $redundant->getId()]);
+		// Starý řádek bez finished_at -> stáří se vezme z created_at.
+		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_FINISHED, 'finished_at' => null, 'created_at' => $monthAgo], ['id' => $legacy->getId()]);
+		// Selhaný job není "vyřízeno v pořádku" -> úklid na něj nesmí sáhnout.
+		self::rawConnection()->update($table, ['state' => BackgroundJob::STATE_TEMPORARILY_FAILED, 'created_at' => $monthAgo], ['id' => $failed->getId()]);
+
+		$backgroundQueue->clearFinishedJobs(14);
+
+		$remainingIds = array_map(fn(BackgroundJob $job) => $job->getId(), self::fetchAllJobs($backgroundQueue));
+		sort($remainingIds);
+		$this->tester->assertEquals([$finishedFresh->getId(), $failed->getId()], $remainingIds, 'zůstal čerstvě vyřízený a selhaný job');
+
+		// Bez udání dnů se maže vše vyřízené bez ohledu na stáří.
+		$backgroundQueue->clearFinishedJobs();
+		$remainingIds = array_map(fn(BackgroundJob $job) => $job->getId(), self::fetchAllJobs($backgroundQueue));
+		$this->tester->assertEquals([$failed->getId()], $remainingIds, 'zůstal jen selhaný job');
+	}
+
+	/**
+	 * Coalescing označuje joby za REDUNDANT přímým UPDATEm mimo entitu - musí přitom vyplnit i finished_at,
+	 * jinak by clear-finished takovým řádkům měřil stáří jen náhradně přes created_at.
+	 *
+	 * @throws Exception
+	 */
+	public function testCoalescingSetsFinishedAt()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+
+		$backgroundQueue->publish('processRecording', ['wide'], 'group-coalesce', null, ModeEnum::NORMAL, null, null, 100);
+		$backgroundQueue->publish('processRecording', ['narrow'], 'group-coalesce', null, ModeEnum::NORMAL, null, null, 150);
+		[$wide, $narrow] = self::fetchAllJobs($backgroundQueue);
+
+		$backgroundQueue->processJob($wide->getId());
+
+		$narrowAfter = self::fetchJob($backgroundQueue, $narrow->getId());
+		$this->tester->assertEquals(BackgroundJob::STATE_REDUNDANT, $narrowAfter->getState(), 'užší job pohlcen');
+		$this->tester->assertNotNull($narrowAfter->getFinishedAt(), 'coalescing vyplnil finished_at');
+	}
+
 	private static function finishedCount(string $serialGroup): int
 	{
 		return (int) self::rawConnection()->fetchOne(

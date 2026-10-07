@@ -732,13 +732,17 @@ class BackgroundQueue
 	 */
 	public function clearFinishedJobs(?int $days = null): void
 	{
+		// Uklízí se všechny "vyřízeno v pořádku" stavy (FINISHED_STATES), tedy i REDUNDANT - ten vzniká
+		// průběžně coalescingem a UNIQUE duplicitami a dřív se neuklízel vůbec, takže se hromadil navěky.
 		$qb = $this->createQueryBuilder()
 			->delete($this->getConfig()['tableName'])
-			->andWhere('state = :state')
-			->setParameter('state', BackgroundJob::STATE_FINISHED);
+			->andWhere('state IN (:state)')
+			->setParameter('state', array_values(BackgroundJob::FINISHED_STATES), ArrayParameterType::INTEGER);
 
 		if ($days) {
-			$qb->andWhere('created_at <= :ago')
+			// Stáří se měří od vyřízení (finished_at), ne od vzniku - dlouho čekající job by se jinak smazal
+			// hned po dokončení. COALESCE kryje řádky bez finished_at (zapsané před zavedením sloupce).
+			$qb->andWhere('COALESCE(finished_at, created_at) <= :ago')
 				->setParameter('ago', (new DateTime('midnight'))->modify('-' . $days . ' days')->format('Y-m-d H:i:s'));
 		}
 
@@ -999,15 +1003,22 @@ class BackgroundQueue
 	 */
 	private function markCoalescedJobsRedundant(BackgroundJob $entity): void
 	{
+		// Kromě stavu se zapisuje i finished_at (REDUNDANT je "vyřízeno v pořádku" - setState() by ho
+		// nastavil taky a clearFinishedJobs() podle něj měří stáří) a updated_at (konvence "naposledy sáhnuto").
+		$now = (new DateTimeImmutable())->format('Y-m-d H:i:s');
 		$qb = $this->connection->createQueryBuilder()
 			->update($this->config['tableName'])
 			->set('state', ':redundantState')
+			->set('finished_at', ':finishedAt')
+			->set('updated_at', ':updatedAt')
 			->where('queue LIKE :queue')
 			->andWhere('state IN (:states)')
 			->andWhere('serial_group = :serialGroup')
 			->andWhere('id <> :selfId')
 			->andWhere('coalesce_threshold >= :threshold')
 			->setParameter('redundantState', BackgroundJob::STATE_REDUNDANT)
+			->setParameter('finishedAt', $now)
+			->setParameter('updatedAt', $now)
 			->setParameter('queue', $this->config['queue'] . '%')
 			->setParameter('states', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER)
 			->setParameter('serialGroup', $entity->getSerialGroup())

@@ -72,7 +72,7 @@ Samotná promotion (`promoteWaitingJob()`) je podmíněná: `UPDATE ... WHERE id
 
 Dřív to obstarával interní opakující se job `_processWaitingJobs`; ten byl zrušen (byl jediný bod selhání - po `PERMANENTLY_FAILED` už se nikdy nenahradil a všechny skupiny zamrzly). Zbylé řádky v ostrých databázích se mažou ručně, knihovna po nich neuklízí. Podrobně v `docs/priority-serialgroup.md`, kapitola „Přepracování probouzení WAITING jobů".
 
-Pozn. k pojmu „nedokončeno": `getPreviousUnfinishedJobId()` bere jako blokující `READY_TO_PROCESS_STATES + PROCESSING`, `getUnfinishedJobIdentifiers()` (RECURRING/UNIQUE) používá `BackgroundJob::TERMINAL_STATES` = `FINISHED_STATES` + `PERMANENTLY_FAILED`. `FINISHED_STATES` samo znamená „vyřízeno v pořádku" a řídí jen `finished_at`.
+Pozn. k pojmu „nedokončeno": `getPreviousUnfinishedJobId()` bere jako blokující `READY_TO_PROCESS_STATES + PROCESSING`, `getUnfinishedJobIdentifiers()` (RECURRING/UNIQUE) používá `BackgroundJob::TERMINAL_STATES` = `FINISHED_STATES` + `PERMANENTLY_FAILED`. `FINISHED_STATES` samo znamená „vyřízeno v pořádku" a řídí `finished_at` i úklid `clearFinishedJobs()` (ten stáří měří od `finished_at` s fallbackem na `created_at`; maže tedy i `REDUNDANT`).
 
 ### ModeEnum (normal / unique / recurring)
 

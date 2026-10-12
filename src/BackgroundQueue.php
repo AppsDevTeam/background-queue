@@ -72,6 +72,9 @@ class BackgroundQueue
 	private array $config;
 	private bool $connectionCreated = false;
 	private Connection $connection;
+	// Aplikační spojení. V consumerovi se $connection nahradí vlastním spojením fronty (viz
+	// createConnection()), ale o odložení publikace musí rozhodovat transakce aplikace.
+	private Connection $appConnection;
 	private LoggerInterface $logger;
 	private ?Producer $producer = null;
 	private int $bulkSize = 1;
@@ -128,6 +131,7 @@ class BackgroundQueue
 		}
 		$this->config = $config;
 		$this->connection = $config['connection'];
+		$this->appConnection = $config['connection'];
 		$this->logger = $config['logger'] ?: new NullLogger();
 		if ($config['producer']) {
 			$this->producer = $config['producer'];
@@ -198,7 +202,10 @@ class BackgroundQueue
 
 		$this->entitiesToPublish[] = $entity;
 
-		if (!$this->connection->isTransactionActive() && count($this->entitiesToPublish) >= $this->bulkSize) {
+		// Do brokeru až po commitu aplikační transakce (odešle middleware), jinak by si job mohl
+		// vzít jiný konzument dřív, než uvidí data, která ho založila. Spojení fronty k tomu
+		// nestačí - v consumerovi je vlastní a transakci aplikace na něm nikdy neuvidíme.
+		if (!$this->appConnection->isTransactionActive() && count($this->entitiesToPublish) >= $this->bulkSize) {
 			$this->doPublishToBroker();
 		}
 	}

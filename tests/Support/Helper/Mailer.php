@@ -54,6 +54,14 @@ class Mailer
 	public static ?Connection $appConnection = null;
 
 	/**
+	 * Broker, ve kterém {@see self::processWithPublishInTransaction()} počítá zprávy, a jejich
+	 * počet před, resp. po commitu aplikační transakce.
+	 */
+	public static ?Producer $producer = null;
+	public static ?int $messagesBeforeCommit = null;
+	public static ?int $messagesAfterCommit = null;
+
+	/**
 	 * Vynuluje sdílený stav mezi testy.
 	 */
 	public static function reset(): void
@@ -66,6 +74,9 @@ class Mailer
 		self::$updatedAtBeforeHeartbeat = null;
 		self::$updatedAtAfterHeartbeat = null;
 		self::$appConnection = null;
+		self::$producer = null;
+		self::$messagesBeforeCommit = null;
+		self::$messagesAfterCommit = null;
 	}
 
 	public function process(): void
@@ -153,6 +164,20 @@ class Mailer
 		self::$updatedAtBeforeHeartbeat = self::readUpdatedAtOfProcessingJob();
 		self::$appConnection->executeQuery('SELECT 1');
 		self::$updatedAtAfterHeartbeat = self::readUpdatedAtOfProcessingJob();
+	}
+
+	/**
+	 * Napodobí callback, který v aplikační transakci uloží data a založí na ně další job - typicky
+	 * vygeneruje protokol a hned publikuje jeho odeslání. Zpráva nesmí do brokeru dřív než commit,
+	 * jinak by si další job vzal jiný konzument a data by ještě neviděl.
+	 */
+	public function processWithPublishInTransaction(): void
+	{
+		self::$appConnection->beginTransaction();
+		self::$backgroundQueue->publish('process');
+		self::$messagesBeforeCommit = self::$producer->getMessageCount('general');
+		self::$appConnection->commit();
+		self::$messagesAfterCommit = self::$producer->getMessageCount('general');
 	}
 
 	private static function readUpdatedAtOfProcessingJob(): ?string

@@ -783,6 +783,50 @@ class BackgroundQueueTest extends Unit
 	}
 
 	/**
+	 * Publikace uvnitř aplikační transakce mimo job (typicky webový request): zpráva počká v paměti
+	 * a do brokeru ji pošle až middleware po commitu.
+	 *
+	 * @throws Exception
+	 */
+	public function testPublishInTransactionWaitsForCommit()
+	{
+		$backgroundQueue = self::getBackgroundQueue(producer: true, appConnection: true);
+		$appConnection = $backgroundQueue->getConfig()['connection'];
+
+		$appConnection->beginTransaction();
+		$backgroundQueue->publish('process');
+		$this->tester->assertEquals(0, self::getProducer()->getMessageCount('general'), 'před commitem nic v brokeru');
+
+		$appConnection->commit();
+		$this->tester->assertEquals(1, self::getProducer()->getMessageCount('general'), 'po commitu zpráva v brokeru');
+	}
+
+	/**
+	 * Totéž, když job zakládá jiný job. Konzument si v processJob() vytvoří vlastní spojení fronty
+	 * a na tom transakci aplikace nevidí - zpráva tak dřív odešla hned a další konzument si job
+	 * vzal dřív, než byla data, která ho založila, commitnutá (v POSMS odeslání protokolu, který
+	 * v DB ještě nebyl).
+	 *
+	 * @throws Exception
+	 */
+	public function testPublishInTransactionInsideJobWaitsForCommit()
+	{
+		$backgroundQueue = self::getBackgroundQueue(producer: true, appConnection: true);
+
+		Mailer::$backgroundQueue = $backgroundQueue;
+		Mailer::$appConnection = $backgroundQueue->getConfig()['connection'];
+		Mailer::$producer = self::getProducer();
+
+		$backgroundQueue->publish('processWithPublishInTransaction');
+		$id = (int) self::getProducer()->consume();
+		$backgroundQueue->processJob($id);
+
+		$this->tester->assertEquals(BackgroundJob::STATE_FINISHED, self::fetchJob($backgroundQueue, $id)->getState(), 'job doběhl');
+		$this->tester->assertEquals(0, Mailer::$messagesBeforeCommit, 'před commitem nic v brokeru');
+		$this->tester->assertEquals(1, Mailer::$messagesAfterCommit, 'po commitu zpráva v brokeru');
+	}
+
+	/**
 	 * Mimo zpracování jobu nemá heartbeat() co potvrzovat, takže nesmí sáhnout na žádný řádek.
 	 *
 	 * @throws Exception
@@ -1175,9 +1219,19 @@ class BackgroundQueueTest extends Unit
 	/**
 	 * @throws \Doctrine\DBAL\Exception
 	 */
-	private static function getBackgroundQueue(bool $producer = false, bool $waitingQueue = false, bool $logger = false, array $priorities = [1], array $extraConfig = []): BackgroundQueue
+	private static function getBackgroundQueue(bool $producer = false, bool $waitingQueue = false, bool $logger = false, array $priorities = [1], array $extraConfig = [], bool $appConnection = false): BackgroundQueue
 	{
-		$bq = new BackgroundQueue($extraConfig + [
+		// Jako v hostitelské aplikaci: fronta dostane aplikační spojení a na tom je nainstalovaný
+		// middleware, který zase potřebuje frontu. Kvůli tomu kruhu se konstruktor volá až dodatečně.
+		$bq = (new \ReflectionClass(BackgroundQueue::class))->newInstanceWithoutConstructor();
+		$connection = $appConnection
+			? DriverManager::getConnection(
+				BackgroundQueue::parseDsn(self::getDsn()),
+				(new Configuration())->setMiddlewares([new BackgroundQueueMiddleware($bq)])
+			)
+			: DriverManager::getConnection(BackgroundQueue::parseDsn(self::getDsn()));
+
+		$bq->__construct($extraConfig + [
 			'callbacks' => [
 				'process' => [new Mailer(), 'process'],
 				'processWithTemporaryError' => [new Mailer(), 'processWithTemporaryError'],
@@ -1190,11 +1244,12 @@ class BackgroundQueueTest extends Unit
 				'processWithOnErrorException' => [new Mailer(), 'processWithOnErrorException'],
 				'processRecording' => [new Mailer(), 'processRecording'],
 				'processWithHeartbeat' => [new Mailer(), 'processWithHeartbeat'],
-				'processWithAppQuery' => [new Mailer(), 'processWithAppQuery']
+				'processWithAppQuery' => [new Mailer(), 'processWithAppQuery'],
+				'processWithPublishInTransaction' => [new Mailer(), 'processWithPublishInTransaction'],
 			],
 			'notifyOnNumberOfAttempts' => 5,
 			'tempDir' => $_ENV['PROJECT_TMP_FOLDER'],
-			'connection' => DriverManager::getConnection(BackgroundQueue::parseDsn(self::getDsn())),
+			'connection' => $connection,
 			'queue' => 'general',
 			'tableName' => $_ENV['PROJECT_DB_TABLENAME'],
 			'priorities' => $priorities,

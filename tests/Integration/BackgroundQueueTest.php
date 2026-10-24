@@ -1008,6 +1008,15 @@ class BackgroundQueueTest extends Unit
 
 		// Je-li co hlásit, jde report do loggeru stejným kanálem jako ostatní notifikace.
 		$this->assertThrows(Exception::class, fn() => $withLogger->reportStuckJobs());
+
+		// Zpráva nese název databáze - bez něj by dva jinak identické reporty z různých instancí
+		// sdílejících jeden log adresář splynuly a odeslal by se mail jen z té první.
+		try {
+			$withLogger->reportStuckJobs();
+			$this->tester->fail('report se nedostal do loggeru');
+		} catch (Exception $e) {
+			$this->tester->assertStringContainsString('BackgroundQueue[' . self::rawConnection()->getDatabase() . ']: Stuck jobs report:', $e->getMessage());
+		}
 	}
 
 	/**

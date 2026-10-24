@@ -857,6 +857,22 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Název databáze v hranatých závorkách pro odlišení reportů z více instancí sdílejících jeden
+	 * log adresář - ErrorLogger deduplikuje maily podle hashe zprávy se smazanými čísly, takže bez
+	 * tohoto rozlišení se ze dvou jinak identických reportů odešle jen ten první.
+	 */
+	private function getDatabaseLabel(): string
+	{
+		try {
+			$database = $this->connection->getDatabase();
+		} catch (Throwable $e) {
+			return '';
+		}
+
+		return $database ? '[' . $database . ']' : '';
+	}
+
+	/**
 	 * Denní monitoring (command background-queue:monitor): spočítá joby ve stavech, které vyžadují - nebo
 	 * při opakování budou vyžadovat - ruční zásah. PERMANENTLY_FAILED se sám už nikdy nespustí;
 	 * TEMPORARILY_FAILED se sice opakuje sám, ale job selhávající pořád dokola v něm bydlí navěky
@@ -916,7 +932,7 @@ class BackgroundQueue
 		$longRunning = $report[BackgroundJob::STATE_PROCESSING];
 
 		if ($temporarily['count'] || $permanently['count'] || $longRunning['count']) {
-			$message = 'BackgroundQueue: Stuck jobs report: '
+			$message = 'BackgroundQueue' . $this->getDatabaseLabel() . ': Stuck jobs report: '
 				. $temporarily['count'] . 'x TEMPORARILY_FAILED' . ($temporarily['count'] ? ' (oldest ' . $temporarily['oldestSince'] . ')' : '')
 				. ', '
 				. $permanently['count'] . 'x PERMANENTLY_FAILED' . ($permanently['count'] ? ' (oldest ' . $permanently['oldestSince'] . ')' : '')

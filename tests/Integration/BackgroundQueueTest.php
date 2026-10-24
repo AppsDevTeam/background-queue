@@ -1020,6 +1020,28 @@ class BackgroundQueueTest extends Unit
 	}
 
 	/**
+	 * Každá zpráva poslaná přes logException() nese název databáze - u projektu s mnoha databázemi
+	 * jinak z chyby ("Number of attempts reached", "Permanent error occured", ...) nejde poznat,
+	 * které instance se týká.
+	 *
+	 * @throws ReflectionException
+	 */
+	public function testLogExceptionIncludesDatabaseLabel()
+	{
+		$withLogger = self::getBackgroundQueue(false, false, true);
+
+		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('logException');
+		$method->setAccessible(true);
+
+		try {
+			$method->invoke($withLogger, 'Number of attempts reached "5".');
+			$this->tester->fail('zpráva se nedostala do loggeru');
+		} catch (Exception $e) {
+			$this->tester->assertStringContainsString('BackgroundQueue[' . self::rawConnection()->getDatabase() . ']: Number of attempts reached "5".', $e->getMessage());
+		}
+	}
+
+	/**
 	 * Záchranná síť pro ztracené zprávy: job ve stavu READY/TEMPORARILY_FAILED, kterého se déle než
 	 * lostMessageTimeout nikdo nedotkl a jehož odklad už uplynul, se znovu publikuje do brokera.
 	 * Bez ní takový job (proces umřel mezi DB zápisem a publishem, purge fronty, ...) visí navždy.

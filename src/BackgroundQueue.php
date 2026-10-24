@@ -857,8 +857,9 @@ class BackgroundQueue
 	}
 
 	/**
-	 * Název databáze v hranatých závorkách pro odlišení reportů z více instancí sdílejících jeden
-	 * log adresář - ErrorLogger deduplikuje maily podle hashe zprávy se smazanými čísly, takže bez
+	 * Název databáze v hranatých závorkách pro odlišení logovaných zpráv z více instancí sdílejících
+	 * jeden log adresář - u projektu s mnoha databázemi jinak z chyby nejde poznat, které instance se
+	 * týká, a ErrorLogger navíc deduplikuje maily podle hashe zprávy se smazanými čísly, takže bez
 	 * tohoto rozlišení se ze dvou jinak identických reportů odešle jen ten první.
 	 */
 	private function getDatabaseLabel(): string
@@ -1690,7 +1691,7 @@ class BackgroundQueue
 	 */
 	private function logException(string $errorMessage, ?BackgroundJob $entity = null, ?Throwable $e = null): void
 	{
-		$this->logger->log('critical', new Exception('BackgroundQueue: ' . $errorMessage  . ($entity ?  ' (ID: ' . $entity->getId() . ')' : ''), 0, $e));
+		$this->logger->log('critical', new Exception('BackgroundQueue' . $this->getDatabaseLabel() . ': ' . $errorMessage  . ($entity ?  ' (ID: ' . $entity->getId() . ')' : ''), 0, $e));
 
 		if ($entity && $entity->getState() === BackgroundJob::STATE_READY) {
 			$entity->setState(BackgroundJob::STATE_PERMANENTLY_FAILED);

@@ -44,10 +44,11 @@ class BackgroundQueue
 	// Kritická sekce [check + zápis PROCESSING] trvá jen pár mikrosekund, takže tato hodnota je strop pro souběh, ne pro práci.
 	private const GROUP_LOCK_TIMEOUT = 3;
 
-	// Coalesce UPDATE (markCoalescedJobsRedundant): kolikrát ho zopakovat při deadlocku a základní prodleva (µs)
-	// mezi pokusy. Prodleva se s každým pokusem lineárně prodlužuje (delay * číslo pokusu).
-	private const COALESCE_DEADLOCK_MAX_ATTEMPTS = 5;
-	private const COALESCE_DEADLOCK_RETRY_DELAY = 100000; // 100 ms
+	// UPDATE nad skupinou (coalesce v markCoalescedJobsRedundant, odklad do WAITING v checkUnfinishedJobs):
+	// kolikrát ho zopakovat při deadlocku a základní prodleva (µs) mezi pokusy. Prodleva se s každým pokusem
+	// lineárně prodlužuje (delay * číslo pokusu).
+	private const DEADLOCK_MAX_ATTEMPTS = 5;
+	private const DEADLOCK_RETRY_DELAY = 100000; // 100 ms
 
 	// Jak dlouho (v sekundách) smí job zůstat v PROCESSING bez jediného zápisu, než ho reaper prohlásí
 	// za osiřelého. Musí být s rezervou delší než nejdelší běh callbacku, který netepe přes heartbeat().
@@ -68,6 +69,11 @@ class BackgroundQueue
 	// zaseknutý v nekonečné smyčce, který si přes middleware pořád tepe - updated_at se posouvá, takže
 	// na něj reaper (stalledJobTimeout) nikdy nedosáhne. Měří se od last_attempt_at (začátek běhu).
 	private const LONG_PROCESSING_REPORT_THRESHOLD = 86400;
+
+	// Od kolika sekund po availableFrom hlásí reportStuckJobs() job v READY / WAITING, který se pořád
+	// nespustil. Pojistky (republish, promotion) job jen znovu pošlou do brokera; jestli se opravdu
+	// zpracoval, neověří - tohle je jediné místo, které takový job zviditelní.
+	private const LONG_PENDING_REPORT_THRESHOLD = 86400;
 
 	private array $config;
 	private bool $connectionCreated = false;
@@ -880,13 +886,17 @@ class BackgroundQueue
 	 * (backoff má strop 16 minut a notifyOnNumberOfAttempts upozorní jen při přesně N-tém pokusu).
 	 * K tomu PROCESSING běžící déle než LONG_PROCESSING_REPORT_THRESHOLD: callback zaseknutý v nekonečné
 	 * smyčce, který přes middleware pořád tepe, reaperu nikdy nezestárne - tohle je jediné místo, které
-	 * ho zviditelní. Ostatní stavy mají aktivní pojistku (reaper, promotion, republish), takže se v nich
-	 * nic dlouhodobě nedrží.
+	 * ho zviditelní. A nakonec READY a WAITING, které by už podle availableFrom měly běžet, ale déle než
+	 * LONG_PENDING_REPORT_THRESHOLD se nespustily: pojistky (republish, promotion) je jen znovu posílají
+	 * do brokera, a když se tam job nikdy nezpracuje (mrtví konzumenti, opakovaně selhávající odklad do
+	 * WAITING, zaseknutá skupina), točí se v těchhle stavech navěky bez jediné stopy.
 	 *
 	 * Je-li co hlásit, pošle report i do loggeru - stejným kanálem jako ostatní notifikace knihovny.
-	 * Úroveň je critical, obsahuje-li report PERMANENTLY_FAILED nebo dlouhoběžící PROCESSING joby
-	 * (ani jedno se bez zásahu nespraví), jinak warning. Vrací počty a stáří nejstaršího jobu pro výpis
-	 * commandu; u PROCESSING se stářím míní začátek běhu (last_attempt_at), u ostatních vznik jobu.
+	 * Úroveň je critical, obsahuje-li report PERMANENTLY_FAILED, dlouhoběžící PROCESSING nebo dlouho
+	 * nespuštěné READY joby (nic z toho se bez zásahu nespraví), jinak warning. Dlouhý WAITING sám
+	 * critical není - příčinou je typicky předchůdce ve skupině, který se v reportu objeví sám za sebe.
+	 * Vrací počty a stáří nejstaršího jobu pro výpis commandu; u PROCESSING se stářím míní začátek běhu
+	 * (last_attempt_at), u READY a WAITING availableFrom, u ostatních vznik jobu.
 	 *
 	 * @return array<int, array{count: int, oldestSince: ?string}> klíčem je stav
 	 * @throws Exception
@@ -928,19 +938,62 @@ class BackgroundQueue
 			'oldestSince' => $row['jobCount'] ? $row['oldestSince'] : null,
 		];
 
+		// READY a WAITING se měří od availableFrom - od chvíle, kdy job smí běžet. Od vzniku ne (job
+		// publikovaný s odkladem by se hlásil falešně), od updated_at taky ne (ten posouvá republishLostMessages()).
+		// availableFrom se skládá z více sloupců, proto SQL jen předfiltruje nutnou podmínkou (vznik i poslední
+		// pokus jsou starší než práh) a zbytek dopočítá PHP. Čtou se jen potřebné sloupce, ne celé entity -
+		// při velkém backlogu by parametry jobů zbytečně zabraly paměť.
+		$pendingStates = [BackgroundJob::STATE_READY, BackgroundJob::STATE_WAITING];
+		$pendingSince = (new DateTimeImmutable())->modify('-' . self::LONG_PENDING_REPORT_THRESHOLD . ' seconds');
+		$qb = $this->createQueryBuilder()
+			->select('state, created_at, last_attempt_at, postponed_by')
+			->andWhere('state IN (:pendingStates)')
+			->setParameter('pendingStates', $pendingStates)
+			->andWhere('created_at < :pendingSince')
+			->andWhere('last_attempt_at IS NULL OR last_attempt_at < :pendingSince')
+			->setParameter('pendingSince', $pendingSince->format('Y-m-d H:i:s'));
+
+		foreach ($pendingStates as $_state) {
+			$report[$_state] = ['count' => 0, 'oldestSince' => null];
+		}
+		foreach ($this->fetchAll($qb, null, false) as $_row) {
+			$availableFrom = BackgroundJob::computeAvailableFrom(
+				new DateTimeImmutable($_row['created_at']),
+				$_row['last_attempt_at'] ? new DateTimeImmutable($_row['last_attempt_at']) : null,
+				$_row['postponed_by'] !== null ? (int) $_row['postponed_by'] : null
+			);
+			if ($availableFrom >= $pendingSince) {
+				continue;
+			}
+
+			// computeAvailableFrom() vrací čas v UTC, oldestSince ostatních stavů je v lokální zóně jako sloupce v DB.
+			$availableFrom = (new DateTimeImmutable())->setTimestamp($availableFrom->getTimestamp())->format('Y-m-d H:i:s');
+			$state = (int) $_row['state'];
+			$report[$state]['count']++;
+			if ($report[$state]['oldestSince'] === null || $availableFrom < $report[$state]['oldestSince']) {
+				$report[$state]['oldestSince'] = $availableFrom;
+			}
+		}
+
 		$temporarily = $report[BackgroundJob::STATE_TEMPORARILY_FAILED];
 		$permanently = $report[BackgroundJob::STATE_PERMANENTLY_FAILED];
 		$longRunning = $report[BackgroundJob::STATE_PROCESSING];
+		$longReady = $report[BackgroundJob::STATE_READY];
+		$longWaiting = $report[BackgroundJob::STATE_WAITING];
 
-		if ($temporarily['count'] || $permanently['count'] || $longRunning['count']) {
+		if ($temporarily['count'] || $permanently['count'] || $longRunning['count'] || $longReady['count'] || $longWaiting['count']) {
 			$message = 'BackgroundQueue' . $this->getDatabaseLabel() . ': Stuck jobs report: '
 				. $temporarily['count'] . 'x TEMPORARILY_FAILED' . ($temporarily['count'] ? ' (oldest ' . $temporarily['oldestSince'] . ')' : '')
 				. ', '
 				. $permanently['count'] . 'x PERMANENTLY_FAILED' . ($permanently['count'] ? ' (oldest ' . $permanently['oldestSince'] . ')' : '')
 				. ', '
 				. $longRunning['count'] . 'x PROCESSING running longer than ' . (self::LONG_PROCESSING_REPORT_THRESHOLD / 3600) . ' hours' . ($longRunning['count'] ? ' (since ' . $longRunning['oldestSince'] . ')' : '')
+				. ', '
+				. $longReady['count'] . 'x READY not started for more than ' . (self::LONG_PENDING_REPORT_THRESHOLD / 3600) . ' hours' . ($longReady['count'] ? ' (available since ' . $longReady['oldestSince'] . ')' : '')
+				. ', '
+				. $longWaiting['count'] . 'x WAITING not started for more than ' . (self::LONG_PENDING_REPORT_THRESHOLD / 3600) . ' hours' . ($longWaiting['count'] ? ' (available since ' . $longWaiting['oldestSince'] . ')' : '')
 				. '.';
-			$this->logger->log(($permanently['count'] || $longRunning['count']) ? 'critical' : 'warning', new Exception($message));
+			$this->logger->log(($permanently['count'] || $longRunning['count'] || $longReady['count']) ? 'critical' : 'warning', new Exception($message));
 		}
 
 		return $report;
@@ -1049,16 +1102,30 @@ class BackgroundQueue
 			->setParameter('selfId', $entity->getId())
 			->setParameter('threshold', $entity->getCoalesceThreshold());
 
+		$this->executeWithDeadlockRetry($qb);
+	}
+
+	/**
+	 * Provede UPDATE a při deadlocku (1213) ho omezeně zopakuje s lineárně rostoucí prodlevou.
+	 * Po vyčerpání pokusů deadlock propadne ven. Vrací počet ovlivněných řádků.
+	 *
+	 * Opakuje se jen v autocommitu. InnoDB při deadlocku rollbackne celou transakci, ne jen poslední
+	 * statement - zopakovaný UPDATE by pak běžel mimo ni a předchozí zápisy transakce by tiše zmizely.
+	 * Uvnitř transakce proto deadlock propadne hned, ať ji volající zopakuje celou.
+	 *
+	 * @throws \Doctrine\DBAL\Exception
+	 */
+	private function executeWithDeadlockRetry(QueryBuilder $qb): int
+	{
 		$attempt = 0;
 		while (true) {
 			try {
-				$qb->executeStatement();
-				return;
+				return (int) $qb->executeStatement();
 			} catch (DeadlockException $e) {
-				if (++$attempt >= self::COALESCE_DEADLOCK_MAX_ATTEMPTS) {
+				if ($this->connection->isTransactionActive() || ++$attempt >= self::DEADLOCK_MAX_ATTEMPTS) {
 					throw $e;
 				}
-				usleep(self::COALESCE_DEADLOCK_RETRY_DELAY * $attempt);
+				usleep(self::DEADLOCK_RETRY_DELAY * $attempt);
 			}
 		}
 	}
@@ -1387,6 +1454,14 @@ class BackgroundQueue
 	 * běžící job by pak v DB tvrdil WAITING, promotion by ho pustila znovu a běžel by dvakrát.
 	 * Když UPDATE nezabere, vracíme přesto false: o job se stará ten, kdo ho claimnul.
 	 *
+	 * UPDATE může narazit na deadlock (1213) se souběžnými zápisy jiných konzumentů, proto se opakuje. Nejde
+	 * o konzumenty téže skupiny - ty serializuje zámek skupiny, pod kterým běží i coalesce. Protějškem je
+	 * zápis bez tohoto zámku: coalesce jiné skupiny (jeho next-key zámky na indexu serial_group se mohou
+	 * překrývat a oba UPDATEy mění indexovaný sloupec state), promotion z cronu nebo dokončení předchůdce.
+	 * Selže-li i tak, job zůstal v DB nedotčený (zpracovatelný) a jen se vrátí do brokera s odkladem
+	 * waitingJobExpiration - stejně jako by čekal ve WAITING. Přes logException() to jít nesmí: ten by READY
+	 * job přepnul na PERMANENTLY_FAILED, ačkoli se jeho callback vůbec nespustil.
+	 *
 	 * @throws SchemaException
 	 * @throws \Doctrine\DBAL\Exception
 	 */
@@ -1397,24 +1472,28 @@ class BackgroundQueue
 		}
 
 		if ($previousEntityId = $this->getPreviousUnfinishedJobId($entity)) {
+			$qb = $this->connection->createQueryBuilder()
+				->update($this->config['tableName'])
+				->set('state', ':waitingState')
+				->set('error_message', ':errorMessage')
+				->set('postponed_by', ':postponedBy')
+				->set('updated_at', ':updatedAt')
+				->where('id = :id')
+				->andWhere('state IN (:claimableStates)')
+				->setParameter('waitingState', BackgroundJob::STATE_WAITING)
+				->setParameter('errorMessage', 'Waiting for job ID ' . $previousEntityId)
+				->setParameter('postponedBy', $this->config['waitingJobExpiration'])
+				->setParameter('updatedAt', (new DateTimeImmutable())->format('Y-m-d H:i:s'))
+				->setParameter('id', $entity->getId())
+				->setParameter('claimableStates', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER);
+
 			try {
-				$this->connection->createQueryBuilder()
-					->update($this->config['tableName'])
-					->set('state', ':waitingState')
-					->set('error_message', ':errorMessage')
-					->set('postponed_by', ':postponedBy')
-					->set('updated_at', ':updatedAt')
-					->where('id = :id')
-					->andWhere('state IN (:claimableStates)')
-					->setParameter('waitingState', BackgroundJob::STATE_WAITING)
-					->setParameter('errorMessage', 'Waiting for job ID ' . $previousEntityId)
-					->setParameter('postponedBy', $this->config['waitingJobExpiration'])
-					->setParameter('updatedAt', (new DateTimeImmutable())->format('Y-m-d H:i:s'))
-					->setParameter('id', $entity->getId())
-					->setParameter('claimableStates', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER)
-					->executeStatement();
+				$this->executeWithDeadlockRetry($qb);
 			} catch (Exception $e) {
-				$this->logException(self::UNEXPECTED_ERROR_MESSAGE, $entity, $e);
+				$this->logger->log('warning', new Exception('BackgroundQueue' . $this->getDatabaseLabel() . ': Postponing job to waiting state failed, job returned to broker (ID: ' . $entity->getId() . ').', 0, $e));
+
+				$entity->setPostponedBy($this->config['waitingJobExpiration']);
+				$this->publishToBroker($entity);
 			}
 			return false;
 		}
@@ -1687,16 +1766,41 @@ class BackgroundQueue
 	}
 
 	/**
+	 * Zaloguje chybu a READY job přepne na PERMANENTLY_FAILED.
+	 *
+	 * Přechod je podmíněný na READY i v DB a sahá jen na dotčené sloupce. Entita v paměti může být
+	 * zastaralá - řádek mezitím claimnul jiný konzument, coalescing ho označil za REDUNDANT, odložil
+	 * se do WAITING apod. Nepodmíněný save() celé entity by takový stav přepsal.
+	 *
 	 * @throws \Doctrine\DBAL\Exception
 	 */
 	private function logException(string $errorMessage, ?BackgroundJob $entity = null, ?Throwable $e = null): void
 	{
 		$this->logger->log('critical', new Exception('BackgroundQueue' . $this->getDatabaseLabel() . ': ' . $errorMessage  . ($entity ?  ' (ID: ' . $entity->getId() . ')' : ''), 0, $e));
 
-		if ($entity && $entity->getState() === BackgroundJob::STATE_READY) {
-			$entity->setState(BackgroundJob::STATE_PERMANENTLY_FAILED);
-			$entity->setErrorMessage($errorMessage);
-			$this->save($entity);
+		if ($entity && $entity->getId() && $entity->getState() === BackgroundJob::STATE_READY) {
+			$this->databaseConnectionCheckAndReconnect();
+
+			$updatedAt = new DateTimeImmutable();
+			$affected = $this->connection->createQueryBuilder()
+				->update($this->config['tableName'])
+				->set('state', ':failedState')
+				->set('error_message', ':errorMessage')
+				->set('updated_at', ':updatedAt')
+				->where('id = :id')
+				->andWhere('state = :readyState')
+				->setParameter('failedState', BackgroundJob::STATE_PERMANENTLY_FAILED)
+				->setParameter('errorMessage', $errorMessage)
+				->setParameter('updatedAt', $updatedAt->format('Y-m-d H:i:s'))
+				->setParameter('id', $entity->getId())
+				->setParameter('readyState', BackgroundJob::STATE_READY)
+				->executeStatement();
+
+			if ($affected) {
+				$entity->setState(BackgroundJob::STATE_PERMANENTLY_FAILED)
+					->setErrorMessage($errorMessage)
+					->setUpdatedAt($updatedAt);
+			}
 		}
 	}
 

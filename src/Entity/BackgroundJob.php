@@ -6,6 +6,7 @@ use ADT\BackgroundQueue\Entity\Enums\ModeEnum;
 use ADT\Utils\Utils;
 use DateTime;
 use DateTimeImmutable;
+use DateTimeInterface;
 use Exception;
 use Nette\Utils\Json;
 use Nette\Utils\JsonException;
@@ -379,7 +380,18 @@ final class BackgroundJob
 	 */
 	public function getAvailableFrom(): DateTime
 	{
-		return new DateTime('@' . (max($this->createdAt->getTimestamp(), $this->lastAttemptAt ? $this->lastAttemptAt->getTimestamp() : 0) + ceil($this->postponedBy/ 1000)));
+		return self::computeAvailableFrom($this->createdAt, $this->lastAttemptAt, $this->postponedBy);
+	}
+
+	/**
+	 * Od kdy smí job běžet: později ze vzniku a posledního pokusu, plus odklad (postponed_by v ms).
+	 * Statická varianta pro místa, která čtou jen pár sloupců a nechtějí hydratovat celou entitu.
+	 *
+	 * @throws Exception
+	 */
+	public static function computeAvailableFrom(DateTimeInterface $createdAt, ?DateTimeInterface $lastAttemptAt, ?int $postponedBy): DateTime
+	{
+		return new DateTime('@' . (max($createdAt->getTimestamp(), $lastAttemptAt ? $lastAttemptAt->getTimestamp() : 0) + ceil($postponedBy / 1000)));
 	}
 
 	public function getExecutionTime(): ?int

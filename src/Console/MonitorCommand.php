@@ -28,6 +28,8 @@ class MonitorCommand extends Command
 			BackgroundJob::STATE_TEMPORARILY_FAILED => 'TEMPORARILY_FAILED',
 			BackgroundJob::STATE_PERMANENTLY_FAILED => 'PERMANENTLY_FAILED',
 			BackgroundJob::STATE_PROCESSING => 'PROCESSING > 24h',
+			BackgroundJob::STATE_READY => 'READY > 24h',
+			BackgroundJob::STATE_WAITING => 'WAITING > 24h',
 		];
 
 		foreach ($report as $_state => $_data) {

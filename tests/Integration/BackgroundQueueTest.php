@@ -16,6 +16,7 @@ use Codeception\Test\Unit;
 use DateTimeImmutable;
 use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Exception\DeadlockException;
 use Exception;
 use Tests\Support\Helper\Producer;
 use Tests\Support\IntegrationTester;
@@ -35,6 +36,14 @@ class BackgroundQueueTest extends Unit
 		parent::_before();
 		Mailer::reset();
 		self::clear();
+	}
+
+	protected function _after()
+	{
+		// Trigger z failWaitingWrites(). Mezi testy ho uklidí DROP TABLE v clear() (MySQL maže triggery
+		// spolu s tabulkou), po posledním testu běhu by ale na testovací tabulce zůstal viset.
+		self::rawConnection()->executeStatement('DROP TRIGGER IF EXISTS bq_test_waiting_deadlock');
+		parent::_after();
 	}
 
 	public function publishProvider(): array
@@ -975,6 +984,8 @@ class BackgroundQueueTest extends Unit
 		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_TEMPORARILY_FAILED]['count']);
 		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_PERMANENTLY_FAILED]['count']);
 		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_PROCESSING]['count']);
+		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_READY]['count']);
+		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_WAITING]['count']);
 
 		$backgroundQueue->publish('processRecording', ['a']);
 		$backgroundQueue->publish('processRecording', ['b']);
@@ -1005,6 +1016,7 @@ class BackgroundQueueTest extends Unit
 		$this->tester->assertEquals(1, $report[BackgroundJob::STATE_PROCESSING]['count']);
 		$this->tester->assertNotNull($report[BackgroundJob::STATE_TEMPORARILY_FAILED]['oldestSince']);
 		$this->tester->assertNotNull($report[BackgroundJob::STATE_PROCESSING]['oldestSince']);
+		$this->tester->assertEquals(0, $report[BackgroundJob::STATE_READY]['count'], 'čerstvý READY job do reportu nepatří');
 
 		// Je-li co hlásit, jde report do loggeru stejným kanálem jako ostatní notifikace.
 		$this->assertThrows(Exception::class, fn() => $withLogger->reportStuckJobs());
@@ -1016,6 +1028,48 @@ class BackgroundQueueTest extends Unit
 			$this->tester->fail('report se nedostal do loggeru');
 		} catch (Exception $e) {
 			$this->tester->assertStringContainsString('BackgroundQueue[' . self::rawConnection()->getDatabase() . ']: Stuck jobs report:', $e->getMessage());
+		}
+	}
+
+	/**
+	 * reportStuckJobs() hlásí READY a WAITING joby, které by podle availableFrom měly běžet déle než 24 h,
+	 * ale nespustily se - pojistky je jen vracejí do brokera, takže by se jinak točily bez povšimnutí.
+	 * Měří se od availableFrom, ne od vzniku: starý job s dlouhým odkladem nebo čerstvým pokusem do reportu nepatří.
+	 *
+	 * @throws Exception
+	 */
+	public function testReportStuckJobsPending()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$withLogger = self::getBackgroundQueue(false, false, true);
+		$table = $_ENV['PROJECT_DB_TABLENAME'];
+		$daysAgo = fn(int $days) => (new DateTimeImmutable())->modify('-' . $days . ' days')->format('Y-m-d H:i:s');
+
+		foreach (['ready-old', 'ready-older', 'ready-postponed', 'ready-retried', 'waiting-old', 'ready-fresh'] as $_parameter) {
+			$backgroundQueue->publish('processRecording', [$_parameter]);
+		}
+		[$readyOld, $readyOlder, $readyPostponed, $readyRetried, $waitingOld] = self::fetchAllJobs($backgroundQueue);
+		$threeDaysAgo = $daysAgo(3);
+
+		self::rawConnection()->update($table, ['created_at' => $daysAgo(2)], ['id' => $readyOld->getId()]);
+		self::rawConnection()->update($table, ['created_at' => $threeDaysAgo], ['id' => $readyOlder->getId()]);
+		// Vznikl před 3 dny, ale s odkladem 2,5 dne - smí běžet teprve půl dne.
+		self::rawConnection()->update($table, ['created_at' => $daysAgo(3), 'postponed_by' => 60 * 60 * 60 * 1000], ['id' => $readyPostponed->getId()]);
+		// Vznikl před 3 dny, ale naposledy se zkoušel před chvílí.
+		self::rawConnection()->update($table, ['created_at' => $daysAgo(3), 'last_attempt_at' => $daysAgo(0)], ['id' => $readyRetried->getId()]);
+		self::rawConnection()->update($table, ['created_at' => $daysAgo(2), 'state' => BackgroundJob::STATE_WAITING], ['id' => $waitingOld->getId()]);
+
+		$report = $backgroundQueue->reportStuckJobs();
+		$this->tester->assertEquals(2, $report[BackgroundJob::STATE_READY]['count'], 'jen READY joby, které smí běžet déle než 24 h');
+		$this->tester->assertEquals($threeDaysAgo, $report[BackgroundJob::STATE_READY]['oldestSince'], 'oldestSince je availableFrom nejstaršího jobu v lokální zóně');
+		$this->tester->assertEquals(1, $report[BackgroundJob::STATE_WAITING]['count']);
+
+		try {
+			$withLogger->reportStuckJobs();
+			$this->tester->fail('report se nedostal do loggeru');
+		} catch (Exception $e) {
+			$this->tester->assertStringContainsString('2x READY not started for more than 24 hours', $e->getMessage());
+			$this->tester->assertStringContainsString('1x WAITING not started for more than 24 hours', $e->getMessage());
 		}
 	}
 
@@ -1102,6 +1156,143 @@ class BackgroundQueueTest extends Unit
 
 		$this->tester->assertFalse($method->invoke($backgroundQueue, $x), 'překážka ve skupině -> job se nezpracuje');
 		$this->tester->assertEquals(BackgroundJob::STATE_PROCESSING, self::fetchJob($backgroundQueue, $x->getId())->getState(), 'běžící job zůstal nedotčený');
+	}
+
+	/**
+	 * Odklad do WAITING může narazit na deadlock se souběžným zápisem, který nebere zámek skupiny (coalesce
+	 * jiné skupiny, promotion z cronu, dokončení předchůdce) - viz docblock checkUnfinishedJobs().
+	 * Deadlock je tranzientní - UPDATE se zopakuje a job normálně skončí ve WAITING.
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testWaitingWriteRetriesDeadlock()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$backgroundQueue->publish('processRecording', ['blocker'], 'group-deadlock');
+		$backgroundQueue->publish('processRecording', ['x'], 'group-deadlock');
+		[, $x] = self::fetchAllJobs($backgroundQueue);
+
+		self::failWaitingWrites($backgroundQueue, 2);
+
+		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('checkUnfinishedJobs');
+		$method->setAccessible(true);
+
+		$this->tester->assertFalse($method->invoke($backgroundQueue, $x), 'překážka ve skupině -> job se nezpracuje');
+		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, self::fetchJob($backgroundQueue, $x->getId())->getState(), 'po opakování job čeká ve WAITING');
+	}
+
+	/**
+	 * Uvnitř transakce se deadlock neopakuje: InnoDB při něm rollbackne celou transakci, takže zopakovaný
+	 * UPDATE by běžel už mimo ni a předchozí zápisy by tiše zmizely. Deadlock propadne hned po prvním pokusu.
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testDeadlockIsNotRetriedInsideTransaction()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$backgroundQueue->publish('processRecording', ['x']);
+		[$x] = self::fetchAllJobs($backgroundQueue);
+
+		self::failWaitingWrites($backgroundQueue, 2);
+
+		/** @var \Doctrine\DBAL\Connection $connection */
+		$connection = (new \ReflectionProperty(BackgroundQueue::class, 'connection'))->getValue($backgroundQueue);
+		$qb = $connection->createQueryBuilder()
+			->update($_ENV['PROJECT_DB_TABLENAME'])
+			->set('state', (string) BackgroundJob::STATE_WAITING)
+			->where('id = :id')
+			->setParameter('id', $x->getId());
+
+		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('executeWithDeadlockRetry');
+		$method->setAccessible(true);
+
+		$connection->beginTransaction();
+		try {
+			$this->assertThrows(DeadlockException::class, fn() => $method->invoke($backgroundQueue, $qb));
+		} finally {
+			$connection->rollBack();
+		}
+		$this->tester->assertEquals(1, (int) $connection->fetchOne('SELECT @bq_waiting_deadlocks'), 'proběhl jediný pokus');
+
+		// Mimo transakci se tentýž UPDATE zopakuje a projde.
+		$this->tester->assertEquals(1, $method->invoke($backgroundQueue, $qb));
+		$this->tester->assertEquals(BackgroundJob::STATE_WAITING, self::fetchJob($backgroundQueue, $x->getId())->getState());
+	}
+
+	/**
+	 * Když odklad do WAITING selže i po opakování, callback jobu se vůbec nespustil a řádek je v DB nedotčený.
+	 * Job proto nesmí skončit v PERMANENTLY_FAILED (dřív ho tam poslal logException()), ale vrátí se do brokera.
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testFailedWaitingWriteReturnsJobToBroker()
+	{
+		$backgroundQueue = self::getBackgroundQueue(true);
+		$backgroundQueue->publish('processRecording', ['blocker'], 'group-deadlock');
+		$backgroundQueue->publish('processRecording', ['x'], 'group-deadlock');
+		[, $x] = self::fetchAllJobs($backgroundQueue);
+		self::getProducer()->purge('general_1');
+
+		self::failWaitingWrites($backgroundQueue, 100);
+
+		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('checkUnfinishedJobs');
+		$method->setAccessible(true);
+
+		$this->tester->assertFalse($method->invoke($backgroundQueue, $x), 'překážka ve skupině -> job se nezpracuje');
+		$this->tester->assertEquals(BackgroundJob::STATE_READY, self::fetchJob($backgroundQueue, $x->getId())->getState(), 'job zůstal zpracovatelný');
+		$this->tester->assertEquals((string) $x->getId(), self::getProducer()->consume(), 'job je zpět v brokeru');
+	}
+
+	/**
+	 * logException() přepíná na PERMANENTLY_FAILED jen job, který je READY i v DB. Entita v paměti může být
+	 * zastaralá (řádek mezitím pohltil coalescing, claimnul jiný konzument, ...) a její stav se nesmí přepsat.
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testLogExceptionDoesNotClobberChangedJob()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$backgroundQueue->publish('processRecording', ['ready']);
+		$backgroundQueue->publish('processRecording', ['redundant']);
+		[$ready, $redundant] = self::fetchAllJobs($backgroundQueue); // obě kopie drží stav READY
+
+		self::rawConnection()->update($_ENV['PROJECT_DB_TABLENAME'], ['state' => BackgroundJob::STATE_REDUNDANT], ['id' => $redundant->getId()]);
+
+		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('logException');
+		$method->setAccessible(true);
+		$method->invoke($backgroundQueue, BackgroundQueue::UNEXPECTED_ERROR_MESSAGE, $ready);
+		$method->invoke($backgroundQueue, BackgroundQueue::UNEXPECTED_ERROR_MESSAGE, $redundant);
+
+		$readyAfter = self::fetchJob($backgroundQueue, $ready->getId());
+		$this->tester->assertEquals(BackgroundJob::STATE_PERMANENTLY_FAILED, $readyAfter->getState(), 'READY job selhal');
+		$this->tester->assertEquals(BackgroundQueue::UNEXPECTED_ERROR_MESSAGE, $readyAfter->getErrorMessage());
+		$this->tester->assertEquals(BackgroundJob::STATE_REDUNDANT, self::fetchJob($backgroundQueue, $redundant->getId())->getState(), 'změněný řádek zůstal nedotčený');
+	}
+
+	/**
+	 * Simuluje deadlock (1213) při odkladu do WAITING: trigger vyhodí chybu u prvních $count zápisů stavu WAITING
+	 * ve spojení dané fronty. Počítadlo je session proměnná, takže se netýká ostatních spojení v testu.
+	 */
+	private static function failWaitingWrites(BackgroundQueue $backgroundQueue, int $count): void
+	{
+		/** @var \Doctrine\DBAL\Connection $connection */
+		$connection = (new \ReflectionProperty(BackgroundQueue::class, 'connection'))->getValue($backgroundQueue);
+
+		$connection->executeStatement('DROP TRIGGER IF EXISTS bq_test_waiting_deadlock');
+		$connection->executeStatement('
+			CREATE TRIGGER bq_test_waiting_deadlock BEFORE UPDATE ON ' . $_ENV['PROJECT_DB_TABLENAME'] . ' FOR EACH ROW
+			BEGIN
+				IF NEW.state = ' . BackgroundJob::STATE_WAITING . ' AND COALESCE(@bq_waiting_deadlocks, 0) > 0 THEN
+					SET @bq_waiting_deadlocks = @bq_waiting_deadlocks - 1;
+					SIGNAL SQLSTATE \'40001\' SET MYSQL_ERRNO = 1213, MESSAGE_TEXT = \'Deadlock found when trying to get lock\';
+				END IF;
+			END
+		');
+		$connection->executeStatement('SET @bq_waiting_deadlocks = ' . $count);
 	}
 
 	/**

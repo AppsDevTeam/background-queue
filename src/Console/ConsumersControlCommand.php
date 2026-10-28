@@ -23,6 +23,18 @@ abstract class ConsumersControlCommand extends Command
 	}
 
 	/**
+	 * Řídicí zprávy se jen publikují do brokera, žádný exkluzivní zdroj se nezamyká. Zámek by tu navíc
+	 * škodil: konzumeři běží na každém aplikačním serveru zvlášť, takže počet zpráv musí odpovídat
+	 * součtu konzumerů přes všechny hosty a příkaz se pouští na každém z nich. Se zámkem sdíleným
+	 * mezi hosty (NFS, GlusterFS) by druhý host buď tiše neudělal nic, nebo spolu s prvním závodil
+	 * o tentýž zámek - v obou případech by část konzumerů zůstala běžet na starém kódu.
+	 */
+	protected function isLockRequired(): bool
+	{
+		return false;
+	}
+
+	/**
 	 * Název řídicí zprávy pro texty nápovědy (např. "DIE").
 	 */
 	abstract protected function getControlMessageName(): string;

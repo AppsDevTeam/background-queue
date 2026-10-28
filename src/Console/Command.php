@@ -22,10 +22,24 @@ abstract class Command extends \Symfony\Component\Console\Command\Command
 	}
 
 	/**
+	 * Má se příkaz zamykat proti souběžnému spuštění? Zámek je souborový, takže chrání jen v rámci
+	 * jednoho stroje - pokud ho ale projekt sdílí mezi hosty (NFS, GlusterFS), zamyká celou stage.
+	 * Příkazy, které mají naopak běžet na každém hostu zvlášť, si ho proto vypínají.
+	 */
+	protected function isLockRequired(): bool
+	{
+		return true;
+	}
+
+	/**
 	 * @throws Exception
 	 */
 	protected function execute(InputInterface $input, OutputInterface $output): int
 	{
+		if (!$this->isLockRequired()) {
+			return $this->executeCommand($input, $output);
+		}
+
 		$this->setStorage(new FileSystemStorage($this->locksDir));
 
 		$this->lock();

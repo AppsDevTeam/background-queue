@@ -110,7 +110,7 @@ abstract class ConsumersControlCommandTestCase extends Unit
 	}
 
 	/**
-	 * Spustí executeCommand() přímo (obejde zámek z abstraktního Command) a vrátí exit kód,
+	 * Spustí executeCommand() přímo a vrátí exit kód,
 	 * výpis a seznam volání produceru ve tvaru [['method' => ..., 'queue' => ..., 'label' => ...], ...].
 	 *
 	 * @return array{exitCode: int, calls: array, output: string}

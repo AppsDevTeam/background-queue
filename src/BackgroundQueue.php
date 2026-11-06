@@ -1604,13 +1604,17 @@ class BackgroundQueue
 	 * Do brokera publikujeme jen tehdy, když UPDATE zabral, ať do fronty neteče ID jobu, který si mezitím
 	 * vzal někdo jiný.
 	 *
+	 * UPDATE může narazit na deadlock (1213) se souběžným claimem nebo coalesce jiného konzumenta. Je
+	 * tranzientní, proto se opakuje - jinak by skončil jako neočekávaná chyba v logu, přestože nástupce
+	 * stejně pustí příští běh promoteWaitingJobs().
+	 *
 	 * @throws SchemaException
 	 * @throws \Doctrine\DBAL\Exception
 	 * @throws Exception
 	 */
 	private function promoteWaitingJob(int $id): void
 	{
-		$affected = $this->connection->createQueryBuilder()
+		$qb = $this->connection->createQueryBuilder()
 			->update($this->config['tableName'])
 			->set('state', ':readyState')
 			->set('error_message', ':errorMessage')
@@ -1625,10 +1629,9 @@ class BackgroundQueue
 			->setParameter('postponedBy', null)
 			->setParameter('updatedAt', (new DateTimeImmutable())->format('Y-m-d H:i:s'))
 			->setParameter('id', $id)
-			->setParameter('waitingState', BackgroundJob::STATE_WAITING)
-			->executeStatement();
+			->setParameter('waitingState', BackgroundJob::STATE_WAITING);
 
-		if (!$affected) {
+		if (!$this->executeWithDeadlockRetry($qb)) {
 			return;
 		}
 

@@ -107,6 +107,10 @@ Název řídicí fronty sestavuje `Manager::getControlQueue($queue, ?$label)`, s
 
 Vedle `DIE` existuje druhá řídicí zpráva `SHUTDOWN` (`publishShutdown()`, posílá ji `shutdown-consumers` se stejným cílením přes label). Liší se jen exit kódem po dojetí rozdělaného jobu: `DIE` ukončí konzumera přes `die()` (exit 0, supervisor ho typicky restartuje), `SHUTDOWN` přes `exit(Producer::NICE_SHUTDOWN_EXIT_CODE)` (= 100). Ten kód patří do supervisor `exitcodes` při `autorestart=unexpected`, takže konzumer už znovu nenaběhne - "nice shutdown" pro řízené zastavení (např. před restartem serveru). Řídicí fronty jsou durable, takže zpráva navíc v nich zůstane ležet a sebere ji až příští konzumer po startu - u unikátních labelů se proto posílá `NUMBER = 1`. Detaily a vzor konfigurace supervisoru viz README sekce 6.
 
+### Leader clusteru (src/Leader.php) - konzumeři jen na jednom uzlu
+
+`PhpAmqpLib\Consumer` bere joby jen na uzlu, kde `leaderFile` (default `/run/cluster-leader/is-leader`) obsahuje `1` - zapisuje ho infrastruktura (keepalived). Režim zapíná existence **adresáře** souboru (mount z infrastruktury; mimo cluster není → konzumeři berou vždy), chybějící soubor v existujícím adresáři = není leader, `leaderFile: null` = vypnuto natvrdo (v konstruktoru proto `array_key_exists`, ne `isset`). Ne-leader čte jen řídicí frontu (DIE/SHUTDOWN fungují všude), leader konzumuje všechno; ztrátu leaderství konzumer zjistí v `wait()` s timeoutem (`LEADER_POLL_INTERVAL`), odpojí se od front s joby a vrátí se k čekání - smyčka v `consume()` končí až zpracovaným jobem. `leaderStartDelay` se měří od **mtime** souboru (infrastruktura ho přepisuje jen při změně), ne od startu procesu. Pokryto v `ConsumerControlQueueTest` (fixtura `consumerWorker.php` bere leaderFile jako 3. argument). Uživatelsky README 6.3.
+
 ### Konzolové příkazy (src/Console/)
 
 Všechny příkazy kromě `ConsumeCommand` rozšiřují lokální abstraktní `Command`, který obaluje běh do `ADT\CommandLock` (`FileSystemStorage` pod `tempDir`), takže nemohou běžet souběžně samy se sebou.

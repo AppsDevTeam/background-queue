@@ -75,6 +75,14 @@ class BackgroundQueue
 	// zpracoval, neověří - tohle je jediné místo, které takový job zviditelní.
 	private const LONG_PENDING_REPORT_THRESHOLD = 86400;
 
+	// Soubor s leaderem clusteru (viz Leader). Existence jeho adresáře zapíná režim "joby jen na
+	// leaderovi" - mimo cluster adresář není a konzumeři berou joby vždy. null = vypnuto natvrdo.
+	private const DEFAULT_LEADER_FILE = '/run/cluster-leader/is-leader';
+
+	// Kolik sekund musí být uzel leaderem (mtime leaderFile), než na něm konzumeři začnou brát joby -
+	// rezerva na to, aby předchozí leader stihl své konzumery zastavit. Viz Leader.
+	private const DEFAULT_LEADER_START_DELAY = 30;
+
 	private array $config;
 	private bool $connectionCreated = false;
 	private Connection $connection;
@@ -134,6 +142,13 @@ class BackgroundQueue
 		}
 		if (!isset($config['lostMessageTimeout'])) {
 			$config['lostMessageTimeout'] = self::DEFAULT_LOST_MESSAGE_TIMEOUT;
+		}
+		// array_key_exists, ne isset: explicitní null režim vypíná
+		if (!array_key_exists('leaderFile', $config)) {
+			$config['leaderFile'] = self::DEFAULT_LEADER_FILE;
+		}
+		if (!isset($config['leaderStartDelay'])) {
+			$config['leaderStartDelay'] = self::DEFAULT_LEADER_START_DELAY;
 		}
 		$this->config = $config;
 		$this->connection = $config['connection'];
@@ -722,6 +737,19 @@ class BackgroundQueue
 	public function getConfig(): array
 	{
 		return $this->config;
+	}
+
+	public function getLogger(): LoggerInterface
+	{
+		return $this->logger;
+	}
+
+	/**
+	 * Leader clusteru pro konzumery (leaderFile / leaderStartDelay), viz Leader.
+	 */
+	public function getLeader(): Leader
+	{
+		return new Leader($this->config['leaderFile'], (int) $this->config['leaderStartDelay']);
 	}
 
 	public function startBulk(): void

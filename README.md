@@ -49,6 +49,8 @@ $backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
 	'stalledJobTimeout' => 3600, // nepovinné, po kolika sekundách bez zápisu se job ve stavu PROCESSING považuje za osiřelý (0 = vypnuto), viz 2.4
 	'heartbeatInterval' => 60, // nepovinné, minimální prodleva v sekundách mezi dvěma zápisy heartbeat(), viz 2.4
 	'lostMessageTimeout' => 3600, // nepovinné, po kolika sekundách bez zápisu se u jobu ve stavu READY/TEMPORARILY_FAILED považuje zpráva v brokeru za ztracenou a publikuje se znovu (0 = vypnuto), viz 2.5
+	'leaderFile' => '/run/cluster-leader/is-leader', // nepovinné (toto je default), soubor s `1`, když je tento uzel leader clusteru - konzumeři berou joby jen na něm; režim zapíná existence adresáře souboru, null = vypnuto, viz 6.3
+	'leaderStartDelay' => 30, // nepovinné, kolik sekund musí být uzel leaderem (mtime leaderFile), než na něm konzumeři začnou, viz 6.3
 	'parametersFormat' => \ADT\BackgroundQueue\Entity\BackgroundJob::PARAMETERS_FORMAT_SERIALIZE, // nepovinné, určuje v jakém formátu budou do DB ukládána data v `background_job.parameters` (@see \ADT\BackgroundQueue\Entity\BackgroundJob::setParameters),
 ]);
 ```
@@ -419,6 +421,22 @@ Sémantika `autorestart=unexpected` (mimochodem výchozí hodnota): supervisor r
 | jiný | pád procesu | ne | "unexpected" -> restartuje |
 
 Výchozí `exitcodes` je `0`, proto je nutné ho přepsat na `100` - jinak by byl naopak restartován běžný konec a nice shutdown by se choval jako pád. Pozor také, že `autorestart` se uplatní až pro proces, který úspěšně naběhl (stav `RUNNING`); rozběh řídí `startsecs`/`startretries`.
+
+#### 6.3 Konzumeři jen na leaderovi clusteru (`leaderFile`)
+
+Běží-li aplikace na více uzlech, ale do databáze smí zapisovat jen jeden (typicky Galera cluster: zámek `GET_LOCK` za `serialGroup` platí jen na uzlu, kde byl vzat, a souběžné zápisy ze dvou uzlů končí certifikačními konflikty), nesmí konzumeři na ostatních uzlech joby brát. Kdo je leader, rozhoduje infrastruktura (např. keepalived podle toho, který uzel drží floating IP) a zapisuje to do souboru; knihovna ho jen čte:
+
+- existence **adresáře** souboru (default `/run/cluster-leader`) režim zapíná: mimo cluster adresář není a konzumeři berou joby vždy, v clusteru ho do kontejneru mountuje infrastruktura (`- /run/cluster-leader:/run/cluster-leader:ro`). Aplikace tedy nic nenastavuje,
+- obsah `1` = tento uzel je leader, cokoli jiného **včetně chybějícího souboru** = není (adresář je, ale infrastruktura ještě nerozhodla - např. po rebootu),
+- soubor se přepisuje **jen při změně stavu** - jeho mtime říká, odkdy uzel leaderem je. Z něj se počítá `leaderStartDelay`: nový leader čeká, než ten předchozí stihne své konzumery zastavit, aby se joby obou uzlů nepřekrývaly. Měří se od mtime, ne od startu procesu, protože konzumer se po každém jobu typicky restartuje a nesmí pokaždé čekat znovu.
+
+Konzumer (`background-queue:consume`) se pak chová takto:
+
+- **není leader** - čte jen řídicí frontu, front s joby se nedotkne. `reload-consumers` / `shutdown-consumers` tedy fungují na všech uzlech stejně (deploy restartuje konzumery všude, zprávy neleží ve frontě do příštího leaderství),
+- **je leader** aspoň `leaderStartDelay` sekund - bere joby jako obvykle,
+- **přestal být leaderem** - od front s joby se odpojí (nejpozději do 5 s, nepotvrzená předpřipravená zpráva se vrátí do fronty) a vrátí se k čekání; rozdělaný job dojede, nepřerušuje se.
+
+Konzumeři tak běží na všech uzlech pořád (supervisor je nemusí nijak řídit), jen na ne-leaderech nečinně čekají. Počet konzumerů v supervisoru je proto počet **na leaderovi**, ne součet za cluster. `leaderFile: null` režim vypne natvrdo i tam, kde adresář existuje.
 
 ### 7 Integrace do frameworků
 

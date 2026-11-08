@@ -10,7 +10,10 @@
  *
  * Argumenty:
  *   $argv[1] = název základní fronty (musí sedět s frontou, do které test pošle řídicí zprávu)
- *   $argv[2] = label konzumera (volitelný; s ním konzumer čte vlastní řídicí frontu "<queue>_0_<label>")
+ *   $argv[2] = label konzumera (volitelný; s ním konzumer čte vlastní řídicí frontu "<queue>_0_<label>";
+ *              prázdný řetězec = bez labelu)
+ *   $argv[3] = leaderFile (volitelný; s ním konzumer bere joby jen když soubor obsahuje `1`, viz Leader;
+ *              leaderStartDelay = 0, aby test nečekal)
  */
 
 require dirname(__DIR__, 3) . '/vendor/autoload.php';
@@ -21,7 +24,8 @@ use ADT\BackgroundQueue\Broker\PhpAmqpLib\Manager;
 use Doctrine\DBAL\DriverManager;
 
 $queue = $argv[1];
-$label = $argv[2] ?? null;
+$label = ($argv[2] ?? '') !== '' ? $argv[2] : null;
+$leaderFile = $argv[3] ?? null;
 
 $manager = new Manager(
 	[
@@ -41,6 +45,8 @@ $backgroundQueue = new BackgroundQueue([
 	'connection' => DriverManager::getConnection(BackgroundQueue::parseDsn($dsn)),
 	'logger' => null,
 	'producer' => null,
+	'leaderFile' => $leaderFile,
+	'leaderStartDelay' => 0,
 ]);
 
 $consumer = new Consumer($manager, $backgroundQueue);

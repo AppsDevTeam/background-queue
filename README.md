@@ -1,6 +1,6 @@
 # BackgroundQueue
 
-Komponenta umožňuje zpracovávat úkoly na pozadí pomocí cronu nebo AMQP brokera (např. RabbitMQ). Vhodné pro dlouhotrvající requesty, komunikaci s API nebo odesílání webhooků či e-mailů.
+Komponenta umožňuje zpracovávat úkoly na pozadí pomocí cronu nebo brokera - databázového (`Broker\Dbal`, MySQL/MariaDB/PostgreSQL, bez další služby) nebo AMQP (RabbitMQ). Vhodné pro dlouhotrvající requesty, komunikaci s API nebo odesílání webhooků či e-mailů.
 
 Komponenta využívá vlastní doctrine entity manager pro ukládání záznamů do fronty. Tím pádem fungování komponenty není ovlivněno aplikačním entity managerem a naopak.
 
@@ -59,11 +59,45 @@ Potřebné databázové schéma se vytvoři při prvním použití fronty automa
 
 ### 1.3 Broker (optional)
 
-You can use this package with any message broker. Your producer or consumer just need to implement `ADT\BackgroundQueue\Broker\Producer` or `ADT\BackgroundQueue\Broker\Consumer`. 
+You can use this package with any message broker. Your producer or consumer just need to implement `ADT\BackgroundQueue\Broker\Producer` or `ADT\BackgroundQueue\Broker\Consumer`.
 
-Or you can use `php-amqplib/php-amqplib`, for which this library has an ready to use implementation.
+Hotové implementace jsou dvě:
 
-#### 1.3.1 php-amqplib installation
+- `Broker\Dbal` - **broker nad samotnou databází jobů** (MySQL 8+ / MariaDB 10.6+ / PostgreSQL), bez další služby. Viz 1.3.1.
+- `Broker\PhpAmqpLib` - RabbitMQ přes `php-amqplib/php-amqplib`. Viz 1.3.2.
+
+#### 1.3.1 Broker nad databází (`Broker\Dbal`)
+
+Tabulka jobů je v téhle knihovně vždy zdrojem pravdy a broker nese jen „budíček“ s ID jobu. `Broker\Dbal`
+proto žádnou další službu nepotřebuje: budíčkem je sloupec `processed_by_broker` (1 = job čeká na
+konzumera, 0 = konzumer si ho vzal), konzumer si job bere podmíněným UPDATE pod `FOR UPDATE SKIP LOCKED`,
+takže ho dostane právě jeden. Priorita i odklad se čtou z řádku (žádné prioritní ani TTL fronty), řídicí
+zprávy pro `reload-consumers` / `shutdown-consumers` leží v tabulce `<tableName>_control` (založí se sama).
+Probouzení konzumerů: na PostgreSQL `LISTEN`/`NOTIFY` (reakce hned), na MySQL polling po `pollInterval` ms
+(default 1000). Vše ostatní (claim, `serialGroup`, opakování, ztracené zprávy, leader clusteru, labely,
+nice shutdown, `--jobs`, `--priorities`) funguje stejně jako s RabbitMQ.
+
+```php
+// $connection = DBAL connection aplikace (totéž, co dostává fronta) - broker si z něj vezme jen
+// parametry a otevře si vlastní spojení (konzumer na něm čeká / drží LISTEN)
+$manager = new \ADT\BackgroundQueue\Broker\Dbal\Manager($connection, 'background_job', ['pollInterval' => 1000]);
+$producer = new \ADT\BackgroundQueue\Broker\Dbal\Producer($manager);
+$consumer = new \ADT\BackgroundQueue\Broker\Dbal\Consumer($manager, $backgroundQueue);
+
+$backgroundQueue = new \ADT\BackgroundQueue\BackgroundQueue([
+	...
+	'producer' => $producer,
+]);
+```
+
+Kdy ho použít: všude, kde je k dispozici jen databáze (dvouuzlové zóny bez brokera s kvorem, malé
+aplikace, PostgreSQL). Konzumer umřelý mezi převzetím a claimem nechá job s příznakem 0 a stavem READY -
+to je přesně „ztracená zpráva“, kterou `background-queue:process` po `lostMessageTimeout` publikuje znovu
+(viz 2.5), takže cron `process` má běžet i s tímto brokerem. Na Galera/PXC platí totéž co u RabbitMQ:
+konzumeři jen na leaderovi (6.3). `postponeBy`/`expiration` producer ignoruje - odklad je v řádku a konzumer
+ho respektuje při výběru.
+
+#### 1.3.2 php-amqplib installation
 
 Because using of `php-amqplib/php-amqplib` is optional, it doesn't check your installed version against the version with which this package was tested. That's why it's recommended to add to your composer:
 
@@ -90,8 +124,7 @@ composer require php-amqplib/php-amqplib
 This makes sure you avoid BC break when upgrading `php-amqplib/php-amqplib` in the future.
 
 
-#### 1.3.1 php-amqplib configuration
-
+#### 1.3.3 php-amqplib configuration
 ```php
 $connectionParams = [
     'host' => $_ENV['RABBITMQ_HOST'],

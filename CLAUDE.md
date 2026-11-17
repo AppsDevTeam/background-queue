@@ -4,13 +4,13 @@ Tento soubor poskytuje vodítka pro Claude Code (claude.ai/code) při práci s k
 
 ## Co to je
 
-`adt/background-queue` je samostatná PHP knihovna (PHP ^8.2) pro zpracování úloh na pozadí, a to buď přes cron, nebo přes AMQP broker (RabbitMQ). Jádro je nezávislé na frameworku - navzdory zmínce o "Nette" v `composer.json` kód nemá žádnou závislost na Nette DI. Joby ukládá přes **čisté Doctrine DBAL** (nikoli ORM), pomocí vlastního `Connection` nezávislého na entity manageru hostitelské aplikace.
+`adt/background-queue` je samostatná PHP knihovna (PHP ^8.2) pro zpracování úloh na pozadí, a to buď přes cron, nebo přes broker: databázový `Broker\Dbal` (MySQL 8+/MariaDB/PostgreSQL, bez další služby) nebo AMQP `Broker\PhpAmqpLib` (RabbitMQ). Jádro je nezávislé na frameworku - navzdory zmínce o "Nette" v `composer.json` kód nemá žádnou závislost na Nette DI. Joby ukládá přes **čisté Doctrine DBAL** (nikoli ORM), pomocí vlastního `Connection` nezávislého na entity manageru hostitelské aplikace.
 
 Uživatelská dokumentace (volby konfigurace, sémantika výjimek, příklady použití) je v `README.md` a je psaná česky; přečti si ji pro popis chování na uživatelské úrovni.
 
 ## Příkazy
 
-Vývojové prostředí běží v Dockeru (kontejnery `background-queue_php`, `background-queue_mysql`, `background-queue_rabbitmq`).
+Vývojové prostředí běží v Dockeru (kontejnery `background-queue_php`, `background-queue_mysql`, `background-queue_rabbitmq`, `background-queue_postgres` - PostgreSQL jen pro `DbalBrokerTest`, LISTEN/NOTIFY cesta).
 
 ```bash
 make docker-up          # sestaví a spustí kontejnery (docker-compose up)
@@ -106,6 +106,22 @@ Pozn. k pojmu „nedokončeno": `getPreviousUnfinishedJobId()` bere jako blokuj�
 Název řídicí fronty sestavuje `Manager::getControlQueue($queue, ?$label)`, seznam front ke konzumaci (řídicí první, pak prioritní) `Manager::getConsumedQueues()`. Konzumer spuštěný s **labelem** (`consume -l <label>`) dostane vlastní řídicí frontu `<queue>_0_<label>`; díky tomu lze přes `reload-consumers -l label1,label2` cílit právě na něj. **Pozor:** labelovaný konzumer pak sdílenou `<queue>_0` už vůbec nekonzumuje, takže ho `reload-consumers` bez `-l` mine (pokryto v `ConsumerControlQueueTest`). Label nesmí obsahovat oddělovač `_` (`QUEUE_NAME_PARTS_DELIMITER`) ani být prázdný - hlídá `Manager::validateLabel()`, která vyhazuje `Exception\InvalidArgumentException`.
 
 Vedle `DIE` existuje druhá řídicí zpráva `SHUTDOWN` (`publishShutdown()`, posílá ji `shutdown-consumers` se stejným cílením přes label). Liší se jen exit kódem po dojetí rozdělaného jobu: `DIE` ukončí konzumera přes `die()` (exit 0, supervisor ho typicky restartuje), `SHUTDOWN` přes `exit(Producer::NICE_SHUTDOWN_EXIT_CODE)` (= 100). Ten kód patří do supervisor `exitcodes` při `autorestart=unexpected`, takže konzumer už znovu nenaběhne - "nice shutdown" pro řízené zastavení (např. před restartem serveru). Řídicí fronty jsou durable, takže zpráva navíc v nich zůstane ležet a sebere ji až příští konzumer po startu - u unikátních labelů se proto posílá `NUMBER = 1`. Detaily a vzor konfigurace supervisoru viz README sekce 6.
+
+### Broker nad databází (src/Broker/Dbal/)
+
+Druhá hotová implementace `Producer`/`Consumer`, bez RabbitMQ. Budíček = sloupec `processed_by_broker`:
+`save()` nového jobu ho v broker módu nastaví na 1, `Producer::publish()` ho (znovu) nastaví na 1 a na
+PostgreSQL pošle `pg_notify` (kanál `bq_<tableName>`), `Manager::takeJob()` vybere pod `FOR UPDATE SKIP LOCKED`
+nejstarší job nejvyšší priority ve `READY_TO_PROCESS_STATES` s uplynulým odkladem (SQL podoba
+`BackgroundJob::computeAvailableFrom()`, porovnává se s časem PHP) a podmíněným UPDATE 1 -> 0 ho převezme -
+exkluzivita jako jedna zpráva v RabbitMQ. Pak už jen `processJob()`. Konzumer umřelý mezi převzetím a
+claimem = ztracená zpráva (`republishLostMessages()` ji po `lostMessageTimeout` publikuje znovu). Řídicí
+zprávy (`DIE`/`SHUTDOWN`, s labelem nebo sdílené) jsou řádky v `<tableName>_control`, braly se podmíněným
+DELETE; sémantika cílení stejná jako u AMQP (konzumer s labelem čte jen své). Čekání: `pgsqlGetNotify()`
+na PostgreSQL, `usleep(pollInterval)` jinde. Spadlé spojení (`ConnectionException`) konzumer zahodí a po 5 s
+zkusí znovu; jiné výjimky ho shodí. Sloupec je na PostgreSQL boolean, proto se v SQL píše `TRUE`/`FALSE`.
+Testy `DbalBrokerTest` běží nad oběma DB (`driverProvider`, PostgreSQL jen s `PROJECT_PG_HOST`), konzumer
+v subprocesu je fixtura `dbalConsumerWorker.php`, callbacky `Tests\Support\Helper\DbalRecorder`.
 
 ### Leader clusteru (src/Leader.php) - konzumeři jen na jednom uzlu
 

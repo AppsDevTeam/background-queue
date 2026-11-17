@@ -29,3 +29,11 @@ services:
       - 127.0.0.1:15672:15672
     env_file:
       - .env
+
+  # PostgreSQL pro testy brokeru Broker\Dbal (LISTEN/NOTIFY cesta); MySQL testuje polling cestu
+  postgres:
+    image: postgres:18-alpine
+    container_name: ${PROJECT_NAME}_postgres
+    hostname: ${PROJECT_NAME}_postgres
+    env_file:
+      - .env

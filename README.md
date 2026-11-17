@@ -95,7 +95,9 @@ aplikace, PostgreSQL). Konzumer umřelý mezi převzetím a claimem nechá job s
 to je přesně „ztracená zpráva“, kterou `background-queue:process` po `lostMessageTimeout` publikuje znovu
 (viz 2.5), takže cron `process` má běžet i s tímto brokerem. Na Galera/PXC platí totéž co u RabbitMQ:
 konzumeři jen na leaderovi (6.3). `postponeBy`/`expiration` producer ignoruje - odklad je v řádku a konzumer
-ho respektuje při výběru.
+ho respektuje při výběru. Jeden rozdíl oproti RabbitMQ: backoff po dočasné chybě se tu (stejně jako v cron
+módu) měří od **začátku** neúspěšného pokusu (`last_attempt_at`), ne od jeho selhání - job, který běžel
+déle, než činí jeho odklad, se tak opakuje hned.
 
 #### 1.3.2 php-amqplib installation
 

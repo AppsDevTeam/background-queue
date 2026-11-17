@@ -118,8 +118,8 @@ exkluzivita jako jedna zpráva v RabbitMQ. Pak už jen `processJob()`. Konzumer 
 claimem = ztracená zpráva (`republishLostMessages()` ji po `lostMessageTimeout` publikuje znovu). Řídicí
 zprávy (`DIE`/`SHUTDOWN`, s labelem nebo sdílené) jsou řádky v `<tableName>_control`, braly se podmíněným
 DELETE; sémantika cílení stejná jako u AMQP (konzumer s labelem čte jen své). Čekání: `pgsqlGetNotify()`
-na PostgreSQL, `usleep(pollInterval)` jinde. Spadlé spojení (`ConnectionException`) konzumer zahodí a po 5 s
-zkusí znovu; jiné výjimky ho shodí. Sloupec je na PostgreSQL boolean, proto se v SQL píše `TRUE`/`FALSE`.
+na PostgreSQL, `usleep(pollInterval)` jinde. Spadlé spojení (`ConnectionException`, na PostgreSQL i `PDOException` z čekání na NOTIFY) konzumer zahodí a po 5 s
+zkusí znovu; jiné výjimky ho shodí. Label validuje tatáž pravidla jako u AMQP (`PhpAmqpLib\Manager::validateLabel`). Sloupec je na PostgreSQL boolean, proto se v SQL píše `TRUE`/`FALSE`.
 Testy `DbalBrokerTest` běží nad oběma DB (`driverProvider`, PostgreSQL jen s `PROJECT_PG_HOST`), konzumer
 v subprocesu je fixtura `dbalConsumerWorker.php`, callbacky `Tests\Support\Helper\DbalRecorder`.
 

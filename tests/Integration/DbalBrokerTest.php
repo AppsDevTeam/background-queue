@@ -44,6 +44,7 @@ class DbalBrokerTest extends Unit
 	{
 		parent::_before();
 		DbalRecorder::$processOrder = [];
+		DbalRecorder::$failOnceAttempts = [];
 		@unlink($this->processedFile());
 	}
 
@@ -247,6 +248,80 @@ class DbalBrokerTest extends Unit
 		rmdir($leaderDir);
 	}
 
+	/**
+	 * serialGroup přes Dbal broker: nástupce, který se vezme dřív, než předchůdce doběhl, jde do WAITING
+	 * a svůj příznak ztratí (žádná "zpráva" pro něj nečeká). Až předchůdce doběhne, promoteWaitingSuccessor()
+	 * ho pustí: WAITING -> READY a příznak zpět na 1, konzumer ho vezme a zpracuje v pořadí.
+	 *
+	 * @dataProvider driverProvider
+	 */
+	public function testSerialGroupSuccessorWaitsAndIsPromoted(string $driver)
+	{
+		[$bq, $manager] = $this->setUpQueue($driver);
+		$consumer = new Consumer($manager, $bq);
+
+		$first = $this->publish($bq, $manager, 'failOnce', ['first'], null, null, 'group');
+		$second = $this->publish($bq, $manager, 'record', ['second'], null, null, 'group');
+
+		// 1. běh: předchůdce dočasně selže (backoff), zůstává překážkou skupiny
+		$consumer->consume(self::QUEUE, [10]);
+		$this->tester->assertSame(BackgroundJob::STATE_TEMPORARILY_FAILED, $this->state($manager, $first));
+
+		// 2. běh: jediný dostupný job je nástupce - narazí na nedokončeného předchůdce a odloží se
+		$consumer->consume(self::QUEUE, [10]);
+		$this->tester->assertSame(BackgroundJob::STATE_WAITING, $this->state($manager, $second));
+		$this->tester->assertSame(0, $this->flag($manager, $second), 'WAITING job si nechal zprávu v brokeru.');
+		$this->tester->assertNull($manager->takeJob(self::QUEUE, [10]), 'Konzumer má co brát, ačkoli předchůdce čeká na backoff a nástupce je WAITING.');
+
+		// backoff předchůdce "uplyne"
+		$manager->getConnection()->executeStatement('UPDATE ' . self::TABLE . ' SET postponed_by = NULL WHERE id = ?', [$first]);
+
+		// 3. běh: předchůdce doběhne a probudí nástupce
+		$consumer->consume(self::QUEUE, [10]);
+		$this->tester->assertSame(BackgroundJob::STATE_FINISHED, $this->state($manager, $first));
+		$this->tester->assertSame(BackgroundJob::STATE_READY, $this->state($manager, $second));
+		$this->tester->assertSame(1, $this->flag($manager, $second), 'Probuzený nástupce nedostal zprávu do brokera.');
+
+		// 4. běh: nástupce
+		$consumer->consume(self::QUEUE, [10]);
+		$this->tester->assertSame(BackgroundJob::STATE_FINISHED, $this->state($manager, $second));
+		$this->tester->assertSame(['first', 'second'], DbalRecorder::$processOrder);
+	}
+
+	/**
+	 * Ztracená zpráva: konzumer job převzal (příznak 1 -> 0) a umřel před claimem. Job zůstal READY bez
+	 * zprávy - nikdo ho nevezme, dokud ho cron (process -> republishLostMessages) po lostMessageTimeout
+	 * znovu nepublikuje, tj. nevrátí příznak na 1.
+	 *
+	 * @dataProvider driverProvider
+	 */
+	public function testLostMessageIsRepublishedByProcess(string $driver)
+	{
+		[$bq, $manager] = $this->setUpQueue($driver);
+
+		$id = $this->publish($bq, $manager, 'record', ['lost']);
+		$this->tester->assertSame($id, $manager->takeJob(self::QUEUE, [10]));
+		$this->tester->assertSame(0, $this->flag($manager, $id));
+
+		// Čerstvě převzatý job za ztracený nepovažujeme
+		$bq->process();
+		$this->tester->assertSame(0, $this->flag($manager, $id), 'Job se republikoval před uplynutím lostMessageTimeout.');
+		$this->tester->assertNull($manager->takeJob(self::QUEUE, [10]));
+
+		// ...až po lostMessageTimeout (default 3600 s) bez jediného zápisu
+		$manager->getConnection()->executeStatement(
+			'UPDATE ' . self::TABLE . ' SET updated_at = ? WHERE id = ?',
+			[(new \DateTimeImmutable('-2 hours'))->format('Y-m-d H:i:s'), $id],
+		);
+		$bq->process();
+		$this->tester->assertSame(BackgroundJob::STATE_READY, $this->state($manager, $id));
+		$this->tester->assertSame(1, $this->flag($manager, $id), 'Ztracená zpráva se nerepublikovala.');
+
+		(new Consumer($manager, $bq))->consume(self::QUEUE, [10]);
+		$this->tester->assertSame(BackgroundJob::STATE_FINISHED, $this->state($manager, $id));
+		$this->tester->assertSame(['lost'], DbalRecorder::$processOrder);
+	}
+
 	// --- pomocné ---------------------------------------------------------------------------------
 
 	/**
@@ -264,6 +339,7 @@ class DbalBrokerTest extends Unit
 			'callbacks' => [
 				'record' => [new DbalRecorder(), 'record'],
 				'fail' => [new DbalRecorder(), 'fail'],
+				'failOnce' => [new DbalRecorder(), 'failOnce'],
 			],
 			'queue' => self::QUEUE,
 			'priorities' => [10, 20],
@@ -291,9 +367,9 @@ class DbalBrokerTest extends Unit
 	/**
 	 * publish() fronty ID nevrací - vezme se poslední vložený řádek (testy publikují sériově).
 	 */
-	private function publish(BackgroundQueue $bq, Manager $manager, string $callback, ?array $parameters = null, ?int $postponeBy = null, ?int $priority = null): int
+	private function publish(BackgroundQueue $bq, Manager $manager, string $callback, ?array $parameters = null, ?int $postponeBy = null, ?int $priority = null, ?string $serialGroup = null): int
 	{
-		$bq->publish($callback, $parameters, null, null, \ADT\BackgroundQueue\Entity\Enums\ModeEnum::NORMAL, $postponeBy, $priority);
+		$bq->publish($callback, $parameters, $serialGroup, null, \ADT\BackgroundQueue\Entity\Enums\ModeEnum::NORMAL, $postponeBy, $priority);
 
 		return (int) $manager->getConnection()->fetchOne('SELECT MAX(id) FROM ' . self::TABLE);
 	}

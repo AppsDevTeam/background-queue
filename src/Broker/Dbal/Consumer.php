@@ -6,6 +6,7 @@ use ADT\BackgroundQueue\BackgroundQueue;
 use ADT\BackgroundQueue\Leader;
 use Doctrine\DBAL\Exception\ConnectionException;
 use Exception;
+use PDOException;
 use Throwable;
 
 /**
@@ -73,10 +74,12 @@ readonly class Consumer implements \ADT\BackgroundQueue\Broker\Consumer
 						: $this->manager->getPollInterval());
 					continue;
 				}
-			} catch (ConnectionException $e) {
+			} catch (ConnectionException | PDOException $e) {
 				// Spadlé spojení (restart DB, failover primáru, "server has gone away" = ConnectionLost):
 				// zahodit, počkat, zkusit znovu - stejně jako databaseConnectionCheckAndReconnect() ve
-				// frontě. Jiné výjimky (chyba v SQL, schéma) propadnou a konzumera shodí - supervisor ho
+				// frontě. PDOException sem patří kvůli PostgreSQL: čekání na NOTIFY jde přes syrové PDO
+				// (Manager::waitForWakeup), takže výpadek během čekání DBAL nepřeloží na ConnectionException.
+				// Jiné výjimky (chyba v SQL, schéma) propadnou a konzumera shodí - supervisor ho
 				// restartuje a chyba je vidět, místo tiché nekonečné smyčky.
 				$this->backgroundQueue->getLogger()->warning('BackgroundQueue consumer: database error, reconnecting in ' . self::RECONNECT_DELAY . ' s: ' . $e->getMessage());
 				$this->manager->closeConnection();

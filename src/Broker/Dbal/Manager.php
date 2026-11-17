@@ -186,13 +186,15 @@ class Manager
 	}
 
 	/**
+	 * Stejná pravidla jako u AMQP brokeru (tam je label částí názvu fronty, proto nesmí obsahovat "_"):
+	 * label platný pro jeden broker musí platit i pro druhý, aby šlo mezi nimi přepínat bez změny
+	 * konfigurace supervisoru.
+	 *
 	 * @throws InvalidArgumentException
 	 */
 	public static function validateLabel(string $label): void
 	{
-		if ($label === '') {
-			throw new InvalidArgumentException('Consumer label cannot be empty.');
-		}
+		\ADT\BackgroundQueue\Broker\PhpAmqpLib\Manager::validateLabel($label);
 	}
 
 	// --- konzumace -----------------------------------------------------------------------------

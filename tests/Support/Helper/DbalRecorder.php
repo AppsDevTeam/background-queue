@@ -28,4 +28,19 @@ class DbalRecorder
 	{
 		throw new TemporaryErrorException('try again');
 	}
+
+	/** @var array<string, int> kolikrát už failOnce() pro danou značku běžel */
+	public static array $failOnceAttempts = [];
+
+	/**
+	 * První běh selže dočasně, druhý projde (a zapíše značku) - blokuje serialGroup jen na jeden pokus.
+	 */
+	public function failOnce(string $mark): void
+	{
+		self::$failOnceAttempts[$mark] = (self::$failOnceAttempts[$mark] ?? 0) + 1;
+		if (self::$failOnceAttempts[$mark] === 1) {
+			throw new TemporaryErrorException('first attempt fails');
+		}
+		$this->record($mark);
+	}
 }

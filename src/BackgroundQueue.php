@@ -507,9 +507,9 @@ class BackgroundQueue
 					$this->markCoalescedJobsRedundant($entity);
 				}
 			} catch (DeadlockException $e) {
-				// Coalesce UPDATE neuspěl ani po opakování (deadlock přetrval). Job je v tuto chvíli už ve stavu
-				// PROCESSING, takže ho nesmíme jen vrátit (uvázl by) - přepneme ho na TEMPORARILY_FAILED, aby ho
-				// vzal příští běh; coalescing se zopakuje při dalším spuštění.
+				// Claim nebo coalesce UPDATE neuspěl ani po opakování (deadlock přetrval). Po claimu je job v DB
+				// už ve stavu PROCESSING, takže ho nesmíme jen vrátit (uvázl by) - přepneme ho na
+				// TEMPORARILY_FAILED, aby ho vzal příští běh; coalescing se zopakuje při dalším spuštění.
 				try {
 					$entity->setState(BackgroundJob::STATE_TEMPORARILY_FAILED)
 						->setErrorMessage($e->getMessage())
@@ -829,8 +829,7 @@ class BackgroundQueue
 		$table->setPrimaryKey(['id']);
 		$table->addIndex(['identifier']);
 		$table->addIndex(['state']);
-		// Pro coalesce UPDATE (markCoalescedJobsRedundant) - bez něj se WHERE vyhodnocuje scanem přes index na
-		// 'state' napříč všemi skupinami, který rozsahově zamyká i nesouvisející řádky a způsobuje deadlocky.
+		// Pro výběr pohlcených jobů v markCoalescedJobsRedundant (jen rychlost - zápis tam jde podle PK)
 		$table->addIndex(['serial_group', 'coalesce_threshold']);
 
 		$schemaManager = $this->createSchemaManager();
@@ -1100,14 +1099,45 @@ class BackgroundQueue
 	 * Bere jen joby v nedokončených stavech, které ještě nezačaly běžet (READY_TO_PROCESS_STATES) - běžící
 	 * (PROCESSING) ani dokončené joby nerušíme. Volá se zevnitř kritické sekce pod zámkem skupiny.
 	 *
-	 * UPDATE může výjimečně narazit na deadlock (1213) se souběžnými zápisy jiných konzumentů (claim, jiný
-	 * coalesce). Deadlock je tranzientní, proto ho omezeně opakujeme s krátkou prodlevou - jinak by job
-	 * uvázl v PROCESSING (volající catch by ho jen zalogoval a vrátil bez spuštění callbacku).
+	 * Záměrně dva kroky - nezamykající SELECT id a pak UPDATE podle primárního klíče - ne jeden UPDATE
+	 * s celým WHERE. InnoDB u UPDATE zamyká každý záznam indexu, přes který hledá, dřív než vyhodnotí
+	 * zbytek podmínek; na produkci optimalizátor volil index na `state` (ne ten na serial_group), takže
+	 * UPDATE držel zámky na READY položkách jobů cizích skupin a claim takového jobu jiným konzumentem
+	 * (zámek PK, pak položky indexu state) čekal opačným směrem - deadlock 1213 na obou stranách, claim
+	 * se rollbackl, náhradní zápis TEMPORARILY_FAILED narazil na tentýž zámek a job zůstal READY
+	 * s odacknutou zprávou až do republishLostMessages(). UPDATE přes `id IN (...)` zamyká jen
+	 * vyjmenované řádky, v pořadí PK, bez rozsahů a mezer.
+	 *
+	 * Stav se v UPDATE kontroluje znovu: mezi SELECTem a UPDATEm mohl řádek změnit zápis, který zámek
+	 * skupiny nebere (republish ztracené zprávy, promotion, logException); ostatní podmínky jsou po
+	 * vložení neměnné. Zbylý deadlock dvou jednořádkových zápisů je tranzientní a omezeně se opakuje -
+	 * jinak by job uvázl v PROCESSING (volající catch by ho jen zalogoval a vrátil bez spuštění callbacku).
 	 *
 	 * @throws \Doctrine\DBAL\Exception
 	 */
 	private function markCoalescedJobsRedundant(BackgroundJob $entity): void
 	{
+		$ids = $this->connection->createQueryBuilder()
+			->select('id')
+			->from($this->config['tableName'])
+			->where('queue LIKE :queue')
+			->andWhere('state IN (:states)')
+			->andWhere('serial_group = :serialGroup')
+			->andWhere('id <> :selfId')
+			->andWhere('coalesce_threshold >= :threshold')
+			->orderBy('id', 'ASC')
+			->setParameter('queue', $this->config['queue'] . '%')
+			->setParameter('states', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER)
+			->setParameter('serialGroup', $entity->getSerialGroup())
+			->setParameter('selfId', $entity->getId())
+			->setParameter('threshold', $entity->getCoalesceThreshold())
+			->executeQuery()
+			->fetchFirstColumn();
+
+		if (!$ids) {
+			return;
+		}
+
 		// Kromě stavu se zapisuje i finished_at (REDUNDANT je "vyřízeno v pořádku" - setState() by ho
 		// nastavil taky a clearFinishedJobs() podle něj měří stáří) a updated_at (konvence "naposledy sáhnuto").
 		$now = (new DateTimeImmutable())->format('Y-m-d H:i:s');
@@ -1116,19 +1146,13 @@ class BackgroundQueue
 			->set('state', ':redundantState')
 			->set('finished_at', ':finishedAt')
 			->set('updated_at', ':updatedAt')
-			->where('queue LIKE :queue')
+			->where('id IN (:ids)')
 			->andWhere('state IN (:states)')
-			->andWhere('serial_group = :serialGroup')
-			->andWhere('id <> :selfId')
-			->andWhere('coalesce_threshold >= :threshold')
 			->setParameter('redundantState', BackgroundJob::STATE_REDUNDANT)
 			->setParameter('finishedAt', $now)
 			->setParameter('updatedAt', $now)
-			->setParameter('queue', $this->config['queue'] . '%')
-			->setParameter('states', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER)
-			->setParameter('serialGroup', $entity->getSerialGroup())
-			->setParameter('selfId', $entity->getId())
-			->setParameter('threshold', $entity->getCoalesceThreshold());
+			->setParameter('ids', array_map('intval', $ids), ArrayParameterType::INTEGER)
+			->setParameter('states', array_values(BackgroundJob::READY_TO_PROCESS_STATES), ArrayParameterType::INTEGER);
 
 		$this->executeWithDeadlockRetry($qb);
 	}
@@ -1305,7 +1329,8 @@ class BackgroundQueue
 				->setParameter($column, $value);
 		}
 
-		return $qb->executeStatement() > 0;
+		// Podmínka na stav dělá z opakování bezpečnou operaci: claim buď zabere jednou, nebo vůbec.
+		return $this->executeWithDeadlockRetry($qb) > 0;
 	}
 
 	/**

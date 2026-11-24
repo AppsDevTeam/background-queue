@@ -40,9 +40,9 @@ class BackgroundQueueTest extends Unit
 
 	protected function _after()
 	{
-		// Trigger z failWaitingWrites(). Mezi testy ho uklidí DROP TABLE v clear() (MySQL maže triggery
+		// Trigger z failWrites(). Mezi testy ho uklidí DROP TABLE v clear() (MySQL maže triggery
 		// spolu s tabulkou), po posledním testu běhu by ale na testovací tabulce zůstal viset.
-		self::rawConnection()->executeStatement('DROP TRIGGER IF EXISTS bq_test_waiting_deadlock');
+		self::rawConnection()->executeStatement('DROP TRIGGER IF EXISTS bq_test_deadlock');
 		parent::_after();
 	}
 
@@ -1173,7 +1173,7 @@ class BackgroundQueueTest extends Unit
 		$backgroundQueue->publish('processRecording', ['x'], 'group-deadlock');
 		[, $x] = self::fetchAllJobs($backgroundQueue);
 
-		self::failWaitingWrites($backgroundQueue, 2);
+		self::failWrites($backgroundQueue, BackgroundJob::STATE_WAITING, 2);
 
 		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('checkUnfinishedJobs');
 		$method->setAccessible(true);
@@ -1195,7 +1195,7 @@ class BackgroundQueueTest extends Unit
 		$backgroundQueue->publish('processRecording', ['x']);
 		[$x] = self::fetchAllJobs($backgroundQueue);
 
-		self::failWaitingWrites($backgroundQueue, 2);
+		self::failWrites($backgroundQueue, BackgroundJob::STATE_WAITING, 2);
 
 		/** @var \Doctrine\DBAL\Connection $connection */
 		$connection = (new \ReflectionProperty(BackgroundQueue::class, 'connection'))->getValue($backgroundQueue);
@@ -1214,7 +1214,7 @@ class BackgroundQueueTest extends Unit
 		} finally {
 			$connection->rollBack();
 		}
-		$this->tester->assertEquals(1, (int) $connection->fetchOne('SELECT @bq_waiting_deadlocks'), 'proběhl jediný pokus');
+		$this->tester->assertEquals(1, (int) $connection->fetchOne('SELECT @bq_deadlocks'), 'proběhl jediný pokus');
 
 		// Mimo transakci se tentýž UPDATE zopakuje a projde.
 		$this->tester->assertEquals(1, $method->invoke($backgroundQueue, $qb));
@@ -1236,7 +1236,7 @@ class BackgroundQueueTest extends Unit
 		[, $x] = self::fetchAllJobs($backgroundQueue);
 		self::getProducer()->purge('general_1');
 
-		self::failWaitingWrites($backgroundQueue, 100);
+		self::failWrites($backgroundQueue, BackgroundJob::STATE_WAITING, 100);
 
 		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('checkUnfinishedJobs');
 		$method->setAccessible(true);
@@ -1274,25 +1274,86 @@ class BackgroundQueueTest extends Unit
 	}
 
 	/**
-	 * Simuluje deadlock (1213) při odkladu do WAITING: trigger vyhodí chybu u prvních $count zápisů stavu WAITING
+	 * Simuluje deadlock (1213) při zápisu daného stavu: trigger vyhodí chybu u prvních $count zápisů stavu $state
 	 * ve spojení dané fronty. Počítadlo je session proměnná, takže se netýká ostatních spojení v testu.
 	 */
-	private static function failWaitingWrites(BackgroundQueue $backgroundQueue, int $count): void
+	private static function failWrites(BackgroundQueue $backgroundQueue, int $state, int $count): void
 	{
 		/** @var \Doctrine\DBAL\Connection $connection */
 		$connection = (new \ReflectionProperty(BackgroundQueue::class, 'connection'))->getValue($backgroundQueue);
 
-		$connection->executeStatement('DROP TRIGGER IF EXISTS bq_test_waiting_deadlock');
+		$connection->executeStatement('DROP TRIGGER IF EXISTS bq_test_deadlock');
 		$connection->executeStatement('
-			CREATE TRIGGER bq_test_waiting_deadlock BEFORE UPDATE ON ' . $_ENV['PROJECT_DB_TABLENAME'] . ' FOR EACH ROW
+			CREATE TRIGGER bq_test_deadlock BEFORE UPDATE ON ' . $_ENV['PROJECT_DB_TABLENAME'] . ' FOR EACH ROW
 			BEGIN
-				IF NEW.state = ' . BackgroundJob::STATE_WAITING . ' AND COALESCE(@bq_waiting_deadlocks, 0) > 0 THEN
-					SET @bq_waiting_deadlocks = @bq_waiting_deadlocks - 1;
+				IF NEW.state = ' . $state . ' AND COALESCE(@bq_deadlocks, 0) > 0 THEN
+					SET @bq_deadlocks = @bq_deadlocks - 1;
 					SIGNAL SQLSTATE \'40001\' SET MYSQL_ERRNO = 1213, MESSAGE_TEXT = \'Deadlock found when trying to get lock\';
 				END IF;
 			END
 		');
-		$connection->executeStatement('SET @bq_waiting_deadlocks = ' . $count);
+		$connection->executeStatement('SET @bq_deadlocks = ' . $count);
+	}
+
+	/**
+	 * processJob() si pro zpracování otevírá vlastní spojení (createConnection()). Trigger z failWrites() počítá
+	 * přes session proměnnou, proto se spojení musí vytvořit dřív, než se počítadlo nastaví.
+	 *
+	 * @throws ReflectionException
+	 */
+	private static function createProcessingConnection(BackgroundQueue $backgroundQueue): void
+	{
+		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('createConnection');
+		$method->setAccessible(true);
+		$method->invoke($backgroundQueue);
+	}
+
+	/**
+	 * Claim (přechod do PROCESSING) může narazit na deadlock se souběžným jednořádkovým zápisem jiného
+	 * konzumenta (coalesce, promotion, republish ztracené zprávy). Opakování je bezpečné - deadlocknutý UPDATE
+	 * InnoDB rollbackne a podmínka na stav zaručí, že claim zabere nejvýš jednou. Job se normálně zpracuje.
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testClaimRetriesDeadlock()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$backgroundQueue->publish('processRecording', ['x']);
+		[$x] = self::fetchAllJobs($backgroundQueue);
+
+		self::createProcessingConnection($backgroundQueue);
+		self::failWrites($backgroundQueue, BackgroundJob::STATE_PROCESSING, 2);
+
+		$backgroundQueue->processJob($x->getId());
+
+		$this->tester->assertEquals(['x'], Mailer::$processOrder, 'callback po opakování claimu proběhl');
+		$this->tester->assertEquals(BackgroundJob::STATE_FINISHED, self::fetchJob($backgroundQueue, $x->getId())->getState());
+	}
+
+	/**
+	 * Když claim selže i po všech opakováních, callback se nespustí a job nesmí uváznout: přepne se na
+	 * TEMPORARILY_FAILED s odkladem, aby ho vzal příští běh.
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testPersistentClaimDeadlockPostponesJob()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+		$backgroundQueue->publish('processRecording', ['x']);
+		[$x] = self::fetchAllJobs($backgroundQueue);
+
+		self::createProcessingConnection($backgroundQueue);
+		self::failWrites($backgroundQueue, BackgroundJob::STATE_PROCESSING, 100);
+
+		$backgroundQueue->processJob($x->getId());
+
+		$xAfter = self::fetchJob($backgroundQueue, $x->getId());
+		$this->tester->assertEquals([], Mailer::$processOrder, 'callback se nespustil');
+		$this->tester->assertEquals(BackgroundJob::STATE_TEMPORARILY_FAILED, $xAfter->getState());
+		$this->tester->assertStringContainsString('Deadlock', $xAfter->getErrorMessage());
+		$this->tester->assertNotNull($xAfter->getPostponedBy(), 'job má odklad pro příští běh');
 	}
 
 	/**
@@ -1402,6 +1463,53 @@ class BackgroundQueueTest extends Unit
 		$narrowAfter = self::fetchJob($backgroundQueue, $narrow->getId());
 		$this->tester->assertEquals(BackgroundJob::STATE_REDUNDANT, $narrowAfter->getState(), 'užší job pohlcen');
 		$this->tester->assertNotNull($narrowAfter->getFinishedAt(), 'coalescing vyplnil finished_at');
+	}
+
+	/**
+	 * Coalesce zapisuje podle primárního klíče a drží zámky jen na pohlcených řádcích. Dřív jeden UPDATE s celým
+	 * WHERE zamykal i řádky cizích skupin (podle indexu, který si vybral optimalizátor - tady full scan, na produkci
+	 * index na state) a claim takového jobu jiným konzumentem na něm deadlockoval. Zámky coalesce proto zkoušíme
+	 * v otevřené transakci: claim jobu z jiné skupiny i jobu bez skupiny musí projít bez čekání.
+	 *
+	 * @throws ReflectionException
+	 * @throws Exception
+	 */
+	public function testCoalescingDoesNotLockOtherGroups()
+	{
+		$backgroundQueue = self::getBackgroundQueue();
+
+		$backgroundQueue->publish('processRecording', ['other-before'], 'group-other');
+		$backgroundQueue->publish('processRecording', ['wide'], 'group-coalesce', null, ModeEnum::NORMAL, null, null, 100);
+		$backgroundQueue->publish('processRecording', ['narrow'], 'group-coalesce', null, ModeEnum::NORMAL, null, null, 150);
+		$backgroundQueue->publish('processRecording', ['other-after'], 'group-other');
+		$backgroundQueue->publish('processRecording', ['nogroup']);
+		[$otherBefore, $wide, $narrow, $otherAfter, $noGroup] = self::fetchAllJobs($backgroundQueue);
+
+		/** @var \Doctrine\DBAL\Connection $connection */
+		$connection = (new \ReflectionProperty(BackgroundQueue::class, 'connection'))->getValue($backgroundQueue);
+		$method = (new \ReflectionClass(BackgroundQueue::class))->getMethod('markCoalescedJobsRedundant');
+		$method->setAccessible(true);
+
+		$otherConsumer = self::rawConnection();
+		$otherConsumer->executeStatement('SET SESSION innodb_lock_wait_timeout = 1');
+		$claim = fn(BackgroundJob $job) => $otherConsumer->executeStatement(
+			'UPDATE ' . $_ENV['PROJECT_DB_TABLENAME'] . ' SET state = ? WHERE id = ? AND state IN (' . implode(', ', BackgroundJob::READY_TO_PROCESS_STATES) . ')',
+			[BackgroundJob::STATE_PROCESSING, $job->getId()]
+		);
+
+		$connection->beginTransaction();
+		try {
+			$method->invoke($backgroundQueue, $wide);
+
+			foreach ([$otherBefore, $otherAfter, $noGroup] as $job) {
+				$this->tester->assertEquals(1, $claim($job), 'claim jobu mimo skupinu neblokuje: ' . $job->getParameters()[0]);
+			}
+		} finally {
+			$connection->rollBack();
+		}
+
+		$backgroundQueue->processJob($wide->getId());
+		$this->tester->assertEquals(BackgroundJob::STATE_REDUNDANT, self::fetchJob($backgroundQueue, $narrow->getId())->getState(), 'užší job pohlcen');
 	}
 
 	private static function finishedCount(string $serialGroup): int
